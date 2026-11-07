@@ -1,0 +1,9 @@
+* text=auto eol=lf
+
+# Windows 批处理在 LF 行尾下可能解析错误（标签和 goto），保留 CRLF
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+*.png binary
+*.exe binary
+*.dll binary
