@@ -56,6 +56,8 @@ impl SampleRate {
     pub const MIN_HZ: u32 = 8_000;
     /// 独占模式实测可到 768 kHz（选型报告 6.3 节）
     pub const MAX_HZ: u32 = 768_000;
+    /// 最常用的采样率，用作各处的初始值
+    pub const HZ_48000: Self = Self(48_000);
 
     pub fn new(hz: u32) -> Result<Self, SampleRateError> {
         if (Self::MIN_HZ..=Self::MAX_HZ).contains(&hz) {
