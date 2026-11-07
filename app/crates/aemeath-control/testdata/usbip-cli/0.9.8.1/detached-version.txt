@@ -1,0 +1,7 @@
+# usbip.exe --version
+# exit=0  elapsed_ms=19  captured=2026-11-07T16:42:26
+## stdout
+0.9.8.1
+
+## stderr
+

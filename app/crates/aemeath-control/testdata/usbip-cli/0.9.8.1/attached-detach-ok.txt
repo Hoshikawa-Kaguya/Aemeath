@@ -1,0 +1,7 @@
+# usbip.exe detach -p 1
+# exit=0  elapsed_ms=16  captured=2026-11-07T16:41:58
+## stdout
+port 1 is successfully detached
+
+## stderr
+

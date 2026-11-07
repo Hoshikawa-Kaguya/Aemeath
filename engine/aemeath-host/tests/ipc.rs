@@ -31,6 +31,7 @@ fn config(data_dir: PathBuf) -> HostConfig {
         usbip_port: 0,
         identity: IdentityProfile::Development,
         pipe_name: format!(r"\\.\pipe\aemeath-host-test-{}-{test}", std::process::id()),
+        meter_memory_name: format!(r"Local\aemeath-host-test-meters-{}-{test}", std::process::id()),
     }
 }
 
@@ -240,5 +241,46 @@ async fn a_second_host_with_the_same_pipe_name_fails() {
 
     client.request(AppToEngine::Shutdown { request: RequestId(1) }).await;
     tokio::time::timeout(TIMEOUT, first).await.unwrap().unwrap().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn meters_follow_the_applied_topology() {
+    use aemeath_protocol::meters::{METER_MEMORY_WORDS, MeterReader};
+    use aemeath_sys::shared_memory::SharedMemory;
+
+    let dir = temp_dir("meters");
+    let config = config(dir.clone());
+    let pipe = config.pipe_name.clone();
+    let memory_name = config.meter_memory_name.clone();
+    let host = tokio::spawn(aemeath_host::run(config, std::future::pending()));
+
+    let mut client = Client::connect(&pipe).await;
+    assert!(matches!(client.hello().await, EngineToApp::Welcome { .. }));
+    let ack = client
+        .request(AppToEngine::ApplyTopology {
+            request: RequestId(1),
+            topology: topology(1),
+        })
+        .await;
+    assert_eq!(ack, EngineToApp::Ack { request: RequestId(1) });
+
+    // 转写任务按自己的节奏更新节点表
+    let memory = SharedMemory::open(&memory_name, METER_MEMORY_WORDS).unwrap();
+    let reader = MeterReader::new(memory.words()).unwrap();
+    let deadline = tokio::time::Instant::now() + TIMEOUT;
+    loop {
+        if let Some(meters) = reader.take()
+            && meters.iter().map(|meter| meter.node).eq([NodeId(1)])
+        {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "meters never showed the topology"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    host.abort();
     let _ = std::fs::remove_dir_all(&dir);
 }

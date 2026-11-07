@@ -1,15 +1,13 @@
-//! 引擎进程的配置：数据目录、USB/IP 端口、命名管道名称。
+//! 引擎进程的配置：数据目录、USB/IP 端口、命名管道与电平共享内存的名称。
 //!
 //! 正式启动时由守护进程传入参数（ADR-0003）；开发时可以不带参数直接运行。
 
 use std::io;
 use std::path::PathBuf;
 
+pub use aemeath_usbip::identity::DEFAULT_USBIP_PORT;
 use aemeath_usbip::identity::IdentityProfile;
 use thiserror::Error;
-
-/// usbip-win2 默认连接的端口
-pub const DEFAULT_USBIP_PORT: u16 = 3241;
 
 #[derive(Debug, Clone)]
 pub struct HostConfig {
@@ -18,6 +16,8 @@ pub struct HostConfig {
     pub usbip_port: u16,
     pub identity: IdentityProfile,
     pub pipe_name: String,
+    /// 电平共享内存的名称（与主程序共用，见 `aemeath_protocol::meters`）
+    pub meter_memory_name: String,
 }
 
 #[derive(Debug, Error)]
@@ -30,18 +30,20 @@ pub enum ConfigError {
     InvalidValue(String),
     #[error("cannot determine the data directory; pass --data-dir")]
     NoDataDir,
-    #[error("cannot determine the pipe name: {0}")]
+    #[error("cannot determine the pipe or shared memory name: {0}")]
     PipeName(io::Error),
 }
 
 impl HostConfig {
-    /// 解析命令行参数：`--data-dir <目录>`、`--usbip-port <端口>`、`--pipe <管道名>`，都可以省略。
+    /// 解析命令行参数：`--data-dir <目录>`、`--usbip-port <端口>`、`--pipe <管道名>`、
+    /// `--meters <共享内存名>`，都可以省略。
     pub fn from_args(args: impl IntoIterator<Item = String>) -> Result<Self, ConfigError> {
         // 正式身份要等向 pid.codes 申请到正式 PID 后加入（M4）；在那之前一律使用开发身份（ADR-0009）
         let identity = IdentityProfile::Development;
         let mut data_dir = None;
         let mut usbip_port = DEFAULT_USBIP_PORT;
         let mut pipe_name = None;
+        let mut meter_memory_name = None;
         let mut args = args.into_iter();
         while let Some(arg) = args.next() {
             let mut value = || args.next().ok_or_else(|| ConfigError::MissingValue(arg.clone()));
@@ -51,42 +53,30 @@ impl HostConfig {
                     usbip_port = value()?.parse().map_err(|_| ConfigError::InvalidValue(arg.clone()))?;
                 }
                 "--pipe" => pipe_name = Some(value()?),
+                "--meters" => meter_memory_name = Some(value()?),
                 _ => return Err(ConfigError::UnknownArgument(arg)),
             }
         }
         let data_dir = match data_dir {
             Some(dir) => dir,
-            None => default_data_dir(identity).ok_or(ConfigError::NoDataDir)?,
+            None => identity.default_data_dir().ok_or(ConfigError::NoDataDir)?,
         };
         let pipe_name = match pipe_name {
             Some(name) => name,
-            None => default_pipe_name(identity).map_err(ConfigError::PipeName)?,
+            None => identity.engine_pipe_name().map_err(ConfigError::PipeName)?,
+        };
+        let meter_memory_name = match meter_memory_name {
+            Some(name) => name,
+            None => identity.meter_memory_name().map_err(ConfigError::PipeName)?,
         };
         Ok(Self {
             data_dir,
             usbip_port,
             identity,
             pipe_name,
+            meter_memory_name,
         })
     }
-}
-
-/// 默认数据目录：`%APPDATA%\Aemeath`；开发身份用 `%APPDATA%\Aemeath Dev`，与正式安装互不干扰。
-pub fn default_data_dir(identity: IdentityProfile) -> Option<PathBuf> {
-    let app_data = std::env::var_os("APPDATA")?;
-    let folder = match identity {
-        IdentityProfile::Development => "Aemeath Dev",
-    };
-    Some(PathBuf::from(app_data).join(folder))
-}
-
-/// 默认管道名，带上当前用户的 SID：同一台电脑的不同用户各自运行一个引擎，互不冲突。
-pub fn default_pipe_name(identity: IdentityProfile) -> io::Result<String> {
-    let sid = aemeath_sys::pipe::current_user_sid()?;
-    let product = match identity {
-        IdentityProfile::Development => "Aemeath.Dev",
-    };
-    Ok(format!(r"\\.\pipe\{product}.Engine.{sid}"))
 }
 
 #[cfg(test)]

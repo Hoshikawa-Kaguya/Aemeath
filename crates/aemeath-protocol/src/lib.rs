@@ -7,12 +7,14 @@
 //! - [`topology`]：路由拓扑、节点类型与连线规则。主程序编译拓扑后、引擎收到拓扑时都调用同一个
 //!   [`topology::RouteTopology::validate`]；工作台拖线时调用同一套规则 [`topology::check_route`]。
 //! - [`graph`]：可达性与拓扑排序，主程序、拓扑校验和引擎混音共用。
+//! - [`meters`]：电平共享内存的布局，以及写入方和读取方。
 //! - [`ids`] 与 [`units`]：有语义的标识和数值类型，反序列化时就校验取值范围。
 
 pub mod frame;
 pub mod graph;
 pub mod ids;
 pub mod message;
+pub mod meters;
 pub mod topology;
 pub mod units;
 

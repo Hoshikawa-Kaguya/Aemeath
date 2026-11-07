@@ -8,3 +8,6 @@
 *.ico binary
 *.exe binary
 *.dll binary
+
+# usbip.exe 的输出样本保留原始字节（CRLF），解析器必须同时接受 CRLF 和 LF
+app/crates/aemeath-control/testdata/usbip-cli/** -text

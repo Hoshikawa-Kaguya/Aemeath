@@ -1,0 +1,7 @@
+# usbip.exe -t 3241 attach -r 127.0.0.1 -b 9-9 --once --terse
+# exit=1  elapsed_ms=19  captured=2026-11-07T16:41:56
+## stdout
+
+## stderr
+error: Device not available.
+

@@ -1,0 +1,7 @@
+# usbip.exe -t 3299 attach -r 127.0.0.1 -b 1-1 --once --terse
+# exit=1  elapsed_ms=2057  captured=2026-11-07T16:41:58
+## stdout
+
+## stderr
+error: 远程计算机拒绝网络连接。
+

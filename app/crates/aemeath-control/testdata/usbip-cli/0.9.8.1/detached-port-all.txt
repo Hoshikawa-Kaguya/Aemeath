@@ -1,0 +1,6 @@
+# usbip.exe port
+# exit=0  elapsed_ms=35  captured=2026-11-07T16:42:26
+## stdout
+
+## stderr
+

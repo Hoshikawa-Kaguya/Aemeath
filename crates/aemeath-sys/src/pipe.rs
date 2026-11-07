@@ -9,14 +9,12 @@ use std::io;
 
 use tokio::net::windows::named_pipe::{NamedPipeServer, PipeMode, ServerOptions};
 use windows::Win32::Foundation::{CloseHandle, HANDLE, HLOCAL, LocalFree};
-use windows::Win32::Security::Authorization::{
-    ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
-};
-use windows::Win32::Security::{
-    GetTokenInformation, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER, TokenUser,
-};
+use windows::Win32::Security::Authorization::ConvertSidToStringSidW;
+use windows::Win32::Security::{GetTokenInformation, TOKEN_QUERY, TOKEN_USER, TokenUser};
 use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
-use windows::core::{HSTRING, PWSTR};
+use windows::core::PWSTR;
+
+use crate::security::CurrentUserOnly;
 
 /// 当前用户的 SID，例如 `S-1-5-21-…`。
 pub fn current_user_sid() -> io::Result<String> {
@@ -55,27 +53,16 @@ pub fn current_user_sid() -> io::Result<String> {
 ///
 /// `first_instance` 为 true 时，同名管道已存在（被别的进程或另一个引擎实例占用）就失败。
 pub fn create_pipe_server(name: &str, first_instance: bool) -> io::Result<NamedPipeServer> {
-    let sid = current_user_sid()?;
-    // 受保护的 DACL（P），只有一条：允许当前用户完全访问（GA）
-    let sddl = HSTRING::from(format!("D:P(A;;GA;;;{sid})"));
-    let mut descriptor = PSECURITY_DESCRIPTOR::default();
-    // SAFETY: sddl 是有效的宽字符串；成功后 descriptor 指向系统分配的描述符，由 LocalDescriptor 守卫释放。
-    unsafe { ConvertStringSecurityDescriptorToSecurityDescriptorW(&sddl, SDDL_REVISION_1, &mut descriptor, None) }?;
-    let descriptor = LocalDescriptor(descriptor);
-    let mut attributes = SECURITY_ATTRIBUTES {
-        nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
-        lpSecurityDescriptor: descriptor.0.0,
-        bInheritHandle: false.into(),
-    };
+    let mut security = CurrentUserOnly::new()?;
 
     let mut options = ServerOptions::new();
     options
         .pipe_mode(PipeMode::Byte)
         .reject_remote_clients(true)
         .first_pipe_instance(first_instance);
-    // SAFETY: attributes 是完整初始化的 SECURITY_ATTRIBUTES，其中的描述符在调用期间由守卫保持有效；
+    // SAFETY: 安全属性完整初始化，其中的描述符在调用期间由 security 保持有效；
     // CreateNamedPipeW 只在调用时读取它们，不保留指针。
-    unsafe { options.create_with_security_attributes_raw(name, (&raw mut attributes).cast::<c_void>()) }
+    unsafe { options.create_with_security_attributes_raw(name, security.attributes().cast::<c_void>()) }
 }
 
 /// 进程令牌句柄，析构时关闭。
@@ -95,16 +82,6 @@ impl Drop for LocalString {
     fn drop(&mut self) {
         // SAFETY: 指针由 ConvertSidToStringSidW 分配，只在这里释放一次。
         let _ = unsafe { LocalFree(Some(HLOCAL(self.0.0.cast()))) };
-    }
-}
-
-/// 由系统用 LocalAlloc 分配的安全描述符，析构时释放。
-struct LocalDescriptor(PSECURITY_DESCRIPTOR);
-
-impl Drop for LocalDescriptor {
-    fn drop(&mut self) {
-        // SAFETY: 指针由 ConvertStringSecurityDescriptorToSecurityDescriptorW 分配，只在这里释放一次。
-        let _ = unsafe { LocalFree(Some(HLOCAL(self.0.0))) };
     }
 }
 

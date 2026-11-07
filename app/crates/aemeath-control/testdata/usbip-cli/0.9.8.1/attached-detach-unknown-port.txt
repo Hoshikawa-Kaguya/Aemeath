@@ -1,0 +1,7 @@
+# usbip.exe detach -p 200
+# exit=1  elapsed_ms=16  captured=2026-11-07T16:41:58
+## stdout
+
+## stderr
+error: 参数错误。
+

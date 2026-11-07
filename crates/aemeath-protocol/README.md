@@ -18,11 +18,19 @@
 {"type":"slot_connection","slot":{"direction":"out","number":8},"connected":true}
 ```
 
+## 电平共享内存
+
+电平和录音数据不走管道。电平写在一块命名共享内存里（`meters`）：
+
+- 只允许当前用户访问，名称带用户 SID；
+- 引擎每 20 ms 用 `fetch_max` 累加峰值，主程序读取时用 `swap(0)` 取走；
+- 节点表按 seqlock 更新，布局有变化时加 `METER_LAYOUT_VERSION`。
+
 ## 校验
 
 - 带语义的数值（槽位编号、采样率、增益）在反序列化时就校验范围。
 - 所有消息都拒绝未知字段和未知类型。
-- 路由拓扑用 `RouteTopology::validate` 检查结构：主程序编译拓扑后、引擎收到拓扑时都要调用。
+- 路由拓扑用 `RouteTopology::validate` 检查结构：主程序编译拓扑后、引擎收到拓扑时都要调用。工作台拖线时用同一套规则 `topology::check_route`。
 
 ## 修改规则
 

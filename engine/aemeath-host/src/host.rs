@@ -9,6 +9,7 @@ use aemeath_engine::{Engine, EngineConfig, EngineEvent};
 use tokio::net::windows::named_pipe::NamedPipeServer;
 
 use crate::config::HostConfig;
+use crate::meter_publisher;
 use crate::session::{self, HostState, SessionEnd};
 use crate::status::StatusCache;
 use crate::topology_cache::TopologyCache;
@@ -40,14 +41,24 @@ pub async fn run(config: HostConfig, shutdown: impl Future<Output = ()>) -> io::
             }
         })?;
 
+    let (meter_banks, banks) = tokio::sync::watch::channel(None);
     let mut state = HostState {
         engine,
         cache: TopologyCache::new(&config.data_dir),
         topology: None,
         status: StatusCache::default(),
         events,
+        meter_banks,
     };
     restore_cached_topology(&mut state);
+    // 电平只用于显示：共享内存建不起来时记录下来，音频照常运行
+    let meter_task = match meter_publisher::spawn(&config.meter_memory_name, banks) {
+        Ok(task) => Some(task),
+        Err(error) => {
+            tracing::warn!(%error, "cannot create the meter memory, meters are unavailable");
+            None
+        }
+    };
 
     let mut listener = aemeath_sys::pipe::create_pipe_server(&config.pipe_name, true)?;
     tokio::pin!(shutdown);
@@ -84,6 +95,9 @@ pub async fn run(config: HostConfig, shutdown: impl Future<Output = ()>) -> io::
         }
     }
     tracing::info!("engine host stopping");
+    if let Some(task) = meter_task {
+        task.abort();
+    }
     Ok(())
 }
 
@@ -96,6 +110,7 @@ fn restore_cached_topology(state: &mut HostState) {
     match state.engine.apply_topology(&topology) {
         Ok(()) => {
             tracing::info!(revision = topology.revision.0, "restored the cached topology");
+            state.publish_meters();
             state.topology = Some(topology);
         }
         Err(error) => tracing::warn!(%error, "cannot apply the cached topology"),

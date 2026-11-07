@@ -2,6 +2,11 @@
 //!
 //! Windows 按"VID/PID + 序列号"识别设备实例，端点 ID、设备名、共享格式都绑定在实例上，
 //! 所以这里的每一项都必须永久不变：改动任何一项都会产生新的设备实例，OBS 等应用里选好的设备随之失效。
+//!
+//! 身份还决定了引擎与主程序共用的几个默认名称（数据目录、命名管道），也放在这里，两个进程各自计算、结果一致。
+
+use std::io;
+use std::path::PathBuf;
 
 use aemeath_protocol::ids::{SlotDirection, SlotId, SlotNumber};
 
@@ -15,6 +20,40 @@ pub enum IdentityProfile {
     ///
     /// 正式身份要等向 pid.codes 申请到正式 PID 后再加入（M4），在那之前不能发布。
     Development,
+}
+
+/// usbip-win2 默认连接的端口，也是 Aemeath USB/IP 服务端的默认端口
+pub const DEFAULT_USBIP_PORT: u16 = 3241;
+const APP_DATA_VARIABLE: &str = "APPDATA";
+
+impl IdentityProfile {
+    /// 默认数据目录：`%APPDATA%\Aemeath`；开发身份用 `%APPDATA%\Aemeath Dev`，与正式安装互不干扰
+    /// （ADR-0012；便携版的 `data\` 由守护进程传入）。
+    pub fn default_data_dir(self) -> Option<PathBuf> {
+        let app_data = std::env::var_os(APP_DATA_VARIABLE)?;
+        let folder = match self {
+            Self::Development => "Aemeath Dev",
+        };
+        Some(PathBuf::from(app_data).join(folder))
+    }
+
+    /// 引擎的命名管道名，带上当前用户的 SID：同一台电脑的不同用户各自运行一个引擎，互不冲突。
+    pub fn engine_pipe_name(self) -> io::Result<String> {
+        let sid = aemeath_sys::pipe::current_user_sid()?;
+        let product = match self {
+            Self::Development => "Aemeath.Dev",
+        };
+        Ok(format!(r"\\.\pipe\{product}.Engine.{sid}"))
+    }
+
+    /// 电平共享内存的名称（`Local\` 命名空间：引擎和主程序在同一个登录会话里），同样带上用户 SID。
+    pub fn meter_memory_name(self) -> io::Result<String> {
+        let sid = aemeath_sys::pipe::current_user_sid()?;
+        let product = match self {
+            Self::Development => "Aemeath.Dev",
+        };
+        Ok(format!(r"Local\{product}.Meters.{sid}"))
+    }
 }
 
 /// pid.codes 的公共 VID

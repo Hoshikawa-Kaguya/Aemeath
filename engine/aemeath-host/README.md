@@ -3,7 +3,7 @@
 引擎进程（`aemeath-host.exe`）：组装引擎与 USB/IP 服务端，在命名管道上与主程序通信，写日志，缓存最近一份路由拓扑并在启动时先恢复出声（ADR-0003、ADR-0008）。
 
 ```
-aemeath-host [--data-dir <目录>] [--usbip-port <端口>] [--pipe <管道名>]
+aemeath-host [--data-dir <目录>] [--usbip-port <端口>] [--pipe <管道名>] [--meters <共享内存名>]
 ```
 
 正式运行时由守护进程拉起并传入参数；开发时可以直接运行，按 Ctrl+C 退出。
@@ -15,6 +15,9 @@ aemeath-host [--data-dir <目录>] [--usbip-port <端口>] [--pipe <管道名>]
 | 数据目录 | `%APPDATA%\Aemeath Dev`（M4 加入正式身份后，正式版为 `%APPDATA%\Aemeath`；便携版由守护进程传入 `data\`） |
 | USB/IP 端口 | 3241（usbip-win2 的默认端口） |
 | 管道名 | `\\.\pipe\Aemeath.Dev.Engine.<当前用户 SID>` |
+| 电平共享内存 | `Local\Aemeath.Dev.Meters.<当前用户 SID>` |
+
+默认的管道名、共享内存名和数据目录都由 `aemeath_usbip::identity::IdentityProfile` 计算，主程序用同一套函数，两边结果一致。
 
 ## 命名管道
 
@@ -22,6 +25,13 @@ aemeath-host [--data-dir <目录>] [--usbip-port <端口>] [--pipe <管道名>]
 - 第一个实例要求"首个实例"：同名管道已存在（被别的进程或另一个引擎占用）时启动失败，这也保证每个用户只运行一个引擎。
 - 之后始终保留一个等待连接的实例，避免两次会话之间被别的进程抢先创建同名管道。
 - 同一时间服务一个客户端（主程序）；协议见 `crates/aemeath-protocol/README.md`。连接后 5 秒内必须握手；握手后先收到一份状态快照（槽位连接与格式、外部设备状态），之后收到变化。
+
+## 电平
+
+- 实时线程只写进程内的电平组。另有一个转写任务，每 20 ms 把峰值累加进共享内存，布局见 `aemeath_protocol::meters`。
+- 共享内存只允许当前用户访问。
+- 引擎重启时，如果主程序还开着上一块共享内存，就直接沿用，主程序这边不中断。
+- 共享内存建不起来时只记录日志，音频照常运行。
 
 ## 数据目录
 

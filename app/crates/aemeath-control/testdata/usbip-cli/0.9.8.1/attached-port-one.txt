@@ -1,0 +1,14 @@
+# usbip.exe port 1
+# exit=0  elapsed_ms=18  captured=2026-11-07T16:41:56
+## stdout
+Imported USB devices
+====================
+Port 01: device in use at High Speed(480Mbps)
+         Generic : pid.codes Test PID (1209:0001)
+           -> usbip://127.0.0.1:3241/1-1
+           -> remote bus/dev: 001/001
+           -> serial: 
+           -> mode: zero-copy
+
+## stderr
+

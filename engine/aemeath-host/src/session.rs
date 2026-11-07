@@ -8,8 +8,10 @@
 
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::time::Duration;
 
+use aemeath_engine::meters::MeterBank;
 use aemeath_engine::{Engine, EngineEvent};
 use aemeath_protocol::PROTOCOL_VERSION;
 use aemeath_protocol::frame::{self, FrameDecoder};
@@ -19,6 +21,7 @@ use aemeath_protocol::topology::{RouteTopology, TopologyError};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::windows::named_pipe::NamedPipeServer;
 use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::watch;
 
 use crate::status::{StatusCache, to_messages};
 use crate::topology_cache::TopologyCache;
@@ -36,12 +39,15 @@ pub struct HostState {
     pub topology: Option<RouteTopology>,
     pub status: StatusCache,
     pub events: UnboundedReceiver<EngineEvent>,
+    /// 当前拓扑的电平组，交给电平转写任务（[`crate::meter_publisher`]）
+    pub meter_banks: watch::Sender<Option<Arc<MeterBank>>>,
 }
 
 impl HostState {
     /// 下发拓扑并写入缓存（缓存写入失败只记录，不影响出声）。
     fn apply(&mut self, topology: RouteTopology) -> Result<(), TopologyError> {
         self.engine.apply_topology(&topology)?;
+        self.publish_meters();
         if let Err(error) = self.cache.save(&topology) {
             tracing::warn!(%error, "cannot cache the topology");
         }
@@ -53,6 +59,11 @@ impl HostState {
         );
         self.topology = Some(topology);
         Ok(())
+    }
+
+    /// 换拓扑后，把引擎新的电平组交给转写任务。
+    pub fn publish_meters(&self) {
+        self.meter_banks.send_replace(self.engine.meters().cloned());
     }
 }
 
