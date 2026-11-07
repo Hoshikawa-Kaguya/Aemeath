@@ -26,7 +26,7 @@ use crate::fifo::FrameFifo;
 const RESTART_LEAD_MICROFRAMES: i64 = 8;
 /// 输入方向额外的放出延迟（1 ms），吸收主机与引擎分块的 ±1 帧差异
 pub const RENDER_PRIME_MICROFRAMES: i64 = 8;
-/// URB 迟到不超过这么多微帧时仍接在原位置（与放出延迟相同，1 ms）
+/// 输入槽位的 URB 迟到不超过这么多微帧时仍接在原位置（与放出延迟相同，1 ms）
 const LATE_TOLERANCE_MICROFRAMES: i64 = RENDER_PRIME_MICROFRAMES;
 /// 缓冲容量：最高采样率下 100 ms
 const FIFO_CAPACITY_FRAMES: usize = 76_800;
@@ -127,21 +127,29 @@ impl SlotStream {
 
     /// 在时间线上为一个 URB 预留位置。
     ///
-    /// URB 通常提前约 10 ms 到达，紧接上一个 URB。迟到不超过 [`LATE_TOLERANCE_MICROFRAMES`] 时仍接在原位置：
-    /// 输入方向的数据本来就多等 1 ms 才放出，这么小的迟到不会造成空档。迟到更多时从当前时刻往后重新开始，
-    /// 并在结果中报告迟到的微帧数。
+    /// URB 通常提前约 10 ms 到达，紧接上一个 URB。迟到时是否仍接在原位置，按方向不同：
+    /// - 输入槽位（主机播放）：数据本来就多等 1 ms 才放出，迟到不超过 [`LATE_TOLERANCE_MICROFRAMES`] 不会造成空档。
+    /// - 输出槽位（主机录音）：数据在 URB 到期时才取，只要它覆盖的时段还没结束（每个 URB 约 10 ms），
+    ///   接在原位置就不会有任何空档（2026-11-07 实测 Windows 曾迟交 2.9 ms）。
+    ///
+    /// 超出容差时从当前时刻往后重新开始，并在结果中报告迟到的微帧数。
     pub fn reserve(&mut self, submit: &Submit, now_microframe: i64) -> Reservation {
         let interval = i64::from(submit.interval.max(1));
         let packets = i64::try_from(submit.iso_packets.len()).unwrap_or(i64::MAX);
+        let span = packets * interval;
+        let keeps_position = |next: i64| match self.slot.direction {
+            SlotDirection::In => next > now_microframe - LATE_TOLERANCE_MICROFRAMES,
+            SlotDirection::Out => next + span > now_microframe,
+        };
         let (start, late_by) = match self.next_microframe {
-            Some(next) if next > now_microframe - LATE_TOLERANCE_MICROFRAMES => (next, None),
+            Some(next) if keeps_position(next) => (next, None),
             Some(next) => {
                 self.stats.restarts += 1;
                 (now_microframe + RESTART_LEAD_MICROFRAMES, Some(now_microframe - next))
             }
             None => (now_microframe + RESTART_LEAD_MICROFRAMES, None),
         };
-        let end = start + packets * interval;
+        let end = start + span;
         self.next_microframe = Some(end);
         Reservation { start, end, late_by }
     }
@@ -273,4 +281,72 @@ fn packet_range(packet: &IsoPacket, buffer_len: usize) -> std::ops::Range<usize>
         .saturating_add(usize::try_from(packet.length).unwrap_or(0))
         .min(buffer_len);
     start..end
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aem_protocol::ids::SlotNumber;
+    use aem_usbip::wire::Direction;
+    use std::net::TcpListener;
+
+    /// 80 个包、每包 1 个微帧：与 Windows 实测的 URB 相同（10 ms）
+    const PACKETS: usize = 80;
+
+    fn stream(direction: SlotDirection) -> SlotStream {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let writer = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let slot = SlotId {
+            direction,
+            number: SlotNumber::new(1).unwrap(),
+        };
+        SlotStream::new(slot, writer)
+    }
+
+    fn submit() -> Submit {
+        Submit {
+            seq: 1,
+            direction: Direction::In,
+            endpoint: 2,
+            transfer_flags: 0,
+            transfer_len: 0,
+            start_frame: 0,
+            interval: 1,
+            setup: [0; 8],
+            out_data: Vec::new(),
+            iso_packets: vec![IsoPacket::default(); PACKETS],
+        }
+    }
+
+    #[test]
+    fn consecutive_urbs_follow_each_other() {
+        let mut stream = stream(SlotDirection::Out);
+        let first = stream.reserve(&submit(), 0);
+        assert_eq!((first.start, first.end), (8, 88));
+        let second = stream.reserve(&submit(), 10);
+        assert_eq!((second.start, second.end, second.late_by), (88, 168, None));
+    }
+
+    #[test]
+    fn capture_slots_keep_their_position_while_the_urb_has_not_ended() {
+        let mut stream = stream(SlotDirection::Out);
+        stream.reserve(&submit(), 0);
+        // 下一个 URB 应从 88 开始，迟到 23 个微帧（2.9 ms）才到：仍在它覆盖的时段内，接在原位置
+        let late = stream.reserve(&submit(), 111);
+        assert_eq!((late.start, late.late_by), (168 - 80, None));
+        assert_eq!(stream.stats.restarts, 0);
+        // 到达时它覆盖的时段已经结束：只能重新开始
+        let too_late = stream.reserve(&submit(), 400);
+        assert_eq!((too_late.start, too_late.late_by), (408, Some(400 - 168)));
+    }
+
+    #[test]
+    fn render_slots_tolerate_only_one_millisecond() {
+        let mut stream = stream(SlotDirection::In);
+        stream.reserve(&submit(), 0);
+        assert_eq!(stream.reserve(&submit(), 95).late_by, None, "7 microframes late");
+        let late = stream.reserve(&submit(), 168 + 20);
+        assert_eq!(late.late_by, Some(20));
+        assert_eq!(stream.stats.restarts, 1);
+    }
 }
