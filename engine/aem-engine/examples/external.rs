@@ -87,7 +87,7 @@ fn run() -> Result<bool> {
         identity: IdentityProfile::Development,
     })?;
     engine.apply_plan(&plan(endpoint_id(&output_device)?, endpoint_id(&input_device)?)?)?;
-    let _attachment = Attachment::attach(&BUS_IDS);
+    let _attachment = Attachment::attach(PORT, &BUS_IDS);
     let started = Instant::now();
 
     let seconds = options.seconds;

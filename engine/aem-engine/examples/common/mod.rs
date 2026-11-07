@@ -39,8 +39,8 @@ pub fn slot(direction: SlotDirection, number: u8) -> Result<SlotId> {
     })
 }
 
-pub fn attach(busid: &str) {
-    let port = PORT.to_string();
+pub fn attach(port: u16, busid: &str) {
+    let port = port.to_string();
     let output = Command::new(USBIP)
         .args(["-t", &port, "attach", "-r", "127.0.0.1", "-b", busid, "--once"])
         .output();
@@ -50,21 +50,23 @@ pub fn attach(busid: &str) {
     }
 }
 
-/// 挂载开发槽位；离开作用域时（包括出错提前返回）卸下所有指向本测试端口的挂载。
-pub struct Attachment;
+/// 挂载开发槽位；离开作用域时（包括出错提前返回）卸下所有指向这个端口的挂载。
+pub struct Attachment {
+    port: u16,
+}
 
 impl Attachment {
-    pub fn attach(bus_ids: &[&str]) -> Self {
+    pub fn attach(port: u16, bus_ids: &[&str]) -> Self {
         for busid in bus_ids {
-            attach(busid);
+            attach(port, busid);
         }
-        Self
+        Self { port }
     }
 }
 
 impl Drop for Attachment {
     fn drop(&mut self) {
-        detach_all();
+        detach_all(self.port);
     }
 }
 
@@ -82,13 +84,13 @@ pub fn timed<T>(started: Instant, result: Result<T>) -> Result<T> {
     result.map_err(|error| format!("{error} (after {:.1} s)", started.elapsed().as_secs_f64()).into())
 }
 
-/// 卸下所有指向本测试端口的挂载。
-pub fn detach_all() {
+/// 卸下所有指向这个端口的挂载。
+pub fn detach_all(port: u16) {
     let Ok(output) = Command::new(USBIP).arg("port").output() else {
         return;
     };
     let text = String::from_utf8_lossy(&output.stdout).to_string();
-    let needle = format!("127.0.0.1:{PORT}/");
+    let needle = format!("127.0.0.1:{port}/");
     let mut current: Option<String> = None;
     for line in text.lines().map(str::trim) {
         if let Some(rest) = line.strip_prefix("Port ") {
@@ -332,4 +334,100 @@ pub fn capture_peak(device: &wasapi::Device, seconds: f64) -> Result<f64> {
     }
     client.stop_stream()?;
     Ok(peak)
+}
+
+/// 一段录音的左声道。
+pub struct Recording {
+    pub sample_rate: u32,
+    pub left: Vec<f32>,
+    /// WASAPI 报告"数据不连续"的位置（秒）：录音应用自己没来得及读、缓冲溢出，与被测引擎无关
+    pub discontinuities: Vec<f64>,
+    /// 真正开始录音的时刻（查找、初始化设备之后），录音中的时间都从这里算起
+    pub started_at: Instant,
+}
+
+impl Recording {
+    /// 把以 `origin` 为起点的时间换算成录音中的位置（秒）
+    pub fn seconds_since(&self, origin: Instant, at_seconds: f64) -> f64 {
+        at_seconds - self.started_at.saturating_duration_since(origin).as_secs_f64()
+    }
+}
+
+/// 录音 `seconds` 秒，保存左声道（传入播放设备时录的是它的环回）。
+pub fn record(device: &wasapi::Device, seconds: f64) -> Result<Recording> {
+    let mut client = device.get_iaudioclient()?;
+    let format = client.get_mixformat()?;
+    require_float32(&format)?;
+    let (default_period, _) = client.get_device_period()?;
+    client.initialize_client(
+        &format,
+        wasapi::Direction::Capture,
+        StreamMode::PollingShared {
+            autoconvert: false,
+            buffer_duration_hns: default_period * 4,
+        },
+        None,
+    )?;
+    let capture_client = client.get_audiocaptureclient()?;
+    let block_align = format.get_blockalign() as usize;
+    let sample_rate = format.get_samplespersec();
+    let mut left = Vec::with_capacity((seconds * f64::from(sample_rate)) as usize);
+    let mut discontinuities = Vec::new();
+    let mut buffer = Vec::new();
+    client.start_stream()?;
+    let started = Instant::now();
+    while started.elapsed().as_secs_f64() < seconds {
+        thread::sleep(POLL_INTERVAL);
+        while let Some(frames) = capture_client.get_next_packet_size()?.filter(|frames| *frames > 0) {
+            buffer.resize(frames as usize * block_align, 0);
+            let (read, info) = capture_client.read_from_device(&mut buffer)?;
+            if info.flags.data_discontinuity {
+                discontinuities.push(left.len() as f64 / f64::from(sample_rate));
+            }
+            for frame in buffer[..read as usize * block_align].chunks_exact(block_align) {
+                left.push(if info.flags.silent {
+                    0.0
+                } else {
+                    f32::from_le_bytes([frame[0], frame[1], frame[2], frame[3]])
+                });
+            }
+        }
+    }
+    client.stop_stream()?;
+    Ok(Recording {
+        sample_rate,
+        left,
+        discontinuities,
+        started_at: started,
+    })
+}
+
+/// 检查录音中 [`from_s`, `to_s`) 这段（从录音开始算起）是否是连续的 1 kHz 正弦。
+pub fn check_sine(recording: &Recording, from_s: f64, to_s: f64, amplitude: f64) -> Analysis {
+    let rate = f64::from(recording.sample_rate);
+    let coefficient = 2.0 * (TAU * SINE_HZ / rate).cos();
+    let threshold = amplitude * GLITCH_RATIO;
+    let from = ((from_s * rate) as usize).max(2).min(recording.left.len());
+    let to = ((to_s * rate) as usize).min(recording.left.len());
+    let mut analysis = Analysis {
+        sample_rate: recording.sample_rate,
+        ..Analysis::default()
+    };
+    let mut last_glitch: Option<usize> = None;
+    for index in from..to {
+        let sample = f64::from(recording.left[index]);
+        let residual =
+            sample - (coefficient * f64::from(recording.left[index - 1]) - f64::from(recording.left[index - 2]));
+        analysis.checked += 1;
+        analysis.peak = analysis.peak.max(sample.abs());
+        let in_holdoff = last_glitch.is_some_and(|last| ((index - last) as u64) < GLITCH_HOLDOFF);
+        if residual.abs() > threshold && !in_holdoff {
+            analysis.glitches += 1;
+            if analysis.glitches <= 5 {
+                println!("glitch at {:.3} s, residual {residual:.5}", index as f64 / rate);
+            }
+            last_glitch = Some(index);
+        }
+    }
+    analysis
 }

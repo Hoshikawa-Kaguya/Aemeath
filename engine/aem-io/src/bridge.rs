@@ -20,6 +20,17 @@ const LOG_PERIOD: Duration = Duration::from_secs(60);
 pub enum BridgeError {
     Device(WasapiError),
     Resample(ResampleError),
+    /// 长时间没有设备事件（见 [`device::EventWatch`]）
+    Stalled,
+}
+
+impl From<device::WaitError> for BridgeError {
+    fn from(error: device::WaitError) -> Self {
+        match error {
+            device::WaitError::Device(error) => Self::Device(error),
+            device::WaitError::Stalled => Self::Stalled,
+        }
+    }
 }
 
 impl From<WasapiError> for BridgeError {
@@ -37,6 +48,7 @@ impl From<ResampleError> for BridgeError {
 /// 桥接的统计与日志：每秒给控制器一个平均水位，每分钟记一次摘要；溢出、欠载立即记录（限频）。
 pub struct BridgeLog {
     endpoint: String,
+    session_started: Instant,
     last_control: Instant,
     last_log: Instant,
     level_sum: f64,
@@ -58,6 +70,7 @@ impl BridgeLog {
         let now = Instant::now();
         Self {
             endpoint: endpoint.to_owned(),
+            session_started: now,
             last_control: now,
             last_log: now,
             level_sum: 0.0,
@@ -145,6 +158,7 @@ impl BridgeError {
         match self {
             Self::Device(error) => device::offline_reason(error),
             Self::Resample(_) => OfflineReason::WaitingForDevice,
+            Self::Stalled => OfflineReason::NoSignal,
         }
     }
 }
@@ -154,6 +168,22 @@ impl std::fmt::Display for BridgeError {
         match self {
             Self::Device(error) => write!(f, "device error: {error}"),
             Self::Resample(error) => write!(f, "resampler error: {error}"),
+            Self::Stalled => write!(f, "no device events for several seconds"),
         }
+    }
+}
+
+impl Drop for BridgeLog {
+    /// 会话结束（设备被拔出、计划不再使用、程序退出）时记录这次会话的汇总。
+    fn drop(&mut self) {
+        tracing::info!(
+            endpoint = %self.endpoint,
+            seconds = format!("{:.1}", self.session_started.elapsed().as_secs_f64()),
+            drift_ppm = format!("{:.2}", self.last_update.integral_ppm),
+            overflow_frames = self.overflow_frames,
+            underflow_events = self.underflow_events,
+            discontinuities = self.discontinuities,
+            "bridge session ended"
+        );
     }
 }

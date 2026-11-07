@@ -50,4 +50,13 @@ cargo run -p aem-engine --example loopback --release -- 20 48000
 cargo run -p aem-engine --example external --release -- 120 --output "设备名片段" --input "设备名片段"
 ```
 
-agent 执行的测试最长 5 分钟；长时间稳定性由维护者用 dev 构建实际使用，看日志验证。
+`examples/recovery.rs`：设备拔插自恢复。第二个引擎用开发槽位 In 2 / Out 2 扮演外部设备，被测引擎把它们当作外部输出和外部输入；
+中途卸下 In 2 / Out 2（相当于拔出），6 秒后重新挂载，检查被测引擎不重启就能自动恢复，恢复后信号连续。约 80 秒。
+
+```sh
+cargo run -p aem-engine --example recovery --release
+```
+
+开发槽位 Out 2 的共享格式需要是引擎采样率（48k）；Windows 给录音端选的默认格式是 44.1k，正式产品在首次注册槽位时设定（ADR-0010）。
+
+agent 执行的测试最长 5 分钟。长期测试指维护者用 Aemeath 实际替代 Voicemeeter 之后的日常使用。

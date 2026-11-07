@@ -9,10 +9,9 @@ use std::thread;
 
 use aem_dsp::resample::{FixedSide, RateController, StereoResampler, relative_ratio};
 use rtrb::Producer;
-use wasapi::WasapiError;
 
 use crate::bridge::{BridgeError, BridgeLog, CONTROL_PERIOD};
-use crate::device::{self, EVENT_WAIT_MS, OpenStream, SessionEnd};
+use crate::device::{self, EventWatch, OpenStream, SessionEnd, Waited};
 use crate::{BridgeConfig, BridgeHandle, IoDirection, STEREO, StatusSink, TARGET_LEVEL_MS, frames_to_ms};
 
 /// 每次重采样处理的设备帧数：1 ms
@@ -63,15 +62,14 @@ fn run_session(
     let mut log = BridgeLog::new(&config.endpoint.0);
 
     stream.client.start_stream()?;
+    let mut watch = EventWatch::new();
     loop {
         if stop.load(Ordering::Relaxed) || producer.is_abandoned() {
             let _ = stream.client.stop_stream();
             return Ok(SessionEnd::Finished);
         }
-        match stream.event.wait_for_event(EVENT_WAIT_MS) {
-            Ok(()) => {}
-            Err(WasapiError::EventTimeout) => continue,
-            Err(error) => return Err(error.into()),
+        if let Waited::Timeout = watch.wait(stream)? {
+            continue;
         }
 
         while let Some(frames) = capture.get_next_packet_size()?.filter(|frames| *frames > 0) {

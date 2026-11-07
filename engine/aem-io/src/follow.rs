@@ -18,7 +18,8 @@ use std::time::{Duration, Instant};
 use aem_protocol::ids::EndpointId;
 use wasapi::{AudioClient, WasapiError};
 
-use crate::device::{self, EVENT_WAIT_MS, OpenStream, SessionEnd};
+use crate::bridge::BridgeError;
+use crate::device::{self, EventWatch, OpenStream, SessionEnd, Waited};
 use crate::{IoDirection, STEREO, StatusSink};
 
 const MICROFRAMES_PER_SECOND: f64 = 8_000.0;
@@ -80,10 +81,7 @@ fn run(
     device::run_with_retry(endpoint, direction, stop, &quiet, |stream| {
         match follow(stream, direction, target.as_mut(), stop) {
             Ok(()) => SessionEnd::Finished,
-            Err(error) => SessionEnd::Failed {
-                reason: device::offline_reason(&error),
-                message: error.to_string(),
-            },
+            Err(error) => SessionEnd::failed(&error),
         }
     });
     target
@@ -94,11 +92,12 @@ fn follow(
     direction: IoDirection,
     target: &mut dyn ClockTarget,
     stop: &AtomicBool,
-) -> Result<(), WasapiError> {
+) -> Result<(), BridgeError> {
     let clock = stream.client.get_audioclock()?;
     let frequency = clock.get_frequency()? as f64;
     let mut io = SilentIo::new(stream, direction)?;
     stream.client.start_stream()?;
+    let mut watch = EventWatch::new();
     tracing::info!(?direction, "clock master following started");
 
     let started = Instant::now();
@@ -108,10 +107,8 @@ fn follow(
     let mut origin: Option<(u64, i64, f64)> = None;
     let mut window: VecDeque<(f64, f64)> = VecDeque::with_capacity(WINDOW + 1);
     while !stop.load(Ordering::Relaxed) {
-        match stream.event.wait_for_event(EVENT_WAIT_MS) {
-            Ok(()) => io.service(stream)?,
-            Err(WasapiError::EventTimeout) => {}
-            Err(error) => return Err(error),
+        if let Waited::Event = watch.wait(stream)? {
+            io.service(stream)?;
         }
         if Instant::now() < next_sample {
             continue;

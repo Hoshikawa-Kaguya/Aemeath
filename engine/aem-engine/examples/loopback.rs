@@ -49,7 +49,7 @@ fn run() -> Result<bool> {
         identity: IdentityProfile::Development,
     })?;
     engine.apply_plan(&plan(SampleRate::new(rate)?)?)?;
-    let _attachment = Attachment::attach(&BUS_IDS);
+    let _attachment = Attachment::attach(PORT, &BUS_IDS);
     let started = Instant::now();
 
     let window = seconds - TAIL_SECONDS - SETTLE_SECONDS;

@@ -12,10 +12,9 @@ use std::time::Duration;
 
 use aem_dsp::resample::{FixedSide, RateController, StereoResampler, relative_ratio};
 use rtrb::Consumer;
-use wasapi::WasapiError;
 
 use crate::bridge::{BridgeError, BridgeLog, CONTROL_PERIOD};
-use crate::device::{self, EVENT_WAIT_MS, OpenStream, SessionEnd};
+use crate::device::{self, EventWatch, OpenStream, SessionEnd, Waited};
 use crate::{
     BridgeConfig, BridgeHandle, IoDirection, STEREO, StatusSink, TARGET_LEVEL_MS, frames_to_ms, target_frames,
 };
@@ -117,15 +116,14 @@ fn run_session(
     render.write_to_device(&bytes, None)?;
     stream.client.start_stream()?;
 
+    let mut watch = EventWatch::new();
     loop {
         if stop.load(Ordering::Relaxed) || consumer.is_abandoned() {
             let _ = stream.client.stop_stream();
             return Ok(SessionEnd::Finished);
         }
-        match stream.event.wait_for_event(EVENT_WAIT_MS) {
-            Ok(()) => {}
-            Err(WasapiError::EventTimeout) => continue,
-            Err(error) => return Err(error.into()),
+        if let Waited::Timeout = watch.wait(stream)? {
+            continue;
         }
 
         let available = stream.client.get_available_space_in_frames()? as usize;

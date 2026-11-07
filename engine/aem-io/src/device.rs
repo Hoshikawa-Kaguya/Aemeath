@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use aem_protocol::ids::EndpointId;
 use aem_protocol::message::{DeviceFormat, EndpointStatus, OfflineReason, SampleFormat};
@@ -24,6 +24,10 @@ const RETRY_INTERVAL: Duration = Duration::from_secs(2);
 const STOP_POLL: Duration = Duration::from_millis(100);
 /// 等待设备事件的超时（毫秒）；超时后检查停止信号再继续等
 pub const EVENT_WAIT_MS: u32 = 100;
+/// 这么久没有设备事件时，主动查询一次设备，让失效（设备被拔出、重新连接）以错误的形式暴露出来
+const PROBE_AFTER: Duration = Duration::from_secs(1);
+/// 这么久没有设备事件、查询却又正常时，视为停滞：关闭这次会话，重新打开设备
+const STALL_LIMIT: Duration = Duration::from_secs(5);
 const BYTES_PER_F32: usize = 4;
 const FLOAT_BITS: u16 = 32;
 
@@ -69,6 +73,64 @@ impl OpenStream {
                 out.extend_from_slice(&sample.to_le_bytes());
             }
         }
+    }
+}
+
+/// 一次等待的结果。
+pub enum Waited {
+    Event,
+    /// 等待超时，但还不到停滞的程度：调用方检查停止信号后继续等
+    Timeout,
+}
+
+/// 等待设备事件出错。
+#[derive(Debug)]
+pub enum WaitError {
+    Device(WasapiError),
+    /// 长时间没有事件，设备却没有报错
+    Stalled,
+}
+
+/// 设备事件的看门狗。
+///
+/// 设备被拔出时，WASAPI 不一定再触发事件；只等事件的话，IO 线程可能一直卡住，既不报告离线也不恢复。
+/// 所以超过 [`PROBE_AFTER`] 没有事件时查询一次设备，超过 [`STALL_LIMIT`] 时放弃这次会话。
+pub struct EventWatch {
+    last_event: Instant,
+}
+
+impl EventWatch {
+    pub fn new() -> Self {
+        Self {
+            last_event: Instant::now(),
+        }
+    }
+
+    pub fn wait(&mut self, stream: &OpenStream) -> Result<Waited, WaitError> {
+        match stream.event.wait_for_event(EVENT_WAIT_MS) {
+            Ok(()) => {
+                self.last_event = Instant::now();
+                Ok(Waited::Event)
+            }
+            Err(WasapiError::EventTimeout) => {
+                let silent_for = self.last_event.elapsed();
+                if silent_for >= PROBE_AFTER {
+                    stream.client.get_current_padding().map_err(WaitError::Device)?;
+                }
+                if silent_for >= STALL_LIMIT {
+                    Err(WaitError::Stalled)
+                } else {
+                    Ok(Waited::Timeout)
+                }
+            }
+            Err(error) => Err(WaitError::Device(error)),
+        }
+    }
+}
+
+impl Default for EventWatch {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
