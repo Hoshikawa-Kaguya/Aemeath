@@ -24,7 +24,7 @@ use crate::mixer::{MAX_BLOCK_FRAMES, Mixer};
 use crate::port::PortIssues;
 use crate::slot::SlotStream;
 use crate::timeline::{MICROFRAMES_PER_MS, Timeline};
-use crate::{CHANNELS, EngineEvent};
+use crate::{EngineEvent, STEREO};
 
 const MICROSECONDS_PER_MICROFRAME: i64 = 125;
 const HNS_PER_MICROSECOND: i64 = 10;
@@ -295,7 +295,7 @@ impl Scheduler {
             }
             *start = end;
         }
-        debug_assert_eq!(CHANNELS, usize::from(SLOT_CHANNELS));
+        debug_assert_eq!(STEREO, usize::from(SLOT_CHANNELS));
         self.log_port_issues();
     }
 

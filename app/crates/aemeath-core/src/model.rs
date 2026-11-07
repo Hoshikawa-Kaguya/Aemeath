@@ -3,8 +3,8 @@
 //! 这些类型就是配置文件的内容（[`crate::store`]），也是编译路由拓扑的来源（[`crate::compile`]）。
 //! 只描述"用户搭建了什么"，不含运行时状态（设备是否在线、槽位是否已挂载等由控制面另行跟踪）。
 
-use aemeath_protocol::ids::{EndpointId, NodeId, SlotDirection, SlotId};
-use aemeath_protocol::topology::{NodeRole, Resampler};
+use aemeath_protocol::ids::{EndpointId, NodeId};
+use aemeath_protocol::topology::{self, Resampler, Strip};
 use aemeath_protocol::units::{GainDb, SampleRate};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -60,52 +60,8 @@ pub struct DeviceRef {
     pub name: String,
 }
 
-/// 节点类型。M1 只有 IO 节点和总线；应用源、外部插入、录音节点以后加入。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-pub enum NodeKind {
-    /// 外部输入（A）
-    ExternalInput { device: DeviceRef },
-    /// 虚拟输入（B）：占用一个输入方向的槽位
-    VirtualInput { slot: SlotId },
-    /// 虚拟输出（C）：占用一个输出方向的槽位
-    VirtualOutput { slot: SlotId },
-    /// 外部输出（D）
-    ExternalOutput { device: DeviceRef },
-    /// 总线：只求和再分发
-    Bus,
-}
-
-impl NodeKind {
-    pub fn role(&self) -> NodeRole {
-        match self {
-            Self::ExternalInput { .. } | Self::VirtualInput { .. } => NodeRole::Input,
-            Self::Bus => NodeRole::Processing,
-            Self::VirtualOutput { .. } | Self::ExternalOutput { .. } => NodeRole::Output,
-        }
-    }
-
-    /// 节点占用的槽位
-    pub fn slot(&self) -> Option<SlotId> {
-        match self {
-            Self::VirtualInput { slot } | Self::VirtualOutput { slot } => Some(*slot),
-            _ => None,
-        }
-    }
-
-    /// 占用槽位的节点要求的槽位方向
-    pub fn slot_direction(&self) -> Option<SlotDirection> {
-        match self {
-            Self::VirtualInput { .. } => Some(SlotDirection::In),
-            Self::VirtualOutput { .. } => Some(SlotDirection::Out),
-            _ => None,
-        }
-    }
-
-    pub fn is_external(&self) -> bool {
-        matches!(self, Self::ExternalInput { .. } | Self::ExternalOutput { .. })
-    }
-}
+/// 工作台里的节点类型：与路由拓扑共用同一个定义，外部设备带上设备名。
+pub type NodeKind = topology::NodeKind<DeviceRef>;
 
 /// 节点在工作台上的位置（工作台坐标，与缩放无关）。
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
@@ -113,23 +69,6 @@ impl NodeKind {
 pub struct Position {
     pub x: f64,
     pub y: f64,
-}
-
-/// 通道条。M1 只有增益和静音；门限、监听在 M2 加入。
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Strip {
-    pub gain: GainDb,
-    pub muted: bool,
-}
-
-impl Default for Strip {
-    fn default() -> Self {
-        Self {
-            gain: GainDb::UNITY,
-            muted: false,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

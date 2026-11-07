@@ -2,12 +2,16 @@
 //!
 //! 引擎只执行拓扑，不拥有配置；它缓存最近一份拓扑，重启后先按缓存恢复出声（ADR-0008）。
 //! 拓扑总是整体替换，不做增量修改，这样引擎侧的原子替换和崩溃恢复都更简单。
+//!
+//! 节点类型 [`NodeKind`] 与连线规则 [`check_route`] 在这里只定义一次：主程序的工作台（`aemeath-core`）
+//! 用同一个 `NodeKind`（外部设备带上设备名），拖线检查与拓扑校验用同一套规则。
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::graph;
 use crate::ids::{EndpointId, NodeId, SlotDirection, SlotId, TopologyRevision};
 use crate::units::{GainDb, SampleRate};
 
@@ -54,17 +58,19 @@ pub struct TopologyNode {
 }
 
 /// 节点类型。M1 只有 IO 节点和总线；应用源、外部插入、录音节点以后加入并提升协议版本。
+///
+/// `D` 是外部设备的表示：路由拓扑里只是端点 ID；主程序的工作台里还带上设备名，用于后备匹配。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-pub enum NodeKind {
+pub enum NodeKind<D = EndpointId> {
     /// 外部输入（A）：不专属于 Aemeath 的录音端点
-    ExternalInput { endpoint: EndpointId },
+    ExternalInput { device: D },
     /// 虚拟输入（B）：占用一个输入方向的槽位
     VirtualInput { slot: SlotId },
     /// 虚拟输出（C）：占用一个输出方向的槽位
     VirtualOutput { slot: SlotId },
     /// 外部输出（D）：不专属于 Aemeath 的播放端点
-    ExternalOutput { endpoint: EndpointId },
+    ExternalOutput { device: D },
     /// 总线：只求和再分发
     Bus,
 }
@@ -77,7 +83,7 @@ pub enum NodeRole {
     Output,
 }
 
-impl NodeKind {
+impl<D> NodeKind<D> {
     pub fn role(&self) -> NodeRole {
         match self {
             Self::ExternalInput { .. } | Self::VirtualInput { .. } => NodeRole::Input,
@@ -96,19 +102,43 @@ impl NodeKind {
         self.role() != NodeRole::Input
     }
 
-    /// 节点占用的槽位，以及该节点类型要求的槽位方向
-    fn slot(&self) -> Option<(SlotId, SlotDirection)> {
+    /// 节点占用的槽位
+    pub fn slot(&self) -> Option<SlotId> {
         match self {
-            Self::VirtualInput { slot } => Some((*slot, SlotDirection::In)),
-            Self::VirtualOutput { slot } => Some((*slot, SlotDirection::Out)),
+            Self::VirtualInput { slot } | Self::VirtualOutput { slot } => Some(*slot),
             _ => None,
         }
     }
 
-    fn endpoint(&self) -> Option<&EndpointId> {
+    /// 占用槽位的节点类型要求的槽位方向
+    pub fn slot_direction(&self) -> Option<SlotDirection> {
         match self {
-            Self::ExternalInput { endpoint } | Self::ExternalOutput { endpoint } => Some(endpoint),
+            Self::VirtualInput { .. } => Some(SlotDirection::In),
+            Self::VirtualOutput { .. } => Some(SlotDirection::Out),
             _ => None,
+        }
+    }
+
+    /// 外部设备节点的设备
+    pub fn device(&self) -> Option<&D> {
+        match self {
+            Self::ExternalInput { device } | Self::ExternalOutput { device } => Some(device),
+            _ => None,
+        }
+    }
+
+    pub fn is_external(&self) -> bool {
+        self.device().is_some()
+    }
+
+    /// 换一种外部设备的表示（例如从工作台的设备记录取出端点 ID），其余不变。
+    pub fn map_device<E>(&self, map: impl FnOnce(&D) -> E) -> NodeKind<E> {
+        match self {
+            Self::ExternalInput { device } => NodeKind::ExternalInput { device: map(device) },
+            Self::VirtualInput { slot } => NodeKind::VirtualInput { slot: *slot },
+            Self::VirtualOutput { slot } => NodeKind::VirtualOutput { slot: *slot },
+            Self::ExternalOutput { device } => NodeKind::ExternalOutput { device: map(device) },
+            Self::Bus => NodeKind::Bus,
         }
     }
 }
@@ -140,7 +170,60 @@ pub struct TopologyRoute {
     pub enabled: bool,
 }
 
-/// 路由拓扑不合法的原因。前端拖动连线时的提示也基于其中与连线有关的几种。
+/// 不能连线的原因（工作台拖线时显示，拓扑校验也用同一套规则）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum RouteRejection {
+    #[error("a node cannot be routed to itself")]
+    SelfRoute,
+    /// 起点是输出节点，不发出声音
+    #[error("the source node does not send sound")]
+    CannotSend,
+    /// 终点是输入节点，不接收声音
+    #[error("the destination node does not receive sound")]
+    CannotReceive,
+    #[error("the route already exists")]
+    Duplicate,
+    /// 关闭的连线也算在内：重新打开时不应该突然形成回路
+    #[error("the route would create a loop")]
+    Loop,
+}
+
+/// [`check_route`] 的结果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum RouteCheckError {
+    #[error("{0} does not exist")]
+    UnknownNode(NodeId),
+    #[error(transparent)]
+    Rejected(#[from] RouteRejection),
+}
+
+/// 检查能否在已有连线 `existing` 之上新增 `from` → `to`。
+/// `role_of` 查节点的角色，节点不存在时返回 None。
+pub fn check_route(
+    role_of: impl Fn(NodeId) -> Option<NodeRole>,
+    existing: &[(NodeId, NodeId)],
+    from: NodeId,
+    to: NodeId,
+) -> Result<(), RouteCheckError> {
+    let source = role_of(from).ok_or(RouteCheckError::UnknownNode(from))?;
+    let destination = role_of(to).ok_or(RouteCheckError::UnknownNode(to))?;
+    let rejection = if from == to {
+        RouteRejection::SelfRoute
+    } else if source == NodeRole::Output {
+        RouteRejection::CannotSend
+    } else if destination == NodeRole::Input {
+        RouteRejection::CannotReceive
+    } else if existing.contains(&(from, to)) {
+        RouteRejection::Duplicate
+    } else if graph::reaches(existing, to, from) {
+        RouteRejection::Loop
+    } else {
+        return Ok(());
+    };
+    Err(rejection.into())
+}
+
+/// 路由拓扑不合法的原因。
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum TopologyError {
     #[error("the topology has {0} nodes, more than the limit {MAX_NODES}")]
@@ -165,16 +248,12 @@ pub enum TopologyError {
     InvalidClockMaster(NodeId),
     #[error("a route refers to {0}, which is not in the topology")]
     UnknownNode(NodeId),
-    #[error("{0} is routed to itself")]
-    SelfRoute(NodeId),
-    #[error("{0} is an output node and cannot send")]
-    CannotSend(NodeId),
-    #[error("{0} is an input node and cannot receive")]
-    CannotReceive(NodeId),
-    #[error("the route from {from} to {to} appears more than once")]
-    DuplicateRoute { from: NodeId, to: NodeId },
-    #[error("the routes form a loop through {0}")]
-    Loop(NodeId),
+    #[error("the route from {from} to {to} is not allowed: {rejection}")]
+    InvalidRoute {
+        from: NodeId,
+        to: NodeId,
+        rejection: RouteRejection,
+    },
 }
 
 impl RouteTopology {
@@ -188,18 +267,12 @@ impl RouteTopology {
         }
 
         let nodes = self.validate_nodes()?;
-        if let Some(master) = self.clock_master {
-            let is_external = matches!(
-                nodes.get(&master),
-                Some(NodeKind::ExternalInput { .. } | NodeKind::ExternalOutput { .. })
-            );
-            if !is_external {
-                return Err(TopologyError::InvalidClockMaster(master));
-            }
+        if let Some(master) = self.clock_master
+            && !nodes.get(&master).is_some_and(|kind| kind.is_external())
+        {
+            return Err(TopologyError::InvalidClockMaster(master));
         }
-
-        self.validate_routes(&nodes)?;
-        self.check_acyclic()
+        self.validate_routes(&nodes)
     }
 
     fn validate_nodes(&self) -> Result<HashMap<NodeId, &NodeKind>, TopologyError> {
@@ -211,17 +284,15 @@ impl RouteTopology {
             if nodes.insert(node.id, &node.kind).is_some() {
                 return Err(TopologyError::DuplicateNode(node.id));
             }
-            if let Some(endpoint) = node.kind.endpoint()
-                && !endpoint.is_well_formed()
-            {
-                return Err(TopologyError::InvalidEndpoint { node: node.id });
+            if let Some(endpoint) = node.kind.device() {
+                if !endpoint.is_well_formed() {
+                    return Err(TopologyError::InvalidEndpoint { node: node.id });
+                }
+                if let Some(first) = endpoints.insert((endpoint, node.kind.role()), node.id) {
+                    return Err(TopologyError::DuplicateEndpoint { first, second: node.id });
+                }
             }
-            if let Some(endpoint) = node.kind.endpoint()
-                && let Some(first) = endpoints.insert((endpoint, node.kind.role()), node.id)
-            {
-                return Err(TopologyError::DuplicateEndpoint { first, second: node.id });
-            }
-            if let Some((slot, required)) = node.kind.slot() {
+            if let (Some(slot), Some(required)) = (node.kind.slot(), node.kind.slot_direction()) {
                 if slot.direction != required {
                     return Err(TopologyError::SlotDirectionMismatch { node: node.id, slot });
                 }
@@ -237,70 +308,24 @@ impl RouteTopology {
         Ok(nodes)
     }
 
+    /// 按顺序逐条检查连线（与工作台拖线时的规则相同），成环时指出闭合回路的那一条。
     fn validate_routes(&self, nodes: &HashMap<NodeId, &NodeKind>) -> Result<(), TopologyError> {
-        let mut seen = HashSet::with_capacity(self.routes.len());
+        let role_of = |id: NodeId| nodes.get(&id).map(|kind| kind.role());
+        let mut accepted = Vec::with_capacity(self.routes.len());
         for route in &self.routes {
-            let from = nodes.get(&route.from).ok_or(TopologyError::UnknownNode(route.from))?;
-            let to = nodes.get(&route.to).ok_or(TopologyError::UnknownNode(route.to))?;
-            if route.from == route.to {
-                return Err(TopologyError::SelfRoute(route.from));
-            }
-            if !from.can_send() {
-                return Err(TopologyError::CannotSend(route.from));
-            }
-            if !to.can_receive() {
-                return Err(TopologyError::CannotReceive(route.to));
-            }
-            if !seen.insert((route.from, route.to)) {
-                return Err(TopologyError::DuplicateRoute {
-                    from: route.from,
-                    to: route.to,
-                });
-            }
-        }
-        Ok(())
-    }
-
-    /// 用 Kahn 算法检查连线是否成环。关闭的连线也算在内：重新打开时不应该突然形成回路。
-    fn check_acyclic(&self) -> Result<(), TopologyError> {
-        let mut incoming: HashMap<NodeId, usize> = self.nodes.iter().map(|node| (node.id, 0)).collect();
-        let mut outgoing: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
-        for route in &self.routes {
-            *incoming.entry(route.to).or_default() += 1;
-            outgoing.entry(route.from).or_default().push(route.to);
-        }
-
-        let mut ready: Vec<NodeId> = incoming
-            .iter()
-            .filter(|(_, count)| **count == 0)
-            .map(|(id, _)| *id)
-            .collect();
-        let mut visited = 0;
-        while let Some(node) = ready.pop() {
-            visited += 1;
-            for next in outgoing.get(&node).into_iter().flatten() {
-                if let Some(count) = incoming.get_mut(next) {
-                    *count -= 1;
-                    if *count == 0 {
-                        ready.push(*next);
-                    }
+            match check_route(role_of, &accepted, route.from, route.to) {
+                Ok(()) => accepted.push((route.from, route.to)),
+                Err(RouteCheckError::UnknownNode(id)) => return Err(TopologyError::UnknownNode(id)),
+                Err(RouteCheckError::Rejected(rejection)) => {
+                    return Err(TopologyError::InvalidRoute {
+                        from: route.from,
+                        to: route.to,
+                        rejection,
+                    });
                 }
             }
         }
-
-        if visited == incoming.len() {
-            return Ok(());
-        }
-        // 没有被访问到的节点都在环上或在环的下游；取 ID 最小的一个，让错误信息稳定
-        let stuck = incoming
-            .iter()
-            .filter(|(_, count)| **count > 0)
-            .map(|(id, _)| *id)
-            .min();
-        match stuck {
-            Some(node) => Err(TopologyError::Loop(node)),
-            None => Ok(()),
-        }
+        Ok(())
     }
 }
 
@@ -339,6 +364,10 @@ mod tests {
         }
     }
 
+    fn invalid_route(from: NodeId, to: NodeId, rejection: RouteRejection) -> Result<(), TopologyError> {
+        Err(TopologyError::InvalidRoute { from, to, rejection })
+    }
+
     /// M1 验收场景：麦克风 → 虚拟输出（OBS），应用 → 虚拟输入 → 总线 → 耳机
     fn sample_topology() -> RouteTopology {
         RouteTopology {
@@ -350,7 +379,7 @@ mod tests {
                 node(
                     MIC,
                     NodeKind::ExternalInput {
-                        endpoint: EndpointId("{0.0.1.00000000}.{mic}".to_owned()),
+                        device: EndpointId("{0.0.1.00000000}.{mic}".to_owned()),
                     },
                 ),
                 node(
@@ -369,7 +398,7 @@ mod tests {
                 node(
                     HEADPHONES,
                     NodeKind::ExternalOutput {
-                        endpoint: EndpointId("{0.0.0.00000000}.{headphones}".to_owned()),
+                        device: EndpointId("{0.0.0.00000000}.{headphones}".to_owned()),
                     },
                 ),
             ],
@@ -432,7 +461,7 @@ mod tests {
     fn rejects_empty_endpoint_id() {
         let mut topology = sample_topology();
         topology.nodes[0].kind = NodeKind::ExternalInput {
-            endpoint: EndpointId(String::new()),
+            device: EndpointId(String::new()),
         };
         assert_eq!(topology.validate(), Err(TopologyError::InvalidEndpoint { node: MIC }));
     }
@@ -471,28 +500,31 @@ mod tests {
     fn rejects_self_routes() {
         let mut topology = sample_topology();
         topology.routes.push(route(BUS, BUS));
-        assert_eq!(topology.validate(), Err(TopologyError::SelfRoute(BUS)));
+        assert_eq!(topology.validate(), invalid_route(BUS, BUS, RouteRejection::SelfRoute));
     }
 
     #[test]
     fn rejects_routes_in_the_wrong_direction() {
         let mut topology = sample_topology();
         topology.routes.push(route(OBS, HEADPHONES));
-        assert_eq!(topology.validate(), Err(TopologyError::CannotSend(OBS)));
+        assert_eq!(
+            topology.validate(),
+            invalid_route(OBS, HEADPHONES, RouteRejection::CannotSend)
+        );
 
         let mut topology = sample_topology();
         topology.routes.push(route(BUS, GAME));
-        assert_eq!(topology.validate(), Err(TopologyError::CannotReceive(GAME)));
+        assert_eq!(
+            topology.validate(),
+            invalid_route(BUS, GAME, RouteRejection::CannotReceive)
+        );
     }
 
     #[test]
     fn rejects_duplicate_routes() {
         let mut topology = sample_topology();
         topology.routes.push(route(MIC, OBS));
-        assert_eq!(
-            topology.validate(),
-            Err(TopologyError::DuplicateRoute { from: MIC, to: OBS })
-        );
+        assert_eq!(topology.validate(), invalid_route(MIC, OBS, RouteRejection::Duplicate));
     }
 
     #[test]
@@ -505,7 +537,10 @@ mod tests {
             enabled: false,
             ..route(second_bus, BUS)
         });
-        assert_eq!(topology.validate(), Err(TopologyError::Loop(BUS)));
+        assert_eq!(
+            topology.validate(),
+            invalid_route(second_bus, BUS, RouteRejection::Loop)
+        );
     }
 
     #[test]
@@ -518,6 +553,47 @@ mod tests {
         assert_eq!(
             topology.validate(),
             Err(TopologyError::TooManyNodes(topology.nodes.len()))
+        );
+    }
+
+    #[test]
+    fn check_route_reports_the_first_rule_that_fails() {
+        let roles = [
+            (MIC, NodeRole::Input),
+            (BUS, NodeRole::Processing),
+            (OBS, NodeRole::Output),
+        ];
+        let role_of = |id: NodeId| roles.iter().find(|(node, _)| *node == id).map(|(_, role)| *role);
+        let existing = [(MIC, BUS)];
+        assert_eq!(check_route(role_of, &existing, BUS, OBS), Ok(()));
+        assert_eq!(
+            check_route(role_of, &existing, MIC, BUS),
+            Err(RouteRejection::Duplicate.into())
+        );
+        assert_eq!(
+            check_route(role_of, &existing, OBS, MIC),
+            Err(RouteRejection::CannotSend.into())
+        );
+        assert_eq!(
+            check_route(role_of, &existing, BUS, NodeId(9)),
+            Err(RouteCheckError::UnknownNode(NodeId(9)))
+        );
+    }
+
+    #[test]
+    fn node_kind_works_with_any_device_representation() {
+        let kind: NodeKind<(String, &str)> = NodeKind::ExternalOutput {
+            device: ("{id}".to_owned(), "Headphones"),
+        };
+        assert_eq!(kind.role(), NodeRole::Output);
+        assert!(kind.is_external());
+        assert_eq!(kind.slot(), None);
+        let mapped = kind.map_device(|(id, _)| EndpointId(id.clone()));
+        assert_eq!(
+            mapped,
+            NodeKind::ExternalOutput {
+                device: EndpointId("{id}".to_owned()),
+            }
         );
     }
 
@@ -538,12 +614,19 @@ mod tests {
 
     #[test]
     fn node_kind_has_a_stable_wire_format() {
-        let kind = NodeKind::VirtualOutput {
+        let kind: NodeKind = NodeKind::VirtualOutput {
             slot: slot(SlotDirection::Out, 3),
         };
         assert_eq!(
             serde_json::to_string(&kind).unwrap(),
             r#"{"type":"virtual_output","slot":{"direction":"out","number":3}}"#
+        );
+        let external: NodeKind = NodeKind::ExternalInput {
+            device: EndpointId("{mic}".to_owned()),
+        };
+        assert_eq!(
+            serde_json::to_string(&external).unwrap(),
+            r#"{"type":"external_input","device":"{mic}"}"#
         );
     }
 }

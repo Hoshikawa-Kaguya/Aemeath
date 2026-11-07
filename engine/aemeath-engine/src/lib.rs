@@ -40,7 +40,7 @@ use crate::scheduler::{Command, Scheduler};
 use crate::timeline::Timeline;
 
 /// 引擎内部一律是立体声（N 声道节点见选型报告第 10 节）
-pub const CHANNELS: usize = 2;
+pub use aemeath_dsp::STEREO;
 
 #[derive(Debug, Clone, Copy)]
 pub struct EngineConfig {

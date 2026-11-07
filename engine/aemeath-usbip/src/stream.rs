@@ -3,7 +3,8 @@
 use aemeath_protocol::message::SampleFormat;
 use aemeath_protocol::units::SampleRate;
 
-/// 立体声（v1 的槽位都是立体声；N 声道节点见选型报告第 10 节）
+/// USB 描述符声明的声道数：v1 的槽位都是立体声（N 声道节点见选型报告第 10 节）。
+/// 与 `aemeath_dsp::STEREO` 数值相同但含义不同（这是线上格式），usbip 也不依赖 dsp，所以单独定义。
 pub const CHANNELS: u8 = 2;
 
 /// 高速 USB 每秒的微帧数（125 µs 一个）

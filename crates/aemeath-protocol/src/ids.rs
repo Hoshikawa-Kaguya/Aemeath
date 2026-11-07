@@ -61,6 +61,11 @@ impl SlotNumber {
     pub fn get(self) -> u8 {
         self.0
     }
+
+    /// 一个方向的全部槽位编号，从小到大。
+    pub fn all() -> impl Iterator<Item = Self> {
+        (Self::FIRST..=Self::LAST).map(Self)
+    }
 }
 
 impl TryFrom<u8> for SlotNumber {
@@ -87,6 +92,13 @@ pub struct SlotNumberError(pub u8);
 pub struct SlotId {
     pub direction: SlotDirection,
     pub number: SlotNumber,
+}
+
+impl SlotId {
+    /// 某个方向的全部槽位，编号从小到大。
+    pub fn all(direction: SlotDirection) -> impl Iterator<Item = Self> {
+        SlotNumber::all().map(move |number| Self { direction, number })
+    }
 }
 
 impl fmt::Display for SlotId {

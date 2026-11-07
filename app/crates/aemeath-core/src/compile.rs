@@ -4,9 +4,8 @@
 //! 外部设备只取端点 ID，设备名留在控制面做后备匹配。
 
 use aemeath_protocol::ids::TopologyRevision;
-use aemeath_protocol::topology::{self, RouteTopology, TopologyNode, TopologyRoute};
+use aemeath_protocol::topology::{RouteTopology, TopologyNode, TopologyRoute};
 
-use crate::model::NodeKind;
 use crate::workspace::Workspace;
 
 impl Workspace {
@@ -22,21 +21,8 @@ impl Workspace {
                 .iter()
                 .map(|node| TopologyNode {
                     id: node.id,
-                    kind: match &node.kind {
-                        NodeKind::ExternalInput { device } => topology::NodeKind::ExternalInput {
-                            endpoint: device.endpoint.clone(),
-                        },
-                        NodeKind::VirtualInput { slot } => topology::NodeKind::VirtualInput { slot: *slot },
-                        NodeKind::VirtualOutput { slot } => topology::NodeKind::VirtualOutput { slot: *slot },
-                        NodeKind::ExternalOutput { device } => topology::NodeKind::ExternalOutput {
-                            endpoint: device.endpoint.clone(),
-                        },
-                        NodeKind::Bus => topology::NodeKind::Bus,
-                    },
-                    strip: topology::Strip {
-                        gain: node.strip.gain,
-                        muted: node.strip.muted,
-                    },
+                    kind: node.kind.map_device(|device| device.endpoint.clone()),
+                    strip: node.strip,
                 })
                 .collect(),
             routes: self
@@ -90,7 +76,7 @@ mod tests {
         assert_eq!(topology.routes[0].gain.db(), -3.0);
         assert!(matches!(
             &topology.nodes[0].kind,
-            topology::NodeKind::ExternalInput { endpoint } if endpoint.0 == "{mic}"
+            aemeath_protocol::topology::NodeKind::ExternalInput { device } if device.0 == "{mic}"
         ));
     }
 }

@@ -299,8 +299,8 @@ fn engine_topology(fake_output: EndpointId, fake_input: EndpointId) -> Result<Ro
                     slot: slot(SlotDirection::In, 1)?,
                 },
             ),
-            node(external_output, NodeKind::ExternalOutput { endpoint: fake_output }),
-            node(external_input, NodeKind::ExternalInput { endpoint: fake_input }),
+            node(external_output, NodeKind::ExternalOutput { device: fake_output }),
+            node(external_input, NodeKind::ExternalInput { device: fake_input }),
             node(
                 slot_output,
                 NodeKind::VirtualOutput {

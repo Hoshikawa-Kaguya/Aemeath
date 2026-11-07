@@ -19,7 +19,7 @@ use aemeath_usbip::function::StreamChange;
 use aemeath_usbip::stream::{CapturePacer, StreamFormat};
 use aemeath_usbip::wire::{IsoPacket, RetSubmit, Submit, UrbStatus};
 
-use crate::CHANNELS;
+use crate::STEREO;
 use crate::fifo::FrameFifo;
 
 /// URB 迟到（预留的时间已经过去）时，从当前时刻往后这么多微帧重新开始（与探针相同，1 ms）
@@ -209,10 +209,10 @@ impl SlotStream {
 
     /// 输入方向：取出已放出的帧，写满 `out`（交错立体声），不足的部分填 0。
     pub fn pop_render(&mut self, out: &mut [f32]) {
-        let wanted = out.len() / CHANNELS;
+        let wanted = out.len() / STEREO;
         let take = wanted.min(self.readable_frames);
-        let popped = self.fifo.pop_into(&mut out[..take * CHANNELS]);
-        out[take * CHANNELS..].fill(0.0);
+        let popped = self.fifo.pop_into(&mut out[..take * STEREO]);
+        out[take * STEREO..].fill(0.0);
         self.readable_frames -= popped;
         if self.format.is_some() {
             self.stats.underflow_frames += (wanted - popped) as u64;
@@ -241,7 +241,7 @@ impl SlotStream {
                     .next_packet_frames(format.sample_rate, submit.interval)
                     .min(usize::try_from(packet.length).unwrap_or(0) / bytes_per_frame);
                 self.scratch.clear();
-                self.scratch.resize(frames * CHANNELS, 0.0);
+                self.scratch.resize(frames * STEREO, 0.0);
                 if self.passthrough_format().is_some() {
                     let popped = self.fifo.pop_into(&mut self.scratch);
                     self.stats.underflow_frames += (frames - popped) as u64;

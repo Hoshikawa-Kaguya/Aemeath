@@ -95,8 +95,8 @@ fn nodes_for<'a>(
         .into_iter()
         .flat_map(|topology| &topology.nodes)
         .filter(move |node| match (&node.kind, direction) {
-            (NodeKind::ExternalInput { endpoint: own }, IoDirection::Input)
-            | (NodeKind::ExternalOutput { endpoint: own }, IoDirection::Output) => own == endpoint,
+            (NodeKind::ExternalInput { device: own }, IoDirection::Input)
+            | (NodeKind::ExternalOutput { device: own }, IoDirection::Output) => own == endpoint,
             _ => false,
         })
         .map(|node| node.id)
@@ -124,7 +124,7 @@ mod tests {
             resampler: Resampler::default(),
             nodes: vec![TopologyNode {
                 id: MIC,
-                kind: NodeKind::ExternalInput { endpoint: microphone() },
+                kind: NodeKind::ExternalInput { device: microphone() },
                 strip: Strip::default(),
             }],
             routes: vec![],

@@ -29,7 +29,7 @@ pub const TARGET_LEVEL_MS: f64 = 15.0;
 const RING_CAPACITY_MS: usize = 200;
 const MILLISECONDS_PER_SECOND: usize = 1000;
 /// 引擎内部一律是立体声
-pub const STEREO: usize = 2;
+pub use aemeath_dsp::STEREO;
 
 /// 从 Aemeath 的视角命名：输入是录音端点，输出是播放端点。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

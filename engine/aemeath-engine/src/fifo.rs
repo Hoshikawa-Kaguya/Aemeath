@@ -2,7 +2,7 @@
 //!
 //! 只在调度线程内使用（单线程，不需要同步）。容量在创建时一次分配，之后的读写都不分配内存。
 
-use crate::CHANNELS;
+use crate::STEREO;
 
 #[derive(Debug, Clone)]
 pub struct FrameFifo {
@@ -16,7 +16,7 @@ pub struct FrameFifo {
 impl FrameFifo {
     pub fn with_capacity(capacity_frames: usize) -> Self {
         Self {
-            samples: vec![0.0; capacity_frames * CHANNELS],
+            samples: vec![0.0; capacity_frames * STEREO],
             capacity_frames,
             read: 0,
             len_frames: 0,
@@ -38,13 +38,13 @@ impl FrameFifo {
 
     /// 追加交错的帧。放不下时丢弃最旧的帧，返回丢弃的帧数。
     pub fn push(&mut self, interleaved: &[f32]) -> usize {
-        let frames = interleaved.len() / CHANNELS;
+        let frames = interleaved.len() / STEREO;
         if self.capacity_frames == 0 {
             return frames;
         }
         // 比容量还多时只保留最后一段
         let skip = frames.saturating_sub(self.capacity_frames);
-        let incoming = &interleaved[skip * CHANNELS..frames * CHANNELS];
+        let incoming = &interleaved[skip * STEREO..frames * STEREO];
         let incoming_frames = frames - skip;
         let overflow = (self.len_frames + incoming_frames).saturating_sub(self.capacity_frames);
         if overflow > 0 {
@@ -53,26 +53,26 @@ impl FrameFifo {
         }
 
         let mut write = (self.read + self.len_frames) % self.capacity_frames;
-        for frame in incoming.as_chunks::<CHANNELS>().0 {
-            let start = write * CHANNELS;
-            self.samples[start..start + CHANNELS].copy_from_slice(frame);
+        for frame in incoming.as_chunks::<STEREO>().0 {
+            let start = write * STEREO;
+            self.samples[start..start + STEREO].copy_from_slice(frame);
             write = (write + 1) % self.capacity_frames;
         }
         self.len_frames += incoming_frames;
         skip + overflow
     }
 
-    /// 取出最多 `out.len() / CHANNELS` 帧写入 `out`，不足的部分填 0。返回实际取出的帧数。
+    /// 取出最多 `out.len() / STEREO` 帧写入 `out`，不足的部分填 0。返回实际取出的帧数。
     pub fn pop_into(&mut self, out: &mut [f32]) -> usize {
-        let wanted = out.len() / CHANNELS;
+        let wanted = out.len() / STEREO;
         let available = wanted.min(self.len_frames);
-        for frame in out.as_chunks_mut::<CHANNELS>().0.iter_mut().take(available) {
-            let start = self.read * CHANNELS;
-            frame.copy_from_slice(&self.samples[start..start + CHANNELS]);
+        for frame in out.as_chunks_mut::<STEREO>().0.iter_mut().take(available) {
+            let start = self.read * STEREO;
+            frame.copy_from_slice(&self.samples[start..start + STEREO]);
             self.read = (self.read + 1) % self.capacity_frames;
         }
         self.len_frames -= available;
-        out[available * CHANNELS..].fill(0.0);
+        out[available * STEREO..].fill(0.0);
         available
     }
 }

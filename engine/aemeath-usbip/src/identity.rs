@@ -74,11 +74,7 @@ impl IdentityProfile {
 pub fn all_slots() -> impl Iterator<Item = SlotId> {
     [SlotDirection::In, SlotDirection::Out]
         .into_iter()
-        .flat_map(|direction| {
-            (SlotNumber::FIRST..=SlotNumber::LAST)
-                .filter_map(|number| SlotNumber::new(number).ok())
-                .map(move |number| SlotId { direction, number })
-        })
+        .flat_map(SlotId::all)
 }
 
 #[cfg(test)]

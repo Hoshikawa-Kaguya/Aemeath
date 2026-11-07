@@ -7,12 +7,12 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use aemeath_protocol::ids::NodeId;
 
-use crate::CHANNELS;
+use crate::STEREO;
 
 #[derive(Debug)]
 pub struct MeterBank {
     node_ids: Vec<NodeId>,
-    peaks: Vec<[AtomicU32; CHANNELS]>,
+    peaks: Vec<[AtomicU32; STEREO]>,
 }
 
 impl MeterBank {
@@ -30,7 +30,7 @@ impl MeterBank {
     }
 
     /// 调度线程调用：记录一个块的峰值（取已记录值与新值中的较大者）。
-    pub fn record(&self, index: usize, peaks: [f32; CHANNELS]) {
+    pub fn record(&self, index: usize, peaks: [f32; STEREO]) {
         if let Some(slots) = self.peaks.get(index) {
             for (slot, peak) in slots.iter().zip(peaks) {
                 slot.fetch_max(peak.abs().to_bits(), Ordering::Relaxed);
@@ -39,7 +39,7 @@ impl MeterBank {
     }
 
     /// 读取方调用：取走自上次读取以来的峰值，并清零。
-    pub fn take(&self, index: usize) -> Option<[f32; CHANNELS]> {
+    pub fn take(&self, index: usize) -> Option<[f32; STEREO]> {
         let slots = self.peaks.get(index)?;
         Some([0, 1].map(|channel| f32::from_bits(slots[channel].swap(0, Ordering::Relaxed))))
     }

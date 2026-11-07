@@ -3,16 +3,16 @@
 //! 字段只能通过方法修改，以保证规则始终成立：
 //! - 每个槽位最多被一个节点占用，方向与节点类型一致（ADR-0009）；新建虚拟节点时自动分配编号最小的空闲槽位。
 //! - 同一个外部设备在同一方向上只对应一个节点。
-//! - 连线不能连到自己、方向要合法、不能重复、不能成环；拒绝时给出原因，供工作台拖线时提示。
+//! - 连线规则与路由拓扑校验相同（[`topology::check_route`]）；拒绝时给出原因，供工作台拖线时提示。
 //! - 节点 ID 只增不减、不复用（引擎换拓扑时按 ID 接过旧状态，复用 ID 会让新节点继承旧节点的增益）。
 
 use aemeath_protocol::ids::{NodeId, SlotDirection, SlotId, SlotNumber};
-use aemeath_protocol::topology::NodeRole;
+use aemeath_protocol::topology::{self, NodeRole, RouteCheckError, RouteRejection, Strip};
 use aemeath_protocol::units::GainDb;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::model::{DeviceRef, EngineSettings, LabelPosition, Node, NodeKind, NodeName, Position, Route, Strip};
+use crate::model::{DeviceRef, EngineSettings, LabelPosition, Node, NodeKind, NodeName, Position, Route};
 
 /// 第一个节点的 ID
 const FIRST_NODE_ID: u32 = 1;
@@ -37,23 +37,6 @@ pub enum NodeSpec {
     Bus,
 }
 
-/// 不能连线的原因（工作台拖线时显示）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
-pub enum RouteRejection {
-    #[error("a node cannot be routed to itself")]
-    SelfRoute,
-    /// 起点是输出节点，不发出声音
-    #[error("the source node does not send sound")]
-    CannotSend,
-    /// 终点是输入节点，不接收声音
-    #[error("the destination node does not receive sound")]
-    CannotReceive,
-    #[error("the route already exists")]
-    Duplicate,
-    #[error("the route would create a loop")]
-    Loop,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum EditError {
     #[error("node {0} does not exist")]
@@ -72,6 +55,15 @@ pub enum EditError {
     InvalidClockMaster,
     #[error("cannot route: {0}")]
     Route(#[from] RouteRejection),
+}
+
+impl From<RouteCheckError> for EditError {
+    fn from(error: RouteCheckError) -> Self {
+        match error {
+            RouteCheckError::UnknownNode(id) => Self::UnknownNode(id),
+            RouteCheckError::Rejected(rejection) => Self::Route(rejection),
+        }
+    }
 }
 
 impl Workspace {
@@ -107,10 +99,7 @@ impl Workspace {
 
     /// 编号最小的空闲槽位。
     pub fn free_slot(&self, direction: SlotDirection) -> Option<SlotId> {
-        (SlotNumber::FIRST..=SlotNumber::LAST)
-            .filter_map(|number| SlotNumber::new(number).ok())
-            .map(|number| SlotId { direction, number })
-            .find(|slot| self.slot_owner(*slot).is_none())
+        SlotId::all(direction).find(|slot| self.slot_owner(*slot).is_none())
     }
 
     /// 被占用的全部槽位。
@@ -196,22 +185,9 @@ impl Workspace {
 
     /// 检查能否从 `from` 连到 `to`（拖线时实时调用）。
     pub fn check_route(&self, from: NodeId, to: NodeId) -> Result<(), EditError> {
-        let source = self.node(from).ok_or(EditError::UnknownNode(from))?;
-        let destination = self.node(to).ok_or(EditError::UnknownNode(to))?;
-        let rejection = if from == to {
-            Some(RouteRejection::SelfRoute)
-        } else if source.kind.role() == NodeRole::Output {
-            Some(RouteRejection::CannotSend)
-        } else if destination.kind.role() == NodeRole::Input {
-            Some(RouteRejection::CannotReceive)
-        } else if self.route(from, to).is_some() {
-            Some(RouteRejection::Duplicate)
-        } else if self.reaches(to, from) {
-            Some(RouteRejection::Loop)
-        } else {
-            None
-        };
-        rejection.map_or(Ok(()), |rejection| Err(rejection.into()))
+        let existing: Vec<(NodeId, NodeId)> = self.routes.iter().map(|route| (route.from, route.to)).collect();
+        let role_of = |id: NodeId| self.node(id).map(|node| node.kind.role());
+        Ok(topology::check_route(role_of, &existing, from, to)?)
     }
 
     /// 新建连线（0 dB、开启）。
@@ -273,10 +249,7 @@ impl Workspace {
 
     fn check_device(&self, device: &DeviceRef, role: NodeRole) -> Result<(), EditError> {
         let existing = self.nodes.iter().find(|node| {
-            node.kind.role() == role
-                && matches!(&node.kind,
-                    NodeKind::ExternalInput { device: own } | NodeKind::ExternalOutput { device: own }
-                        if own.endpoint == device.endpoint)
+            node.kind.role() == role && node.kind.device().is_some_and(|own| own.endpoint == device.endpoint)
         });
         match existing {
             Some(node) => Err(EditError::DeviceInUse { by: node.id }),
@@ -314,24 +287,6 @@ impl Workspace {
             .iter_mut()
             .find(|route| route.from == from && route.to == to)
             .ok_or(EditError::UnknownRoute { from, to })
-    }
-
-    /// 沿连线方向从 `start` 能否走到 `goal`。关闭的连线也算在内：重新打开时不应该突然形成回路。
-    fn reaches(&self, start: NodeId, goal: NodeId) -> bool {
-        let mut stack = vec![start];
-        let mut seen = vec![start];
-        while let Some(node) = stack.pop() {
-            if node == goal {
-                return true;
-            }
-            for route in self.routes.iter().filter(|route| route.from == node) {
-                if !seen.contains(&route.to) {
-                    seen.push(route.to);
-                    stack.push(route.to);
-                }
-            }
-        }
-        false
     }
 
     /// 配置文件读入后的一致性：节点 ID 不能达到或超过下一个待分配的 ID。

@@ -12,11 +12,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use aemeath_dsp::gain::{SmoothedGain, db_to_linear};
+use aemeath_protocol::graph;
 use aemeath_protocol::ids::{EndpointId, NodeId, SlotId, TopologyRevision};
 use aemeath_protocol::topology::{NodeKind, NodeRole, RouteTopology};
 use aemeath_protocol::units::SampleRate;
 
-use crate::CHANNELS;
+use crate::STEREO;
 use crate::meters::MeterBank;
 use crate::port::{Port, PortIssues};
 
@@ -25,19 +26,10 @@ pub const MAX_BLOCK_FRAMES: usize = 1024;
 /// 增益变化的过渡时间
 const RAMP_SECONDS: f64 = 0.010;
 
-/// 节点的声音从哪里来、到哪里去。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum NodeEndpoint {
-    Slot(SlotId),
-    External(EndpointId),
-    /// 总线：没有端点
-    Internal,
-}
-
 #[derive(Debug)]
 struct MixNode {
-    role: NodeRole,
-    endpoint: NodeEndpoint,
+    /// 节点类型：角色、槽位、外部端点都从这里取
+    kind: NodeKind,
     strip: SmoothedGain,
     strip_target: f32,
     /// 这个节点本块的信号（通道条之后），交错立体声
@@ -108,11 +100,10 @@ impl Mixer {
                     db_to_linear(node.strip.gain.db())
                 };
                 MixNode {
-                    role: node.kind.role(),
-                    endpoint: endpoint(&node.kind),
+                    kind: node.kind.clone(),
                     strip: SmoothedGain::fixed(strip_target),
                     strip_target,
-                    buffer: vec![0.0; MAX_BLOCK_FRAMES * CHANNELS],
+                    buffer: vec![0.0; MAX_BLOCK_FRAMES * STEREO],
                     port: None,
                 }
             })
@@ -141,6 +132,7 @@ impl Mixer {
         // 被删除的旧连线：两端还在、方向合法、加上它不会构成回路时保留，淡出到 0
         let current_routes: Vec<(NodeId, NodeId)> =
             topology.routes.iter().map(|route| (route.from, route.to)).collect();
+        let mut edges: Vec<(usize, usize)> = routes.iter().map(|route| (route.from, route.to)).collect();
         if let Some(previous) = previous {
             for key in &previous.routes {
                 if current_routes.contains(key) {
@@ -149,8 +141,9 @@ impl Mixer {
                 let (Some(&from), Some(&to)) = (index_of.get(&key.0), index_of.get(&key.1)) else {
                     continue;
                 };
-                let valid_direction = nodes[from].role != NodeRole::Output && nodes[to].role != NodeRole::Input;
-                if valid_direction && !reaches(&routes, to, from) {
+                let valid_direction = nodes[from].kind.can_send() && nodes[to].kind.can_receive();
+                if valid_direction && !graph::reaches(&edges, to, from) {
+                    edges.push((from, to));
                     routes.push(MixRoute {
                         from,
                         to,
@@ -160,7 +153,9 @@ impl Mixer {
                 }
             }
         }
-        let order = topological_order(nodes.len(), &routes);
+        // 拓扑已通过校验，不会有环；万一有，环上的节点不在结果里，等于静音
+        let node_indices: Vec<usize> = (0..nodes.len()).collect();
+        let order = graph::topological_order(&node_indices, &edges);
 
         let mut incoming = vec![Vec::new(); nodes.len()];
         for (index, route) in routes.iter().enumerate() {
@@ -183,10 +178,7 @@ impl Mixer {
 
         let endpoints: Vec<Option<(EndpointId, NodeRole)>> = nodes
             .iter()
-            .map(|node| match &node.endpoint {
-                NodeEndpoint::External(endpoint) => Some((endpoint.clone(), node.role)),
-                _ => None,
-            })
+            .map(|node| node.kind.device().map(|endpoint| (endpoint.clone(), node.kind.role())))
             .collect();
         let inherit_ports = endpoints
             .iter()
@@ -256,10 +248,7 @@ impl Mixer {
         self.nodes
             .iter()
             .enumerate()
-            .filter_map(|(index, node)| match &node.endpoint {
-                NodeEndpoint::External(endpoint) => Some((index, endpoint.clone(), node.role)),
-                _ => None,
-            })
+            .filter_map(|(index, node)| Some((index, node.kind.device()?.clone(), node.kind.role())))
             .collect()
     }
 
@@ -277,8 +266,8 @@ impl Mixer {
 
     /// 把外部输入端口的数据读进对应节点的缓冲（在 [`Self::begin_block`] 之后调用）。
     pub fn pull_ports(&mut self, frames: usize, issues: &mut PortIssues) {
-        let len = frames.min(MAX_BLOCK_FRAMES) * CHANNELS;
-        for node in self.nodes.iter_mut().filter(|node| node.role == NodeRole::Input) {
+        let len = frames.min(MAX_BLOCK_FRAMES) * STEREO;
+        for node in self.nodes.iter_mut().filter(|node| node.kind.role() == NodeRole::Input) {
             if let Some(port) = node.port.as_mut() {
                 port.pull(&mut node.buffer[..len], issues);
             }
@@ -287,8 +276,12 @@ impl Mixer {
 
     /// 把外部输出节点处理后的信号写进端口（在 [`Self::process`] 之后调用）。
     pub fn push_ports(&mut self, frames: usize, issues: &mut PortIssues) {
-        let len = frames.min(MAX_BLOCK_FRAMES) * CHANNELS;
-        for node in self.nodes.iter_mut().filter(|node| node.role == NodeRole::Output) {
+        let len = frames.min(MAX_BLOCK_FRAMES) * STEREO;
+        for node in self
+            .nodes
+            .iter_mut()
+            .filter(|node| node.kind.role() == NodeRole::Output)
+        {
             if let Some(port) = node.port.as_mut() {
                 port.push(&node.buffer[..len], issues);
             }
@@ -315,33 +308,33 @@ impl Mixer {
 
     /// 开始一个块：把所有输入节点清零。之后由调用方填入有声音的输入。
     pub fn begin_block(&mut self, frames: usize) {
-        let len = frames.min(MAX_BLOCK_FRAMES) * CHANNELS;
-        for node in self.nodes.iter_mut().filter(|node| node.role == NodeRole::Input) {
+        let len = frames.min(MAX_BLOCK_FRAMES) * STEREO;
+        for node in self.nodes.iter_mut().filter(|node| node.kind.role() == NodeRole::Input) {
             node.buffer[..len].fill(0.0);
         }
     }
 
     /// 输入节点本块的缓冲，由调用方写入交错立体声。
     pub fn input_mut(&mut self, node: usize, frames: usize) -> Option<&mut [f32]> {
-        let len = frames.min(MAX_BLOCK_FRAMES) * CHANNELS;
+        let len = frames.min(MAX_BLOCK_FRAMES) * STEREO;
         self.nodes.get_mut(node).map(|node| &mut node.buffer[..len])
     }
 
     /// 节点本块处理后的信号。
     pub fn output(&self, node: usize, frames: usize) -> Option<&[f32]> {
-        let len = frames.min(MAX_BLOCK_FRAMES) * CHANNELS;
+        let len = frames.min(MAX_BLOCK_FRAMES) * STEREO;
         self.nodes.get(node).map(|node| &node.buffer[..len])
     }
 
     /// 处理一个块。输入节点的缓冲须已填好；其余节点按拓扑顺序求和、过通道条。
     pub fn process(&mut self, frames: usize) {
         let frames = frames.min(MAX_BLOCK_FRAMES);
-        let len = frames * CHANNELS;
+        let len = frames * STEREO;
         for position in 0..self.order.len() {
             let index = self.order[position];
             // 取出目标缓冲，以便同时读取信号源的缓冲；mem::take 换入的是空 Vec，不分配内存
             let mut buffer = std::mem::take(&mut self.nodes[index].buffer);
-            if self.nodes[index].role != NodeRole::Input {
+            if self.nodes[index].kind.role() != NodeRole::Input {
                 buffer[..len].fill(0.0);
                 for &route_index in &self.incoming[index] {
                     let route = &mut self.routes[route_index];
@@ -350,10 +343,10 @@ impl Mixer {
                     }
                     let source = &self.nodes[route.from].buffer;
                     for (out, input) in buffer[..len]
-                        .as_chunks_mut::<CHANNELS>()
+                        .as_chunks_mut::<STEREO>()
                         .0
                         .iter_mut()
-                        .zip(source[..len].as_chunks::<CHANNELS>().0)
+                        .zip(source[..len].as_chunks::<STEREO>().0)
                     {
                         let gain = route.gain.next_gain();
                         out[0] += input[0] * gain;
@@ -363,8 +356,8 @@ impl Mixer {
             }
 
             let node = &mut self.nodes[index];
-            let mut peaks = [0f32; CHANNELS];
-            for frame in buffer[..len].as_chunks_mut::<CHANNELS>().0.iter_mut() {
+            let mut peaks = [0f32; STEREO];
+            for frame in buffer[..len].as_chunks_mut::<STEREO>().0.iter_mut() {
                 let gain = node.strip.next_gain();
                 for (sample, peak) in frame.iter_mut().zip(peaks.iter_mut()) {
                     *sample *= gain;
@@ -377,66 +370,13 @@ impl Mixer {
     }
 }
 
-fn endpoint(kind: &NodeKind) -> NodeEndpoint {
-    match kind {
-        NodeKind::VirtualInput { slot } | NodeKind::VirtualOutput { slot } => NodeEndpoint::Slot(*slot),
-        NodeKind::ExternalInput { endpoint } | NodeKind::ExternalOutput { endpoint } => {
-            NodeEndpoint::External(endpoint.clone())
-        }
-        NodeKind::Bus => NodeEndpoint::Internal,
-    }
-}
-
 fn slot_nodes(nodes: &[MixNode], role: NodeRole) -> Vec<(usize, SlotId)> {
     nodes
         .iter()
         .enumerate()
-        .filter(|(_, node)| node.role == role)
-        .filter_map(|(index, node)| match node.endpoint {
-            NodeEndpoint::Slot(slot) => Some((index, slot)),
-            _ => None,
-        })
+        .filter(|(_, node)| node.kind.role() == role)
+        .filter_map(|(index, node)| Some((index, node.kind.slot()?)))
         .collect()
-}
-
-/// 沿连线方向从 `start` 能否走到 `goal`（只在控制线程构建时使用）。
-fn reaches(routes: &[MixRoute], start: usize, goal: usize) -> bool {
-    let mut stack = vec![start];
-    let mut seen = vec![start];
-    while let Some(node) = stack.pop() {
-        if node == goal {
-            return true;
-        }
-        for route in routes.iter().filter(|route| route.from == node) {
-            if !seen.contains(&route.to) {
-                seen.push(route.to);
-                stack.push(route.to);
-            }
-        }
-    }
-    false
-}
-
-/// Kahn 算法。拓扑已通过校验，不会有环；万一有，环上的节点不在结果里，等于静音。
-fn topological_order(node_count: usize, routes: &[MixRoute]) -> Vec<usize> {
-    let mut incoming = vec![0usize; node_count];
-    let mut outgoing = vec![Vec::new(); node_count];
-    for route in routes {
-        incoming[route.to] += 1;
-        outgoing[route.from].push(route.to);
-    }
-    let mut ready: Vec<usize> = (0..node_count).filter(|node| incoming[*node] == 0).collect();
-    let mut order = Vec::with_capacity(node_count);
-    while let Some(node) = ready.pop() {
-        order.push(node);
-        for &next in &outgoing[node] {
-            incoming[next] -= 1;
-            if incoming[next] == 0 {
-                ready.push(next);
-            }
-        }
-    }
-    order
 }
 
 #[cfg(test)]
@@ -523,7 +463,7 @@ mod tests {
             mixer.input_mut(0, FRAMES).unwrap().fill(game);
             mixer.input_mut(1, FRAMES).unwrap().fill(mic);
             mixer.process(FRAMES);
-            last = mixer.output(3, FRAMES).unwrap()[FRAMES * CHANNELS - 2];
+            last = mixer.output(3, FRAMES).unwrap()[FRAMES * STEREO - 2];
         }
         last
     }
@@ -622,7 +562,7 @@ mod tests {
             topology.nodes.push(node(
                 microphone,
                 NodeKind::ExternalInput {
-                    endpoint: EndpointId("{0.0.1.00000000}.{mic}".to_owned()),
+                    device: EndpointId("{0.0.1.00000000}.{mic}".to_owned()),
                 },
             ));
             topology

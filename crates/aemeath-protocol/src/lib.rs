@@ -4,10 +4,13 @@
 //!
 //! - [`frame`]：分帧（4 字节小端长度 + UTF-8 JSON），与具体的管道 IO 无关。
 //! - [`message`]：两个方向的消息。
-//! - [`topology`]：路由拓扑及其校验。主程序编译拓扑后、引擎收到拓扑时都调用同一个 [`topology::RouteTopology::validate`]。
+//! - [`topology`]：路由拓扑、节点类型与连线规则。主程序编译拓扑后、引擎收到拓扑时都调用同一个
+//!   [`topology::RouteTopology::validate`]；工作台拖线时调用同一套规则 [`topology::check_route`]。
+//! - [`graph`]：可达性与拓扑排序，主程序、拓扑校验和引擎混音共用。
 //! - [`ids`] 与 [`units`]：有语义的标识和数值类型，反序列化时就校验取值范围。
 
 pub mod frame;
+pub mod graph;
 pub mod ids;
 pub mod message;
 pub mod topology;

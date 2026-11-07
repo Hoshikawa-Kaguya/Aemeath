@@ -162,8 +162,8 @@ fn topology(
                     slot: slot(SlotDirection::In, 1)?,
                 },
             ),
-            node(external_output, NodeKind::ExternalOutput { endpoint: output }),
-            node(external_input, NodeKind::ExternalInput { endpoint: input }),
+            node(external_output, NodeKind::ExternalOutput { device: output }),
+            node(external_input, NodeKind::ExternalInput { device: input }),
             node(
                 slot_output,
                 NodeKind::VirtualOutput {

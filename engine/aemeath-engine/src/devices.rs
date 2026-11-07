@@ -126,8 +126,8 @@ impl ExternalDevices {
                 .iter()
                 .find(|node| node.id == master)
                 .and_then(|node| match &node.kind {
-                    NodeKind::ExternalInput { endpoint } => Some((endpoint.clone(), IoDirection::Input)),
-                    NodeKind::ExternalOutput { endpoint } => Some((endpoint.clone(), IoDirection::Output)),
+                    NodeKind::ExternalInput { device } => Some((device.clone(), IoDirection::Input)),
+                    NodeKind::ExternalOutput { device } => Some((device.clone(), IoDirection::Output)),
                     _ => None,
                 })
         });
