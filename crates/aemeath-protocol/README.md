@@ -2,7 +2,7 @@
 
 引擎（`aemeath-host`）与主程序（`aemeath-app`）之间的 IPC 消息定义。两端直接依赖这个 crate，消息格式只有这一份定义。
 
-## 线上格式
+## 传输格式
 
 - 传输：命名管道，只允许当前用户访问。
 - 分帧：4 字节小端长度 + UTF-8 JSON，单帧上限 1 MiB（`frame::MAX_FRAME_LEN`）。
@@ -26,4 +26,4 @@
 
 ## 修改规则
 
-消息格式有任何不兼容的变化，都要把 `PROTOCOL_VERSION` 加一，并更新 `message.rs` 中的线上格式测试。
+消息格式有任何不兼容的变化，都要把 `PROTOCOL_VERSION` 加一，并更新 `message.rs` 中的传输格式测试。
