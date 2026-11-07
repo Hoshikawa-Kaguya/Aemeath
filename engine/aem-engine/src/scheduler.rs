@@ -1,0 +1,356 @@
+//! 主时钟调度线程（S4）：唯一的实时线程，统一完成所有槽位的等时 URB，并按时间线每 1 ms 运行一次混音。
+//!
+//! 每轮循环：处理控制命令 → 处理服务端事件 → 运行到期的混音块 → 完成到期的 URB →
+//! 用高精度定时器睡到下一个截止时刻（最多 0.5 ms，以便及时应答控制传输）。
+//!
+//! 换计划时，新混音器先接过旧混音器的当前增益（[`Mixer::inherit`]），旧的送回控制线程释放，
+//! 不在本线程中释放大块内存。
+
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap};
+use std::sync::Arc;
+use std::sync::mpsc::{Receiver, Sender, TryRecvError};
+use std::time::Duration;
+
+use aem_protocol::ids::SlotId;
+use aem_protocol::message::DeviceFormat;
+use aem_sys::clock::now_hns;
+use aem_sys::timer::HighResolutionTimer;
+use aem_usbip::server::{ConnectionId, ServerEvent};
+use aem_usbip::stream::{CHANNELS as SLOT_CHANNELS, CapturePacer};
+use aem_usbip::wire::{Direction, Submit, UrbStatus, encode_ret_unlink};
+
+use crate::mixer::{MAX_BLOCK_FRAMES, Mixer};
+use crate::slot::SlotStream;
+use crate::timeline::{MICROFRAMES_PER_MS, Timeline};
+use crate::{CHANNELS, EngineEvent};
+
+const MICROSECONDS_PER_MICROFRAME: i64 = 125;
+const HNS_PER_MICROSECOND: i64 = 10;
+/// 两轮循环相隔超过这么久时记录警告（正常最多 0.5 ms）
+const LOOP_GAP_WARNING_HNS: i64 = 30_000;
+/// 没有更早的截止时刻时，最多睡这么久（与 S4 相同）
+const MAX_SLEEP_HNS: i64 = 5_000;
+/// 混音落后超过这么多微帧（10 ms）时不再逐块追赶，直接跳到当前时刻
+const MAX_CATCH_UP_MICROFRAMES: i64 = 80;
+/// MMCSS 需要一个缓冲大小和采样率作参考，这里只用于提升优先级
+const PRIORITY_HINT_FRAMES: u32 = 48;
+const PRIORITY_HINT_RATE: u32 = 48_000;
+
+/// 控制线程发给调度线程的命令。
+#[derive(Debug)]
+pub enum Command {
+    Apply(Box<Mixer>),
+    Shutdown,
+}
+
+/// 到期时要发出的应答
+#[derive(Debug)]
+enum Pending {
+    /// 输入槽位的 OUT URB：应答已编好
+    Ready(Vec<u8>),
+    /// 输出槽位的 IN URB：到期时才取数据
+    Capture(Submit),
+}
+
+pub struct Scheduler {
+    timeline: Arc<Timeline>,
+    commands: Receiver<Command>,
+    server_events: Receiver<ServerEvent>,
+    retired: Sender<Box<Mixer>>,
+    events: Sender<EngineEvent>,
+    mixer: Option<Box<Mixer>>,
+    streams: HashMap<ConnectionId, SlotStream>,
+    slots: HashMap<SlotId, ConnectionId>,
+    deadlines: BinaryHeap<Reverse<(i64, u64, u32)>>,
+    pending: HashMap<(u64, u32), Pending>,
+    /// 下一个混音块的起始微帧；没有计划时为 None
+    next_block: Option<i64>,
+    block_pacer: CapturePacer,
+}
+
+impl Scheduler {
+    pub fn new(
+        timeline: Arc<Timeline>,
+        commands: Receiver<Command>,
+        server_events: Receiver<ServerEvent>,
+        retired: Sender<Box<Mixer>>,
+        events: Sender<EngineEvent>,
+    ) -> Self {
+        Self {
+            timeline,
+            commands,
+            server_events,
+            retired,
+            events,
+            mixer: None,
+            streams: HashMap::new(),
+            slots: HashMap::new(),
+            deadlines: BinaryHeap::new(),
+            pending: HashMap::new(),
+            next_block: None,
+            block_pacer: CapturePacer::default(),
+        }
+    }
+
+    pub fn run(mut self) {
+        let priority =
+            audio_thread_priority::promote_current_thread_to_real_time(PRIORITY_HINT_FRAMES, PRIORITY_HINT_RATE);
+        if let Err(error) = &priority {
+            tracing::warn!(?error, "cannot raise the scheduler thread to MMCSS priority");
+        }
+        let timer = HighResolutionTimer::new()
+            .inspect_err(|error| tracing::warn!(%error, "no high-resolution timer, falling back to sleep"))
+            .ok();
+
+        let mut last_iteration = now_hns();
+        loop {
+            if !self.handle_commands() {
+                break;
+            }
+            self.handle_server_events();
+            let now = now_hns();
+            if now - last_iteration > LOOP_GAP_WARNING_HNS {
+                tracing::warn!(
+                    gap_us = (now - last_iteration) / HNS_PER_MICROSECOND,
+                    "scheduler loop was delayed"
+                );
+            }
+            last_iteration = now;
+            self.run_blocks(self.timeline.microframe_at(now));
+            self.complete_due(now);
+            self.sleep(timer.as_ref());
+        }
+        tracing::info!("scheduler stopped");
+    }
+
+    /// 返回 false 表示应退出。
+    fn handle_commands(&mut self) -> bool {
+        loop {
+            match self.commands.try_recv() {
+                Ok(Command::Apply(mut mixer)) => {
+                    if let Some(old) = &self.mixer {
+                        mixer.inherit(old);
+                    }
+                    let rate = mixer.sample_rate();
+                    if self.mixer.as_ref().map(|old| old.sample_rate()) != Some(rate) {
+                        self.next_block = None;
+                        self.block_pacer.reset();
+                    }
+                    for stream in self.streams.values_mut() {
+                        stream.set_engine_rate(Some(rate));
+                    }
+                    tracing::info!(revision = mixer.revision().0, rate = rate.hz(), "plan applied");
+                    if let Some(old) = self.mixer.replace(mixer) {
+                        let _ = self.retired.send(old);
+                    }
+                }
+                Ok(Command::Shutdown) | Err(TryRecvError::Disconnected) => return false,
+                Err(TryRecvError::Empty) => return true,
+            }
+        }
+    }
+
+    fn handle_server_events(&mut self) {
+        while let Ok(event) = self.server_events.try_recv() {
+            match event {
+                ServerEvent::Imported {
+                    slot,
+                    connection,
+                    writer,
+                } => {
+                    let mut stream = SlotStream::new(slot, writer);
+                    stream.set_engine_rate(self.mixer.as_ref().map(|mixer| mixer.sample_rate()));
+                    self.streams.insert(connection, stream);
+                    self.slots.insert(slot, connection);
+                    let _ = self.events.send(EngineEvent::SlotConnection { slot, connected: true });
+                }
+                ServerEvent::Released { slot, connection } => self.drop_connection(connection, slot),
+                ServerEvent::Reply { connection, bytes } => self.write(connection, &bytes),
+                ServerEvent::StreamChanged {
+                    slot,
+                    connection,
+                    change,
+                } => {
+                    if let Some(stream) = self.streams.get_mut(&connection) {
+                        stream.apply_change(change);
+                        let format = stream.format().map(|format| DeviceFormat {
+                            sample_rate: format.sample_rate,
+                            sample_format: format.wire.sample_format,
+                            channels: u16::from(SLOT_CHANNELS),
+                        });
+                        let _ = self.events.send(EngineEvent::SlotFormat { slot, format });
+                    }
+                }
+                ServerEvent::IsoSubmit {
+                    connection,
+                    submit,
+                    received_hns,
+                    ..
+                } => self.schedule(connection, submit, received_hns),
+                ServerEvent::Unlink {
+                    connection,
+                    seq,
+                    target_seq,
+                } => {
+                    let found = self.pending.remove(&(connection.0, target_seq)).is_some();
+                    let status = if found {
+                        UrbStatus::ConnectionReset
+                    } else {
+                        UrbStatus::Ok
+                    };
+                    self.write(connection, &encode_ret_unlink(seq, status));
+                }
+            }
+        }
+    }
+
+    fn schedule(&mut self, connection: ConnectionId, submit: Submit, received_hns: i64) {
+        let Some(stream) = self.streams.get_mut(&connection) else {
+            return;
+        };
+        let now = now_hns();
+        let reservation = stream.reserve(&submit, self.timeline.microframe_at(now));
+        if let Some(late_by) = reservation.late_by {
+            // 区分是主机提交得晚，还是 URB 在读线程到调度线程之间排队太久
+            tracing::warn!(
+                slot = %stream.slot(),
+                late_us = late_by * MICROSECONDS_PER_MICROFRAME,
+                queued_us = (now - received_hns) / HNS_PER_MICROSECOND,
+                "isochronous URB arrived late, restarting the slot timeline"
+            );
+        }
+        let (start, end) = (reservation.start, reservation.end);
+        let deadline = self.timeline.time_of(end);
+        let seq = submit.seq;
+        let pending = match submit.direction {
+            Direction::Out => Pending::Ready(stream.accept_render(&submit, start)),
+            Direction::In => Pending::Capture(submit),
+        };
+        self.pending.insert((connection.0, seq), pending);
+        self.deadlines.push(Reverse((deadline, connection.0, seq)));
+    }
+
+    /// 运行所有到期的混音块。块 [b, b+8) 在时间线走到 b+8 时处理。
+    fn run_blocks(&mut self, now_microframe: i64) {
+        let Some(mixer) = self.mixer.as_mut() else {
+            return;
+        };
+        let start = self.next_block.get_or_insert(now_microframe);
+        if now_microframe - *start > MAX_CATCH_UP_MICROFRAMES {
+            tracing::warn!(behind = now_microframe - *start, "mixer fell behind, skipping ahead");
+            *start = now_microframe - MICROFRAMES_PER_MS;
+        }
+        while *start + MICROFRAMES_PER_MS <= now_microframe {
+            let end = *start + MICROFRAMES_PER_MS;
+            let frames = self
+                .block_pacer
+                .next_packet_frames(mixer.sample_rate(), MICROFRAMES_PER_MS as u32)
+                .min(MAX_BLOCK_FRAMES);
+
+            mixer.begin_block(frames);
+            for index in 0..mixer.slot_inputs().len() {
+                let (node, slot) = mixer.slot_inputs()[index];
+                let stream = self
+                    .slots
+                    .get(&slot)
+                    .and_then(|connection| self.streams.get_mut(connection));
+                if let (Some(stream), Some(buffer)) = (stream, mixer.input_mut(node, frames)) {
+                    stream.release(end);
+                    stream.pop_render(buffer);
+                }
+            }
+            mixer.process(frames);
+            for index in 0..mixer.slot_outputs().len() {
+                let (node, slot) = mixer.slot_outputs()[index];
+                let stream = self
+                    .slots
+                    .get(&slot)
+                    .and_then(|connection| self.streams.get_mut(connection));
+                if let (Some(stream), Some(buffer)) = (stream, mixer.output(node, frames)) {
+                    stream.push_capture(buffer);
+                }
+            }
+            *start = end;
+        }
+        debug_assert_eq!(CHANNELS, usize::from(SLOT_CHANNELS));
+    }
+
+    fn complete_due(&mut self, now: i64) {
+        while let Some(Reverse((deadline, connection, seq))) = self.deadlines.peek().copied() {
+            if deadline > now {
+                break;
+            }
+            self.deadlines.pop();
+            let Some(pending) = self.pending.remove(&(connection, seq)) else {
+                continue;
+            };
+            let connection = ConnectionId(connection);
+            let bytes = match pending {
+                Pending::Ready(bytes) => bytes,
+                Pending::Capture(submit) => match self.streams.get_mut(&connection) {
+                    Some(stream) => stream.complete_capture(&submit),
+                    None => continue,
+                },
+            };
+            self.write(connection, &bytes);
+        }
+    }
+
+    fn sleep(&self, timer: Option<&HighResolutionTimer>) {
+        let now = now_hns();
+        let mut wake = now + MAX_SLEEP_HNS;
+        if let Some(Reverse((deadline, _, _))) = self.deadlines.peek() {
+            wake = wake.min(*deadline);
+        }
+        if let Some(start) = self.next_block {
+            wake = wake.min(self.timeline.time_of(start + MICROFRAMES_PER_MS));
+        }
+        let duration = wake - now;
+        if duration <= 0 {
+            return;
+        }
+        match timer {
+            Some(timer) => {
+                if timer.sleep(duration).is_err() {
+                    std::thread::sleep(hns_to_duration(duration));
+                }
+            }
+            None => std::thread::sleep(hns_to_duration(duration)),
+        }
+    }
+
+    fn write(&mut self, connection: ConnectionId, bytes: &[u8]) {
+        let Some(stream) = self.streams.get_mut(&connection) else {
+            return;
+        };
+        if let Err(error) = stream.write(bytes) {
+            let slot = stream.slot();
+            tracing::info!(%slot, %error, "write failed, dropping the connection");
+            self.drop_connection(connection, slot);
+        }
+    }
+
+    fn drop_connection(&mut self, connection: ConnectionId, slot: SlotId) {
+        if let Some(stream) = self.streams.remove(&connection) {
+            let stats = stream.stats;
+            tracing::info!(
+                %slot,
+                restarts = stats.restarts,
+                underflow_frames = stats.underflow_frames,
+                overflow_frames = stats.overflow_frames,
+                "slot stream closed"
+            );
+            if self.slots.get(&slot) == Some(&connection) {
+                self.slots.remove(&slot);
+            }
+            self.pending.retain(|(owner, _), _| *owner != connection.0);
+            let _ = self.events.send(EngineEvent::SlotConnection { slot, connected: false });
+        }
+    }
+}
+
+fn hns_to_duration(hns: i64) -> Duration {
+    const NANOS_PER_HNS: u64 = 100;
+    Duration::from_nanos(u64::try_from(hns).unwrap_or(0) * NANOS_PER_HNS)
+}

@@ -27,10 +27,23 @@ version = "0.1.0"
 [[package]]
 name = "aem-dsp"
 version = "0.1.0"
+dependencies = [
+ "aem-protocol",
+]
 
 [[package]]
 name = "aem-engine"
 version = "0.1.0"
+dependencies = [
+ "aem-dsp",
+ "aem-protocol",
+ "aem-sys",
+ "aem-usbip",
+ "audio_thread_priority",
+ "tracing",
+ "tracing-subscriber",
+ "wasapi",
+]
 
 [[package]]
 name = "aem-guardian"
@@ -56,12 +69,16 @@ dependencies = [
 [[package]]
 name = "aem-sys"
 version = "0.1.0"
+dependencies = [
+ "windows",
+]
 
 [[package]]
 name = "aem-usbip"
 version = "0.1.0"
 dependencies = [
  "aem-protocol",
+ "aem-sys",
  "thiserror 2.0.21",
  "tracing",
  "tracing-subscriber",
@@ -134,6 +151,20 @@ name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
+
+[[package]]
+name = "audio_thread_priority"
+version = "0.38.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e0b30b2f3d2da482d0faeaafd8f88a38fbc62abb58d3b402cfa195793f4c92ab"
+dependencies = [
+ "cfg-if",
+ "dbus",
+ "libc",
+ "log",
+ "mach2",
+ "windows-sys 0.61.2",
+]
 
 [[package]]
 name = "autocfg"
@@ -1785,6 +1816,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
 
 [[package]]
+name = "mach2"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d640282b302c0bb0a2a8e0233ead9035e3bed871f0b7e81fe4a1ec829765db44"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "markup5ever"
 version = "0.39.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1918,6 +1958,15 @@ name = "num-conv"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "521739c6d2bac4aa25192232afe6841231376b2b26d4d9fae5ecf8ca5772e441"
+
+[[package]]
+name = "num-integer"
+version = "0.1.47"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ce2d95d4b3734dc35aa2f45e1aa22cd416814592a4f9d9205e11affd5b8e10b"
+dependencies = [
+ "num-traits",
+]
 
 [[package]]
 name = "num-traits"
@@ -3799,6 +3848,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec4cdd0dd910afe868b7ef477227d8d538b46b3075031afee8a9f2acb0a2ed0b"
 dependencies = [
  "try-lock",
+]
+
+[[package]]
+name = "wasapi"
+version = "0.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "58b35dbcb6fae6fbaba9f6f52a22686bb405978ee112ed6eb33d98bd63c97583"
+dependencies = [
+ "log",
+ "num-integer",
+ "thiserror 2.0.21",
+ "windows",
+ "windows-core",
 ]
 
 [[package]]
