@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 aem-protocol = { workspace = true }
+aem-sys = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 

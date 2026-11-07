@@ -18,6 +18,7 @@ use std::thread;
 use std::time::Duration;
 
 use aem_protocol::ids::{SlotDirection, SlotId};
+use aem_sys::clock::now_hns;
 
 use crate::descriptors::Descriptors;
 use crate::function::{Setup, StreamChange, Uac2Function};
@@ -33,6 +34,9 @@ pub const DEFAULT_PORT: u16 = 3241;
 const MAX_CONNECTIONS: usize = 64;
 /// 连接建立后必须在这段时间内发来操作请求，否则断开，防止空连接一直占着名额
 const OP_PHASE_TIMEOUT: Duration = Duration::from_secs(5);
+/// 导入后读线程至少每隔这么久检查一次槽位是否仍被导出。
+/// Windows 上 `shutdown` 不保证唤醒另一个句柄上阻塞中的 `recv`，没有音频流量的连接可能一直不退出。
+const EXPORT_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 const READ_CHUNK: usize = 64 * 1024;
 /// 输入槽位（主机播放）的等时 OUT 端点号与输出槽位（主机录音）的等时 IN 端点号
 const RENDER_ENDPOINT_NUMBER: u8 = 1;
@@ -67,6 +71,8 @@ pub enum ServerEvent {
         slot: SlotId,
         connection: ConnectionId,
         submit: Submit,
+        /// 读线程解析出这个 URB 的时刻（QPC，100 ns），用于诊断从读线程到调度线程的排队延迟
+        received_hns: i64,
     },
     /// 主机取消一个尚未完成的 URB。
     Unlink {
@@ -268,7 +274,7 @@ fn admit(
 }
 
 fn import(mut stream: TcpStream, identity: SlotIdentity, connection: ConnectionId, shared: &Shared) -> io::Result<()> {
-    stream.set_read_timeout(None)?;
+    stream.set_read_timeout(Some(EXPORT_CHECK_INTERVAL))?;
     let slot = identity.slot;
     let writer = stream.try_clone()?;
     send(
@@ -284,10 +290,18 @@ fn import(mut stream: TcpStream, identity: SlotIdentity, connection: ConnectionI
     let mut decoder = UrbDecoder::new();
     let mut chunk = vec![0u8; READ_CHUNK];
     loop {
-        let read = stream.read(&mut chunk)?;
-        if read == 0 {
-            return Ok(());
-        }
+        let read = match stream.read(&mut chunk) {
+            Ok(0) => return Ok(()),
+            Ok(read) => read,
+            Err(error) if matches!(error.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) => {
+                if shared.state().exported.contains(&slot) {
+                    continue;
+                }
+                tracing::debug!(%slot, "slot no longer exported, ending the idle connection");
+                return Ok(());
+            }
+            Err(error) => return Err(error),
+        };
         decoder.push(&chunk[..read]);
         while let Some(command) = decoder.next_command().map_err(invalid_data)? {
             handle_command(command, slot, connection, &mut function, shared)?;
@@ -355,6 +369,7 @@ fn handle_command(
                 slot,
                 connection,
                 submit,
+                received_hns: now_hns(),
             },
         );
     }
