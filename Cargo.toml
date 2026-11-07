@@ -43,6 +43,10 @@ windows = "0.62.2"
 audio_thread_priority = "0.38.0"
 # WASAPI 设备 IO（MIT，选型报告 6.1 节）
 wasapi = "0.27.0"
+# 重采样（MIT，S5）
+rubato = "5.0.1"
+# 实时安全的无锁 SPSC 环形缓冲（MIT/Apache，选型报告 6.1 节）
+rtrb = "0.4.1"
 # 固定在 Tauri 2：crates.io 上的最新版已是 3.0 alpha（ADR-0013）
 tauri = "2.12.5"
 tauri-build = "2.7.4"

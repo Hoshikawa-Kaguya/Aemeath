@@ -72,11 +72,15 @@ impl Timeline {
         }
     }
 
+    /// 时刻 `hns` 在时间线上的位置（微帧，含小数）。
+    pub fn position(&self, hns: i64) -> f64 {
+        let segment = self.load();
+        segment.anchor_microframe + (hns - segment.anchor_hns) as f64 / segment.hns_per_microframe
+    }
+
     /// 时刻 `hns` 所在的微帧（向下取整）。
     pub fn microframe_at(&self, hns: i64) -> i64 {
-        let segment = self.load();
-        let position = segment.anchor_microframe + (hns - segment.anchor_hns) as f64 / segment.hns_per_microframe;
-        position.floor() as i64
+        self.position(hns).floor() as i64
     }
 
     /// 微帧 `microframe` 开始的时刻，单位 100 ns。

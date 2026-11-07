@@ -2,8 +2,11 @@
 //!
 //! - [`codec`]：样本格式与 f32 的互相转换。
 //! - [`gain`]：dB 换算与平滑的增益。
-//!
-//! 重采样桥（ASRC 与固定比率，见 S5）在 M1 第 5 项加入。
+//! - [`resample`]：4 档重采样与时钟漂移的 PI 控制器（S5）。
 
 pub mod codec;
 pub mod gain;
+pub mod resample;
+
+/// 引擎内部一律是立体声
+pub const STEREO: usize = 2;

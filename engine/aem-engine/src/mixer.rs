@@ -6,6 +6,7 @@
 //! - 控制线程构建新混音器时，记下每个节点、每条连线对应旧计划中的位置；调度线程替换时调用
 //!   [`Mixer::inherit`]，按位置接过旧的当前增益，再平滑过渡到新的目标值。
 //! - 新连线从 0 淡入；被删除的连线如果两端节点还在、且不会和新连线构成回路，就保留下来淡出。
+//! - 外部设备节点的端口（与设备 IO 线程之间的环形缓冲）按"端点 + 方向"从旧混音器移交过来，设备流不中断。
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -17,6 +18,7 @@ use aem_protocol::units::SampleRate;
 
 use crate::CHANNELS;
 use crate::meters::MeterBank;
+use crate::port::{Port, PortIssues};
 
 /// 一个块最多的帧数：1 ms 一块，768 kHz 时为 768 帧
 pub const MAX_BLOCK_FRAMES: usize = 1024;
@@ -40,6 +42,8 @@ struct MixNode {
     strip_target: f32,
     /// 这个节点本块的信号（通道条之后），交错立体声
     buffer: Vec<f32>,
+    /// 外部设备节点的端口；没有端口时外部输入为静音、外部输出被丢弃
+    port: Option<Port>,
 }
 
 #[derive(Debug)]
@@ -56,6 +60,8 @@ pub struct MixerLayout {
     node_ids: Vec<NodeId>,
     /// 计划中的连线（不含正在淡出的旧连线）
     routes: Vec<(NodeId, NodeId)>,
+    /// 每个节点的外部端点（端点 + 角色），用来移交端口
+    endpoints: Vec<Option<(EndpointId, NodeRole)>>,
 }
 
 #[derive(Debug)]
@@ -72,6 +78,7 @@ pub struct Mixer {
     meters: Arc<MeterBank>,
     inherit_nodes: Vec<Option<usize>>,
     inherit_routes: Vec<Option<usize>>,
+    inherit_ports: Vec<Option<usize>>,
     slot_inputs: Vec<(usize, SlotId)>,
     slot_outputs: Vec<(usize, SlotId)>,
 }
@@ -102,6 +109,7 @@ impl Mixer {
                     strip: SmoothedGain::fixed(strip_target),
                     strip_target,
                     buffer: vec![0.0; MAX_BLOCK_FRAMES * CHANNELS],
+                    port: None,
                 }
             })
             .collect();
@@ -168,11 +176,30 @@ impl Mixer {
             .map(|key| previous?.routes.iter().position(|previous_key| previous_key == key))
             .collect();
 
+        let endpoints: Vec<Option<(EndpointId, NodeRole)>> = nodes
+            .iter()
+            .map(|node| match &node.endpoint {
+                NodeEndpoint::External(endpoint) => Some((endpoint.clone(), node.role)),
+                _ => None,
+            })
+            .collect();
+        let inherit_ports = endpoints
+            .iter()
+            .map(|key| {
+                let key = key.as_ref()?;
+                previous?
+                    .endpoints
+                    .iter()
+                    .position(|previous| previous.as_ref() == Some(key))
+            })
+            .collect();
+
         let slot_inputs = slot_nodes(&nodes, NodeRole::Input);
         let slot_outputs = slot_nodes(&nodes, NodeRole::Output);
         let layout = MixerLayout {
             node_ids: plan.nodes.iter().map(|node| node.id).collect(),
             routes: planned,
+            endpoints,
         };
         let mixer = Self {
             revision: plan.revision,
@@ -185,14 +212,24 @@ impl Mixer {
             meters,
             inherit_nodes,
             inherit_routes,
+            inherit_ports,
             slot_inputs,
             slot_outputs,
         };
         (mixer, layout)
     }
 
-    /// 调度线程替换计划时调用：接过旧混音器的当前增益，再平滑过渡到新的目标值。不分配内存。
-    pub fn inherit(&mut self, old: &Self) {
+    /// 调度线程替换计划时调用：接过旧混音器的当前增益（再平滑过渡到新的目标值）和外部设备端口。不分配内存。
+    ///
+    /// 控制线程已经为某个节点接上新端口时（例如设备流重建），不再从旧混音器移交。
+    pub fn inherit(&mut self, old: &mut Self) {
+        for (node, source) in self.nodes.iter_mut().zip(&self.inherit_ports) {
+            if node.port.is_none()
+                && let Some(old_node) = source.and_then(|index| old.nodes.get_mut(index))
+            {
+                node.port = old_node.port.take();
+            }
+        }
         for (node, source) in self.nodes.iter_mut().zip(&self.inherit_nodes) {
             if let Some(old_node) = source.and_then(|index| old.nodes.get(index)) {
                 let mut strip = old_node.strip;
@@ -205,6 +242,50 @@ impl Mixer {
                 let mut gain = old_route.gain;
                 gain.set_target(route.target, self.ramp_frames);
                 route.gain = gain;
+            }
+        }
+    }
+
+    /// 外部设备节点：(节点下标, 端点, 角色)
+    pub fn external_nodes(&self) -> Vec<(usize, EndpointId, NodeRole)> {
+        self.nodes
+            .iter()
+            .enumerate()
+            .filter_map(|(index, node)| match &node.endpoint {
+                NodeEndpoint::External(endpoint) => Some((index, endpoint.clone(), node.role)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// 这个节点替换时会从旧混音器接过端口
+    pub fn inherits_port(&self, node: usize) -> bool {
+        self.inherit_ports.get(node).is_some_and(Option::is_some)
+    }
+
+    /// 控制线程为外部设备节点接上新端口。
+    pub fn attach_port(&mut self, node: usize, port: Port) {
+        if let Some(node) = self.nodes.get_mut(node) {
+            node.port = Some(port);
+        }
+    }
+
+    /// 把外部输入端口的数据读进对应节点的缓冲（在 [`Self::begin_block`] 之后调用）。
+    pub fn pull_ports(&mut self, frames: usize, issues: &mut PortIssues) {
+        let len = frames.min(MAX_BLOCK_FRAMES) * CHANNELS;
+        for node in self.nodes.iter_mut().filter(|node| node.role == NodeRole::Input) {
+            if let Some(port) = node.port.as_mut() {
+                port.pull(&mut node.buffer[..len], issues);
+            }
+        }
+    }
+
+    /// 把外部输出节点处理后的信号写进端口（在 [`Self::process`] 之后调用）。
+    pub fn push_ports(&mut self, frames: usize, issues: &mut PortIssues) {
+        let len = frames.min(MAX_BLOCK_FRAMES) * CHANNELS;
+        for node in self.nodes.iter_mut().filter(|node| node.role == NodeRole::Output) {
+            if let Some(port) = node.port.as_mut() {
+                port.push(&node.buffer[..len], issues);
             }
         }
     }
@@ -481,7 +562,7 @@ mod tests {
         let mut second = plan(vec![route(GAME, OBS, -6.0)]);
         second.revision = PlanRevision(2);
         let (mut new, _) = build(&second, Some(&layout));
-        new.inherit(&old);
+        new.inherit(&mut old);
         // 从 1.0 出发过渡到 0.5，第一块结束时只下降了十分之一
         let first_block = run(&mut new, 1.0, 0.0, 1);
         let expected = 1.0 + (db_to_linear(-6.0) - 1.0) * 0.1;
@@ -496,7 +577,7 @@ mod tests {
 
         let second = plan(vec![]);
         let (mut new, _) = build(&second, Some(&layout));
-        new.inherit(&old);
+        new.inherit(&mut old);
         let first_block = run(&mut new, 1.0, 0.0, 1);
         assert!((first_block - 0.9).abs() < 1e-5, "{first_block}");
         assert_eq!(run(&mut new, 1.0, 0.0, 20), 0.0);
@@ -525,6 +606,40 @@ mod tests {
         let (new, _) = build(&with_two_buses(vec![route(second_bus, BUS, 0.0)]), Some(&layout));
         assert_eq!(new.routes.len(), 1, "BUS→second bus would close a loop");
         assert_eq!(new.order.len(), 5);
+    }
+
+    #[test]
+    fn external_ports_move_to_the_new_mixer_unless_replaced() {
+        let microphone = NodeId(7);
+        let with_microphone = |revision| {
+            let mut plan = plan(vec![route(microphone, OBS, 0.0)]);
+            plan.revision = PlanRevision(revision);
+            plan.nodes.push(node(
+                microphone,
+                NodeKind::ExternalInput {
+                    endpoint: EndpointId("{0.0.1.00000000}.{mic}".to_owned()),
+                },
+            ));
+            plan
+        };
+        let (mut first, layout) = build(&with_microphone(1), None);
+        let (_, consumer) = rtrb::RingBuffer::<f32>::new(16);
+        first.attach_port(4, Port::input(consumer, 4));
+
+        let (mut second, layout) = build(&with_microphone(2), Some(&layout));
+        assert!(second.inherits_port(4));
+        second.inherit(&mut first);
+        assert!(second.nodes[4].port.is_some() && first.nodes[4].port.is_none());
+
+        // 控制线程已经接了新端口（设备流重建）：不再从旧混音器接
+        let (mut third, _) = build(&with_microphone(3), Some(&layout));
+        let (_, fresh) = rtrb::RingBuffer::<f32>::new(16);
+        third.attach_port(4, Port::input(fresh, 4));
+        third.inherit(&mut second);
+        assert!(
+            second.nodes[4].port.is_some(),
+            "the old port stays behind and is dropped with the old mixer"
+        );
     }
 
     #[test]

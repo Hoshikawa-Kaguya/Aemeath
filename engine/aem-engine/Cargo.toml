@@ -9,10 +9,12 @@ publish.workspace = true
 
 [dependencies]
 aem-dsp = { workspace = true }
+aem-io = { workspace = true }
 aem-protocol = { workspace = true }
 aem-sys = { workspace = true }
 aem-usbip = { workspace = true }
 audio_thread_priority = { workspace = true }
+rtrb = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]

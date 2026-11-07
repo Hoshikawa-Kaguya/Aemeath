@@ -21,6 +21,7 @@ use aem_usbip::stream::{CHANNELS as SLOT_CHANNELS, CapturePacer};
 use aem_usbip::wire::{Direction, Submit, UrbStatus, encode_ret_unlink};
 
 use crate::mixer::{MAX_BLOCK_FRAMES, Mixer};
+use crate::port::PortIssues;
 use crate::slot::SlotStream;
 use crate::timeline::{MICROFRAMES_PER_MS, Timeline};
 use crate::{CHANNELS, EngineEvent};
@@ -33,6 +34,8 @@ const LOOP_GAP_WARNING_HNS: i64 = 30_000;
 const MAX_SLEEP_HNS: i64 = 5_000;
 /// 混音落后超过这么多微帧（10 ms）时不再逐块追赶，直接跳到当前时刻
 const MAX_CATCH_UP_MICROFRAMES: i64 = 80;
+/// 外部设备端口的问题最多每隔这么久记一次日志（100 ns 单位，5 s）
+const PORT_ISSUE_LOG_INTERVAL_HNS: i64 = 50_000_000;
 /// MMCSS 需要一个缓冲大小和采样率作参考，这里只用于提升优先级
 const PRIORITY_HINT_FRAMES: u32 = 48;
 const PRIORITY_HINT_RATE: u32 = 48_000;
@@ -67,6 +70,9 @@ pub struct Scheduler {
     /// 下一个混音块的起始微帧；没有计划时为 None
     next_block: Option<i64>,
     block_pacer: CapturePacer,
+    /// 外部设备端口自上次记录以来的问题
+    port_issues: PortIssues,
+    last_port_log: i64,
 }
 
 impl Scheduler {
@@ -90,6 +96,8 @@ impl Scheduler {
             pending: HashMap::new(),
             next_block: None,
             block_pacer: CapturePacer::default(),
+            port_issues: PortIssues::default(),
+            last_port_log: 0,
         }
     }
 
@@ -129,7 +137,7 @@ impl Scheduler {
         loop {
             match self.commands.try_recv() {
                 Ok(Command::Apply(mut mixer)) => {
-                    if let Some(old) = &self.mixer {
+                    if let Some(old) = self.mixer.as_mut() {
                         mixer.inherit(old);
                     }
                     let rate = mixer.sample_rate();
@@ -174,6 +182,18 @@ impl Scheduler {
                 } => {
                     if let Some(stream) = self.streams.get_mut(&connection) {
                         stream.apply_change(change);
+                        let engine_rate = self.mixer.as_ref().map(|mixer| mixer.sample_rate());
+                        if let (Some(format), Some(engine_rate)) = (stream.format(), engine_rate)
+                            && format.sample_rate != engine_rate
+                        {
+                            // 固定比率重采样在 M4 与设备页的格式设置一起加入；在那之前这个槽位是静音
+                            tracing::warn!(
+                                %slot,
+                                slot_rate = format.sample_rate.hz(),
+                                engine_rate = engine_rate.hz(),
+                                "slot sample rate differs from the engine rate; the slot is silent until they match"
+                            );
+                        }
                         let format = stream.format().map(|format| DeviceFormat {
                             sample_rate: format.sample_rate,
                             sample_format: format.wire.sample_format,
@@ -260,7 +280,9 @@ impl Scheduler {
                     stream.pop_render(buffer);
                 }
             }
+            mixer.pull_ports(frames, &mut self.port_issues);
             mixer.process(frames);
+            mixer.push_ports(frames, &mut self.port_issues);
             for index in 0..mixer.slot_outputs().len() {
                 let (node, slot) = mixer.slot_outputs()[index];
                 let stream = self
@@ -274,6 +296,26 @@ impl Scheduler {
             *start = end;
         }
         debug_assert_eq!(CHANNELS, usize::from(SLOT_CHANNELS));
+        self.log_port_issues();
+    }
+
+    /// 外部设备端口出了问题时记录日志（限频；正常时什么也不做）。
+    fn log_port_issues(&mut self) {
+        if self.port_issues == PortIssues::default() {
+            return;
+        }
+        let now = now_hns();
+        if now - self.last_port_log < PORT_ISSUE_LOG_INTERVAL_HNS {
+            return;
+        }
+        let issues = std::mem::take(&mut self.port_issues);
+        tracing::warn!(
+            input_underflows = issues.underflows,
+            input_skipped_samples = issues.skipped_samples,
+            output_dropped_samples = issues.dropped_samples,
+            "external device ports had problems"
+        );
+        self.last_port_log = now;
     }
 
     fn complete_due(&mut self, now: i64) {

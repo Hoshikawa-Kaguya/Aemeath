@@ -4,14 +4,15 @@
 //! - [`mixer`]：路由计划的执行（通道条、连线、求和、平滑、电平）。
 //! - [`slot`]：被导入槽位的流状态。
 //! - [`scheduler`]：唯一的实时线程。
+//! - [`port`]：外部设备节点在引擎一侧的端口。
+//! - [`devices`]：外部设备 IO 线程与主时钟跟随的管理。
 //! - [`Engine`]：控制线程一侧的接口：启动、下发计划、取事件与电平。
-//!
-//! 外部设备（WASAPI）、重采样桥和主时钟跟随在 M1 第 5 项加入；在那之前外部输入为静音，外部输出被丢弃，
-//! 时间线按 QPC 速率运行。
 
+pub mod devices;
 pub mod fifo;
 pub mod meters;
 pub mod mixer;
+pub mod port;
 pub mod scheduler;
 pub mod slot;
 pub mod timeline;
@@ -24,6 +25,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+use aem_io::IoEvent;
 use aem_protocol::ids::SlotId;
 use aem_protocol::message::DeviceFormat;
 use aem_protocol::plan::{NodeKind, PlanError, RoutePlan};
@@ -31,10 +33,11 @@ use aem_sys::clock::now_hns;
 use aem_usbip::identity::IdentityProfile;
 use aem_usbip::server::{ServerConfig, UsbipServer};
 
+use crate::devices::{ExternalDevices, TimelineClock};
 use crate::meters::MeterBank;
 use crate::mixer::{Mixer, MixerLayout};
 use crate::scheduler::{Command, Scheduler};
-use crate::timeline::{Timeline, TimelineWriter};
+use crate::timeline::Timeline;
 
 /// 引擎内部一律是立体声（N 声道节点见选型报告第 10 节）
 pub const CHANNELS: usize = 2;
@@ -52,6 +55,8 @@ pub enum EngineEvent {
     SlotConnection { slot: SlotId, connected: bool },
     /// 主机为槽位选定的流格式；None 表示流停止
     SlotFormat { slot: SlotId, format: Option<DeviceFormat> },
+    /// 外部设备的状态（在线及其格式，或离线及原因）
+    Endpoint(IoEvent),
 }
 
 pub struct Engine {
@@ -61,8 +66,7 @@ pub struct Engine {
     events: Receiver<EngineEvent>,
     layout: Option<MixerLayout>,
     meters: Option<Arc<MeterBank>>,
-    /// 主时钟跟随（第 5 项）使用
-    _timeline_writer: TimelineWriter,
+    devices: ExternalDevices,
     scheduler: Option<JoinHandle<()>>,
 }
 
@@ -81,6 +85,16 @@ impl Engine {
         let (retired_sender, retired) = mpsc::channel();
         let (event_sender, events) = mpsc::channel();
         let (timeline, timeline_writer) = Timeline::new(now_hns());
+        let device_events = event_sender.clone();
+        let devices = ExternalDevices::new(
+            TimelineClock {
+                timeline: Arc::clone(&timeline),
+                writer: timeline_writer,
+            },
+            Arc::new(move |event| {
+                let _ = device_events.send(EngineEvent::Endpoint(event));
+            }),
+        );
         let scheduler = Scheduler::new(
             timeline,
             command_receiver,
@@ -98,7 +112,7 @@ impl Engine {
             events,
             layout: None,
             meters: None,
-            _timeline_writer: timeline_writer,
+            devices,
             scheduler: Some(handle),
         })
     }
@@ -114,7 +128,8 @@ impl Engine {
         while self.retired.try_recv().is_ok() {}
 
         let meters = Arc::new(MeterBank::new(plan.nodes.iter().map(|node| node.id).collect()));
-        let (mixer, layout) = Mixer::build(plan, self.layout.as_ref(), Arc::clone(&meters));
+        let (mut mixer, layout) = Mixer::build(plan, self.layout.as_ref(), Arc::clone(&meters));
+        self.devices.prepare(plan, &mut mixer);
         let slots: BTreeSet<SlotId> = plan
             .nodes
             .iter()
@@ -149,5 +164,6 @@ impl Drop for Engine {
         if let Some(handle) = self.scheduler.take() {
             let _ = handle.join();
         }
+        self.devices.shutdown();
     }
 }
