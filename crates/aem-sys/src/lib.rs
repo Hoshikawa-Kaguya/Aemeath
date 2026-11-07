@@ -4,4 +4,5 @@
 //! 每个 `unsafe` 块都必须写 `// SAFETY:` 注释，说明为什么满足调用约定。
 
 pub mod clock;
+pub mod pipe;
 pub mod timer;

@@ -63,7 +63,8 @@ pub struct Engine {
     server: UsbipServer,
     commands: Sender<Command>,
     retired: Receiver<Box<Mixer>>,
-    events: Receiver<EngineEvent>,
+    /// 被 [`Engine::take_events`] 取走后为 None
+    events: Option<Receiver<EngineEvent>>,
     layout: Option<MixerLayout>,
     meters: Option<Arc<MeterBank>>,
     devices: ExternalDevices,
@@ -109,7 +110,7 @@ impl Engine {
             server,
             commands,
             retired,
-            events,
+            events: Some(events),
             layout: None,
             meters: None,
             devices,
@@ -147,9 +148,14 @@ impl Engine {
         Ok(())
     }
 
-    /// 等待下一个事件，最多 `timeout`。
+    /// 等待下一个事件，最多 `timeout`。事件接收端已被 [`Self::take_events`] 取走时返回 None。
     pub fn next_event(&self, timeout: Duration) -> Option<EngineEvent> {
-        self.events.recv_timeout(timeout).ok()
+        self.events.as_ref()?.recv_timeout(timeout).ok()
+    }
+
+    /// 取走事件接收端，交给专门的线程接收（宿主进程这样做，以便同时在另一处调用 [`Self::apply_plan`]）。
+    pub fn take_events(&mut self) -> Option<Receiver<EngineEvent>> {
+        self.events.take()
     }
 
     /// 当前计划的电平（节点顺序与计划一致）。

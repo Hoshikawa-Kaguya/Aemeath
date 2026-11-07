@@ -57,6 +57,8 @@ pub enum EngineToApp {
     EndpointStatus { node: NodeId, status: EndpointStatus },
     /// USB/IP 服务端上某个槽位的连接状态发生变化（ADR-0007：挂载成功以服务端实际收到 import 为准）。
     SlotConnection { slot: SlotId, connected: bool },
+    /// 主机为槽位选定的流格式（设备页显示）；为 None 表示流已停止。
+    SlotFormat { slot: SlotId, format: Option<DeviceFormat> },
 }
 
 /// 命令被拒绝的原因。
@@ -159,6 +161,25 @@ mod tests {
             r#"{"type":"slot_connection","slot":{"direction":"out","number":8},"connected":true}"#
         );
         assert_eq!(serde_json::from_str::<EngineToApp>(&json).unwrap(), message);
+    }
+
+    #[test]
+    fn slot_format_has_a_stable_wire_format() {
+        let message = EngineToApp::SlotFormat {
+            slot: SlotId {
+                direction: SlotDirection::In,
+                number: SlotNumber::new(1).unwrap(),
+            },
+            format: Some(DeviceFormat {
+                sample_rate: SampleRate::HZ_48000,
+                sample_format: SampleFormat::Int32,
+                channels: 2,
+            }),
+        };
+        assert_eq!(
+            serde_json::to_string(&message).unwrap(),
+            r#"{"type":"slot_format","slot":{"direction":"in","number":1},"format":{"sample_rate":48000,"sample_format":"int32","channels":2}}"#
+        );
     }
 
     #[test]

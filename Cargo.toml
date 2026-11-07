@@ -47,6 +47,10 @@ wasapi = "0.27.0"
 rubato = "5.0.1"
 # 实时安全的无锁 SPSC 环形缓冲（MIT/Apache，选型报告 6.1 节）
 rtrb = "0.4.1"
+# 引擎进程的命名管道 IPC（MIT）
+tokio = "1.54.1"
+# 按天轮转的非阻塞文件日志（MIT）
+tracing-appender = "0.2.5"
 # 固定在 Tauri 2：crates.io 上的最新版已是 3.0 alpha（ADR-0013）
 tauri = "2.12.5"
 tauri-build = "2.7.4"
