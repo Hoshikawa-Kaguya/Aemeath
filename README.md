@@ -19,6 +19,43 @@ Aemeath 是一个 Windows 11 上的虚拟混音台：用节点和连线，把麦
 ## 系统要求
 
 - Windows 11 x64
+- usbip-win2 驱动：已随 Aemeath 附带，首次启动时会引导安装（需要管理员权限一次）
+
+## 发布形式
+
+- **安装版**：运行 `Setup.exe` 即可，无需管理员权限。
+- **便携版**：解压即用，配置保存在程序文件夹内。删除便携版前，请先在设置页执行"移除虚拟设备"。
+
+## 开发
+
+需要：Rust（stable，1.90 以上）、Node.js 22.12 以上、pnpm（版本见 `app/package.json` 的 `packageManager`）。
+
+```sh
+cd app
+pnpm install
+pnpm tauri dev                # 开发运行主程序（前端热更新）
+pnpm tauri build --no-bundle  # 发布构建；安装包由 Velopack 另行打包
+```
+
+检查（与 CI 相同）：
+
+```sh
+# 在 app/ 下
+pnpm format:check && pnpm lint && pnpm build
+# 在仓库根目录下（需要先执行一次 pnpm build：主程序编译时要嵌入 app/dist）
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+```
+
+目录结构：
+
+| 目录 | 内容 |
+|---|---|
+| `crates/` | 共用的库：`aem-protocol`（IPC 消息）、`aem-sys`（Windows API 封装，唯一允许 `unsafe` 的 crate） |
+| `engine/` | 引擎进程：音频、重采样、主时钟、USB/IP 服务端 |
+| `app/` | 主程序（Tauri 2）：`src/` 是 Vue 3 前端，`src-tauri/` 是 Rust 后端，`crates/` 是控制面的库 |
+| `guardian/` | 守护进程 |
 
 ## 许可证
 

@@ -1,0 +1,14 @@
+{
+  "app": {
+    "title": "Aemeath"
+  },
+  "titleBar": {
+    "minimize": "Minimize",
+    "maximize": "Maximize",
+    "restore": "Restore down",
+    "close": "Close"
+  },
+  "shell": {
+    "empty": "The workbench will appear here."
+  }
+}

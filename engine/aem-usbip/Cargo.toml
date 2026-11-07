@@ -1,0 +1,11 @@
+[package]
+name = "aem-usbip"
+description = "USB/IP server and UAC2 device model for the Aemeath virtual device slots"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

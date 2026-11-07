@@ -1,0 +1,56 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/aem-protocol",
+    "crates/aem-sys",
+    "engine/aem-usbip",
+    "engine/aem-io",
+    "engine/aem-dsp",
+    "engine/aem-engine",
+    "engine/aem-host",
+    "app/crates/aem-core",
+    "app/crates/aem-control",
+    "app/src-tauri",
+    "guardian",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+license = "GPL-3.0-or-later"
+publish = false
+
+[workspace.dependencies]
+# 内部 crate
+aem-protocol = { path = "crates/aem-protocol" }
+aem-sys = { path = "crates/aem-sys" }
+aem-usbip = { path = "engine/aem-usbip" }
+aem-io = { path = "engine/aem-io" }
+aem-dsp = { path = "engine/aem-dsp" }
+aem-engine = { path = "engine/aem-engine" }
+aem-core = { path = "app/crates/aem-core" }
+aem-control = { path = "app/crates/aem-control" }
+
+# 第三方
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+thiserror = "2.0.21"
+tracing = "0.1.44"
+tracing-subscriber = "0.3.23"
+# 固定在 Tauri 2：crates.io 上的最新版已是 3.0 alpha（ADR-0013）
+tauri = "2.12.5"
+tauri-build = "2.7.4"
+
+# 除 aem-sys 外一律禁止 unsafe：Windows 调用都集中在 aem-sys，由它提供安全的封装（ADR-0008）
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+
+[profile.release]
+# 引擎要求出错时快速失败、干净退出，由守护进程拉起（ADR-0008）；主程序和守护进程同样适用
+panic = "abort"

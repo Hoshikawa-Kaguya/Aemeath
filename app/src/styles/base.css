@@ -1,0 +1,31 @@
+/* 窗口是透明的，Mica 由系统绘制（tauri.conf.json 的 windowEffects），页面本身不铺底色 */
+:root {
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+}
+
+body {
+  font-family: var(--fontFamilyBase);
+  font-size: var(--fontSizeBase300);
+  line-height: var(--lineHeightBase300);
+  color: var(--colorNeutralForeground1);
+  /* 桌面程序的习惯：界面文字不可选中，输入框除外 */
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+input,
+textarea {
+  user-select: text;
+}

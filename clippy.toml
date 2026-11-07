@@ -1,0 +1,3 @@
+# 测试代码里允许 unwrap / expect：失败时直接让测试失败即可
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true

@@ -1,0 +1,17 @@
+[package]
+name = "aem-app"
+description = "Aemeath app: control plane backend and WebView2 UI host"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[build-dependencies]
+tauri-build = { workspace = true }
+
+[dependencies]
+tauri = { workspace = true }
+
+[lints]
+workspace = true

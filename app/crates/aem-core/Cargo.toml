@@ -1,0 +1,11 @@
+[package]
+name = "aem-core"
+description = "Aemeath domain model, routing plan compiler and configuration"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # 只支持 Windows 11 x64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 前端：pnpm 的版本取自 app/package.json 的 packageManager 字段
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: app/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - name: Install frontend dependencies
+        working-directory: app
+        run: pnpm install --frozen-lockfile
+      - name: Check formatting (frontend)
+        working-directory: app
+        run: pnpm format:check
+      - name: Lint (frontend)
+        working-directory: app
+        run: pnpm lint
+      # build 内含 vue-tsc 类型检查；产物 app/dist 是 Tauri 编译期需要的，必须在 Rust 检查之前生成
+      - name: Build frontend
+        working-directory: app
+        run: pnpm build
+
+      # Rust
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Check formatting (Rust)
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Test
+        run: cargo test --workspace --locked

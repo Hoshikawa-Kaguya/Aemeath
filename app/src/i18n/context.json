@@ -1,0 +1,8 @@
+{
+  "app.title": "Product name. Do not translate.",
+  "titleBar.minimize": "Tooltip of the window's minimize button. Use the wording Windows uses in your language.",
+  "titleBar.maximize": "Tooltip of the window's maximize button. Use the wording Windows uses in your language.",
+  "titleBar.restore": "Tooltip of the maximize button while the window is maximized. Use the wording Windows uses in your language.",
+  "titleBar.close": "Tooltip of the window's close button. Closing keeps Aemeath running in the notification area.",
+  "shell.empty": "Temporary text in the empty main area during early development."
+}

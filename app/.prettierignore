@@ -1,0 +1,4 @@
+dist/
+src-tauri/
+crates/
+pnpm-lock.yaml

@@ -1,0 +1,11 @@
+[package]
+name = "aem-host"
+description = "Aemeath engine process"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
