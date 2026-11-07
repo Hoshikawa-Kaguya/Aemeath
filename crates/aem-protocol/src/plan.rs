@@ -70,7 +70,7 @@ pub enum NodeKind {
 }
 
 /// 节点在信号流中的角色。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NodeRole {
     Input,
     Processing,
@@ -151,6 +151,8 @@ pub enum PlanError {
     DuplicateNode(NodeId),
     #[error("{node} has an empty or overlong endpoint ID")]
     InvalidEndpoint { node: NodeId },
+    #[error("{second} uses the same external endpoint in the same direction as {first}")]
+    DuplicateEndpoint { first: NodeId, second: NodeId },
     #[error("{node} uses slot {slot}, which is in the wrong direction for its kind")]
     SlotDirectionMismatch { node: NodeId, slot: SlotId },
     #[error("slot {slot} is occupied by both {first} and {second}")]
@@ -203,6 +205,8 @@ impl RoutePlan {
     fn validate_nodes(&self) -> Result<HashMap<NodeId, &NodeKind>, PlanError> {
         let mut nodes = HashMap::with_capacity(self.nodes.len());
         let mut slots: HashMap<SlotId, NodeId> = HashMap::new();
+        // 同一个外部端点在同一方向上只能对应一个节点，否则两个 IO 线程会争用同一台设备
+        let mut endpoints: HashMap<(&EndpointId, NodeRole), NodeId> = HashMap::new();
         for node in &self.nodes {
             if nodes.insert(node.id, &node.kind).is_some() {
                 return Err(PlanError::DuplicateNode(node.id));
@@ -211,6 +215,11 @@ impl RoutePlan {
                 && !endpoint.is_well_formed()
             {
                 return Err(PlanError::InvalidEndpoint { node: node.id });
+            }
+            if let Some(endpoint) = node.kind.endpoint()
+                && let Some(first) = endpoints.insert((endpoint, node.kind.role()), node.id)
+            {
+                return Err(PlanError::DuplicateEndpoint { first, second: node.id });
             }
             if let Some((slot, required)) = node.kind.slot() {
                 if slot.direction != required {
@@ -426,6 +435,20 @@ mod tests {
             endpoint: EndpointId(String::new()),
         };
         assert_eq!(plan.validate(), Err(PlanError::InvalidEndpoint { node: MIC }));
+    }
+
+    #[test]
+    fn rejects_the_same_external_endpoint_twice_in_one_direction() {
+        let mut plan = sample_plan();
+        let second_mic = NodeId(9);
+        plan.nodes.push(node(second_mic, plan.nodes[0].kind.clone()));
+        assert_eq!(
+            plan.validate(),
+            Err(PlanError::DuplicateEndpoint {
+                first: MIC,
+                second: second_mic,
+            })
+        );
     }
 
     #[test]
