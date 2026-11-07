@@ -52,7 +52,7 @@ cargo test --workspace
 
 | 目录 | 内容 |
 |---|---|
-| `crates/` | 共用的库：`aem-protocol`（IPC 消息）、`aem-sys`（Windows API 封装，唯一允许 `unsafe` 的 crate） |
+| `crates/` | 共用的库：`aemeath-protocol`（IPC 消息）、`aemeath-sys`（Windows API 封装，唯一允许 `unsafe` 的 crate） |
 | `engine/` | 引擎进程：音频、重采样、主时钟、USB/IP 服务端 |
 | `app/` | 主程序（Tauri 2）：`src/` 是 Vue 3 前端，`src-tauri/` 是 Rust 后端，`crates/` 是控制面的库 |
 | `guardian/` | 守护进程 |

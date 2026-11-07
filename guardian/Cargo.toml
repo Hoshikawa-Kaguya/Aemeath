@@ -1,5 +1,5 @@
 [package]
-name = "aem-guardian"
+name = "aemeath-guardian"
 description = "Aemeath guardian process"
 version.workspace = true
 edition.workspace = true

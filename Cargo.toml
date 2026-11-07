@@ -1,15 +1,15 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/aem-protocol",
-    "crates/aem-sys",
-    "engine/aem-usbip",
-    "engine/aem-io",
-    "engine/aem-dsp",
-    "engine/aem-engine",
-    "engine/aem-host",
-    "app/crates/aem-core",
-    "app/crates/aem-control",
+    "crates/aemeath-protocol",
+    "crates/aemeath-sys",
+    "engine/aemeath-usbip",
+    "engine/aemeath-io",
+    "engine/aemeath-dsp",
+    "engine/aemeath-engine",
+    "engine/aemeath-host",
+    "app/crates/aemeath-core",
+    "app/crates/aemeath-control",
     "app/src-tauri",
     "guardian",
 ]
@@ -23,14 +23,14 @@ publish = false
 
 [workspace.dependencies]
 # 内部 crate
-aem-protocol = { path = "crates/aem-protocol" }
-aem-sys = { path = "crates/aem-sys" }
-aem-usbip = { path = "engine/aem-usbip" }
-aem-io = { path = "engine/aem-io" }
-aem-dsp = { path = "engine/aem-dsp" }
-aem-engine = { path = "engine/aem-engine" }
-aem-core = { path = "app/crates/aem-core" }
-aem-control = { path = "app/crates/aem-control" }
+aemeath-protocol = { path = "crates/aemeath-protocol" }
+aemeath-sys = { path = "crates/aemeath-sys" }
+aemeath-usbip = { path = "engine/aemeath-usbip" }
+aemeath-io = { path = "engine/aemeath-io" }
+aemeath-dsp = { path = "engine/aemeath-dsp" }
+aemeath-engine = { path = "engine/aemeath-engine" }
+aemeath-core = { path = "app/crates/aemeath-core" }
+aemeath-control = { path = "app/crates/aemeath-control" }
 
 # 第三方
 serde = { version = "1.0.229", features = ["derive"] }
@@ -55,7 +55,7 @@ tracing-appender = "0.2.5"
 tauri = "2.12.5"
 tauri-build = "2.7.4"
 
-# 除 aem-sys 外一律禁止 unsafe：Windows 调用都集中在 aem-sys，由它提供安全的封装（ADR-0008）
+# 除 aemeath-sys 外一律禁止 unsafe：Windows 调用都集中在 aemeath-sys，由它提供安全的封装（ADR-0008）
 [workspace.lints.rust]
 unsafe_code = "forbid"
 

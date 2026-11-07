@@ -1,5 +1,5 @@
 [package]
-name = "aem-app"
+name = "aemeath-app"
 description = "Aemeath app: control plane backend and WebView2 UI host"
 version.workspace = true
 edition.workspace = true

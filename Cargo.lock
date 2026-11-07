@@ -9,7 +9,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
-name = "aem-app"
+name = "aemeath-app"
 version = "0.1.0"
 dependencies = [
  "tauri",
@@ -17,31 +17,31 @@ dependencies = [
 ]
 
 [[package]]
-name = "aem-control"
+name = "aemeath-control"
 version = "0.1.0"
 
 [[package]]
-name = "aem-core"
+name = "aemeath-core"
 version = "0.1.0"
 
 [[package]]
-name = "aem-dsp"
+name = "aemeath-dsp"
 version = "0.1.0"
 dependencies = [
- "aem-protocol",
+ "aemeath-protocol",
  "rubato",
  "thiserror 2.0.21",
 ]
 
 [[package]]
-name = "aem-engine"
+name = "aemeath-engine"
 version = "0.1.0"
 dependencies = [
- "aem-dsp",
- "aem-io",
- "aem-protocol",
- "aem-sys",
- "aem-usbip",
+ "aemeath-dsp",
+ "aemeath-io",
+ "aemeath-protocol",
+ "aemeath-sys",
+ "aemeath-usbip",
  "audio_thread_priority",
  "rtrb",
  "tracing",
@@ -50,18 +50,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "aem-guardian"
+name = "aemeath-guardian"
 version = "0.1.0"
 
 [[package]]
-name = "aem-host"
+name = "aemeath-host"
 version = "0.1.0"
 dependencies = [
- "aem-engine",
- "aem-io",
- "aem-protocol",
- "aem-sys",
- "aem-usbip",
+ "aemeath-engine",
+ "aemeath-io",
+ "aemeath-protocol",
+ "aemeath-sys",
+ "aemeath-usbip",
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
@@ -71,12 +71,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "aem-io"
+name = "aemeath-io"
 version = "0.1.0"
 dependencies = [
- "aem-dsp",
- "aem-protocol",
- "aem-sys",
+ "aemeath-dsp",
+ "aemeath-protocol",
+ "aemeath-sys",
  "audio_thread_priority",
  "rtrb",
  "tracing",
@@ -84,7 +84,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "aem-protocol"
+name = "aemeath-protocol"
 version = "0.1.0"
 dependencies = [
  "serde",
@@ -93,7 +93,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "aem-sys"
+name = "aemeath-sys"
 version = "0.1.0"
 dependencies = [
  "tokio",
@@ -101,11 +101,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "aem-usbip"
+name = "aemeath-usbip"
 version = "0.1.0"
 dependencies = [
- "aem-protocol",
- "aem-sys",
+ "aemeath-protocol",
+ "aemeath-sys",
  "thiserror 2.0.21",
  "tracing",
  "tracing-subscriber",

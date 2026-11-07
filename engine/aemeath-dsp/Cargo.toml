@@ -1,0 +1,16 @@
+[package]
+name = "aemeath-dsp"
+description = "Resampling bridges and channel strip processing"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+aemeath-protocol = { workspace = true }
+rubato = { workspace = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

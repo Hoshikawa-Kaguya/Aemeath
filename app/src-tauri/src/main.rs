@@ -9,7 +9,7 @@ fn main() -> ExitCode {
     match tauri::Builder::default().run(tauri::generate_context!()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            // 日志在 M1 的 aem-app 任务中接入；在此之前只能输出到调试控制台
+            // 日志在 M1 的 aemeath-app 任务中接入；在此之前只能输出到调试控制台
             eprintln!("Aemeath failed to start: {error}");
             ExitCode::FAILURE
         }
