@@ -15,7 +15,7 @@ use crate::apps::AppsView;
 use crate::controller::{CommandError, ControllerHandle, DeviceDirection, Edit, NewNodeKind};
 use crate::default_devices::DefaultDevicesView;
 use crate::device_settings::{CapabilitiesView, DeviceSettingsView, ResamplerView};
-use crate::hotkey_views::{CaptureView, HotkeyBindingView, HotkeyTargetView};
+use crate::hotkey_views::{HotkeyBindingView, HotkeyTargetView};
 use crate::meters::MeterHub;
 use crate::recording::RecorderSettingsView;
 use crate::tray::{TrayLabels, TrayMenu};
@@ -221,16 +221,10 @@ pub async fn set_hotkey(
         .await
 }
 
-/// 录入下一个按键组合（M3 计划 H12）。
+/// 界面录入新按键期间暂停全部热键（M3 计划 H12）。
 #[tauri::command]
-pub async fn capture_hotkey(controller: State<'_, ControllerHandle>) -> Reply<CaptureView> {
-    controller.capture_hotkey().await
-}
-
-/// 由界面结束录入：窗口有焦点时界面自己收到了按键，或者用户放弃了录入。
-#[tauri::command]
-pub fn finish_hotkey_capture(controller: State<'_, ControllerHandle>, result: CaptureView) {
-    controller.finish_hotkey_capture(result.into());
+pub fn set_hotkeys_paused(controller: State<'_, ControllerHandle>, paused: bool) {
+    controller.set_hotkeys_paused(paused);
 }
 
 /// 打开或解除紧急静音。

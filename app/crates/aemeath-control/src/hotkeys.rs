@@ -10,11 +10,9 @@ use std::thread;
 
 use aemeath_core::hotkeys::{Hotkey, HotkeyBinding, HotkeyMode, HotkeyTarget, KeyCode, Modifiers};
 use aemeath_sys::input_hooks::{HotkeyModifiers, InputThread, InputThreadError, RawInput, SideButton};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
 use tracing::warn;
 
-const VK_ESCAPE: u32 = 0x1B;
-const VK_BACK: u32 = 0x08;
 const VK_SHIFT: u32 = 0x10;
 const VK_CONTROL: u32 = 0x11;
 const VK_MENU: u32 = 0x12;
@@ -38,16 +36,6 @@ pub enum HotkeyEvent {
     Pressed(HotkeyTarget),
     /// 按住型被松开
     Released(HotkeyTarget),
-}
-
-/// 录入按键的结果（M3 计划 H12）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CaptureResult {
-    Captured(Hotkey),
-    /// 用户按了 Esc
-    Cancelled,
-    /// 用户按了 Backspace
-    Cleared,
 }
 
 fn is_modifier(vk: u32) -> bool {
@@ -78,7 +66,6 @@ struct Matcher {
     held_modifiers: BTreeSet<u32>,
     /// 正被按住的按键组合
     active: BTreeSet<Hotkey>,
-    capture: Option<oneshot::Sender<CaptureResult>>,
 }
 
 impl Matcher {
@@ -133,25 +120,8 @@ impl Matcher {
         }
     }
 
-    fn try_capture(&mut self, key: KeyCode) -> bool {
-        let Some(reply) = self.capture.take() else {
-            return false;
-        };
-        let result = match key {
-            KeyCode::Keyboard { vk: VK_ESCAPE } => CaptureResult::Cancelled,
-            KeyCode::Keyboard { vk: VK_BACK } => CaptureResult::Cleared,
-            key => CaptureResult::Captured(Hotkey {
-                modifiers: self.modifiers(),
-                key,
-            }),
-        };
-        let _ = reply.send(result);
-        true
-    }
-
-    fn on_input(&mut self, input: RawInput) -> (Vec<HotkeyEvent>, bool) {
+    fn on_input(&mut self, input: RawInput) -> Vec<HotkeyEvent> {
         let mut events = Vec::new();
-        let mut capture_done = false;
         match input {
             RawInput::Hotkey(id) => {
                 if let Some(target) = self.registered.get(&id) {
@@ -166,26 +136,17 @@ impl Matcher {
                 }
             }
             RawInput::Key { vk, down } => {
-                let key = KeyCode::Keyboard { vk };
-                if down && self.try_capture(key) {
-                    capture_done = true;
-                } else {
-                    self.on_key(key, down, &mut events);
-                }
+                self.on_key(KeyCode::Keyboard { vk }, down, &mut events);
             }
             RawInput::Mouse { button, down } => {
                 let key = match button {
                     SideButton::X1 => KeyCode::MouseX1,
                     SideButton::X2 => KeyCode::MouseX2,
                 };
-                if down && self.try_capture(key) {
-                    capture_done = true;
-                } else {
-                    self.on_key(key, down, &mut events);
-                }
+                self.on_key(key, down, &mut events);
             }
         }
-        (events, capture_done)
+        events
     }
 }
 
@@ -220,7 +181,7 @@ impl HotkeyService {
         };
         thread::Builder::new()
             .name("aemeath-hotkeys".to_owned())
-            .spawn(move || forward(&raw, &shared, &input, &events))?;
+            .spawn(move || forward(&raw, &shared, &events))?;
         Ok(service)
     }
 
@@ -232,25 +193,20 @@ impl HotkeyService {
         shared.occupied.clone()
     }
 
-    /// 录入下一个按键组合（M3 计划 H12）。录入期间暂停全部热键，否则按下的组合同时会触发操作。
-    pub fn capture(&self) -> oneshot::Receiver<CaptureResult> {
-        let (reply, result) = oneshot::channel();
+    /// 界面录入新按键期间暂停全部热键，否则按下的组合会触发操作，`RegisterHotKey` 还会把它吞掉，界面收不到。
+    pub fn pause(&self) {
         let mut shared = self.shared.lock().unwrap_or_else(PoisonError::into_inner);
         release_all(&mut shared, &self.input);
-        shared.matcher.capture = Some(reply);
-        if let Err(error) = self.input.set_hooks(true, true) {
-            warn!(%error, "cannot install the input hooks for capturing a hotkey");
+        // 钩子卸载后看不到修饰键松开，留着会变成永远按住
+        shared.matcher.held_modifiers.clear();
+        if let Err(error) = self.input.set_hooks(false, false) {
+            warn!(%error, "cannot remove the input hooks");
         }
-        result
     }
 
-    /// 由界面结束录入（窗口有焦点时界面自己收到了按键，或者用户放弃了录入）。录入已经结束时什么也不做。
-    pub fn finish_capture(&self, result: CaptureResult) {
+    pub fn resume(&self) {
         let mut shared = self.shared.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(reply) = shared.matcher.capture.take() {
-            let _ = reply.send(result);
-            apply(&mut shared, &self.input);
-        }
+        apply(&mut shared, &self.input);
     }
 }
 
@@ -305,19 +261,13 @@ fn apply(shared: &mut Shared, input: &InputThread) {
     }
 }
 
-fn forward(
-    raw: &Receiver<RawInput>,
-    shared: &Mutex<Shared>,
-    input: &InputThread,
-    events: &mpsc::UnboundedSender<HotkeyEvent>,
-) {
+fn forward(raw: &Receiver<RawInput>, shared: &Mutex<Shared>, events: &mpsc::UnboundedSender<HotkeyEvent>) {
     while let Ok(event) = raw.recv() {
-        let mut guard = shared.lock().unwrap_or_else(PoisonError::into_inner);
-        let (out, capture_done) = guard.matcher.on_input(event);
-        if capture_done {
-            apply(&mut guard, input);
-        }
-        drop(guard);
+        let out = shared
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .matcher
+            .on_input(event);
         for event in out {
             let _ = events.send(event);
         }
@@ -348,7 +298,7 @@ mod tests {
     }
 
     fn feed(matcher: &mut Matcher, inputs: &[RawInput]) -> Vec<HotkeyEvent> {
-        inputs.iter().flat_map(|input| matcher.on_input(*input).0).collect()
+        inputs.iter().flat_map(|input| matcher.on_input(*input)).collect()
     }
 
     #[test]
@@ -438,39 +388,5 @@ mod tests {
             vec![HotkeyEvent::Fired(target(5))]
         );
         assert!(feed(&mut matcher, &[RawInput::Hotkey(8)]).is_empty());
-    }
-
-    #[test]
-    fn capture_reports_the_chord_and_understands_escape_and_backspace() {
-        let mut matcher = Matcher::default();
-        let (reply, mut result) = oneshot::channel();
-        matcher.capture = Some(reply);
-        let (events, done) = matcher.on_input(key(VK_LCONTROL, true));
-        assert!(
-            events.is_empty() && !done,
-            "a modifier alone doesn't finish the capture"
-        );
-        let (_, done) = matcher.on_input(key(KEY_M, true));
-        assert!(done);
-        assert_eq!(
-            result.try_recv().unwrap(),
-            CaptureResult::Captured(Hotkey {
-                modifiers: Modifiers {
-                    ctrl: true,
-                    ..Modifiers::default()
-                },
-                key: KeyCode::Keyboard { vk: KEY_M },
-            })
-        );
-
-        for (vk, expected) in [(VK_ESCAPE, CaptureResult::Cancelled), (VK_BACK, CaptureResult::Cleared)] {
-            let (reply, mut result) = oneshot::channel();
-            let mut matcher = Matcher {
-                capture: Some(reply),
-                ..Matcher::default()
-            };
-            matcher.on_input(key(vk, true));
-            assert_eq!(result.try_recv().unwrap(), expected);
-        }
     }
 }

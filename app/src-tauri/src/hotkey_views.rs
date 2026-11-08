@@ -1,6 +1,5 @@
 //! 热键在界面上的表示（字段名为 camelCase）。
 
-use aemeath_control::hotkeys::CaptureResult;
 use aemeath_core::hotkeys::{Hotkey, HotkeyBinding, HotkeyMode, HotkeyTarget, KeyCode, Modifiers};
 use aemeath_protocol::ids::NodeId;
 use serde::{Deserialize, Serialize};
@@ -140,23 +139,4 @@ pub struct HotkeyRowView {
     pub binding: HotkeyBindingView,
     /// `RegisterHotKey` 失败：被其他程序占用
     pub occupied: bool,
-}
-
-/// 录入按键的结果。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
-pub enum CaptureView {
-    Captured { key: HotkeyView },
-    Cancelled,
-    Cleared,
-}
-
-impl From<CaptureView> for CaptureResult {
-    fn from(view: CaptureView) -> Self {
-        match view {
-            CaptureView::Captured { key } => Self::Captured(key.into()),
-            CaptureView::Cancelled => Self::Cancelled,
-            CaptureView::Cleared => Self::Cleared,
-        }
-    }
 }

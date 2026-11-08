@@ -44,7 +44,7 @@ onBeforeUnmount(() => unregister?.())
 }
 
 .node-meter.vertical {
-  flex-direction: column-reverse;
+  flex-direction: column;
   gap: 4px;
   min-height: 0;
   height: 100%;

@@ -5,7 +5,6 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type {
   AppsView,
   Capabilities,
-  CaptureView,
   DefaultDevicesView,
   DeviceChoice,
   DeviceSettings,
@@ -50,8 +49,7 @@ export const backend = {
   /** `binding` 为 null 表示清除 */
   setHotkey: (target: HotkeyTargetView, binding: HotkeyBindingView | null) =>
     invoke<ViewState>('set_hotkey', { target, binding }),
-  captureHotkey: () => invoke<CaptureView>('capture_hotkey'),
-  finishHotkeyCapture: (result: CaptureView) => invoke<void>('finish_hotkey_capture', { result }),
+  setHotkeysPaused: (paused: boolean) => invoke<void>('set_hotkeys_paused', { paused }),
   setPanicMute: (active: boolean) => invoke<ViewState>('set_panic_mute', { active }),
   startRecording: (node: number) => invoke<void>('start_recording', { node }),
   stopRecording: (node: number) => invoke<void>('stop_recording', { node }),

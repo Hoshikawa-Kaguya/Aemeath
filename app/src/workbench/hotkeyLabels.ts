@@ -1,8 +1,11 @@
 // 热键的显示文字（热键页、节点设置、连线的"热键…"对话框共用）。
 
-import type { CaptureView, HotkeyTargetView, HotkeyView, ModifiersView, NodeView } from '@/api/types'
+import type { HotkeyTargetView, HotkeyView, ModifiersView, NodeView } from '@/api/types'
 import { i18n } from '@/i18n'
 import { nodeCode } from '@/stores/nodeLabels'
+
+/** 一次录入的结果 */
+export type CaptureResult = { type: 'captured'; key: HotkeyView } | { type: 'cancelled' } | { type: 'cleared' }
 
 const VK_F1 = 0x70
 const VK_F24 = 0x87
@@ -110,8 +113,8 @@ function virtualKey(event: KeyboardEvent): number | null {
   return match === null ? null : (match[1] ?? '').charCodeAt(0)
 }
 
-/** 窗口有焦点时收到的按键；单独的修饰键还不算录入完成（返回 null） */
-export function captureFromKey(event: KeyboardEvent): CaptureView | null {
+/** 录入时收到的按键；单独的修饰键还不算录入完成（返回 null） */
+export function captureFromKey(event: KeyboardEvent): CaptureResult | null {
   if (MODIFIER_KEYS.includes(event.key)) {
     return null
   }
@@ -128,7 +131,7 @@ export function captureFromKey(event: KeyboardEvent): CaptureView | null {
 }
 
 /** 鼠标侧键录成热键，其他按键表示点了别处，取消录入 */
-export function captureFromPointer(event: PointerEvent): CaptureView {
+export function captureFromPointer(event: PointerEvent): CaptureResult {
   const key = event.button === BUTTON_X1 ? 'mouseX1' : event.button === BUTTON_X2 ? 'mouseX2' : null
   return key === null
     ? { type: 'cancelled' }

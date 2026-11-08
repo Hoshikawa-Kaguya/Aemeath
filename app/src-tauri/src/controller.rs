@@ -12,7 +12,7 @@ use std::time::{Duration, SystemTime};
 
 use aemeath_control::audio_policy::{AppSession, AudioPolicy};
 use aemeath_control::engine_client::{ClientConfig, ClientEvent, EngineClient, EngineProber, Timing};
-use aemeath_control::hotkeys::{CaptureResult, HotkeyEvent, HotkeyService};
+use aemeath_control::hotkeys::{HotkeyEvent, HotkeyService};
 use aemeath_control::slots::endpoints::{EndpointProbe, ExternalDevice};
 use aemeath_control::slots::registration::{RegistrationProgress, all_slots, registration_topology};
 use aemeath_control::slots::{MaintainerConfig, MaintainerTiming, SlotMaintainer, SlotStatus};
@@ -41,7 +41,7 @@ use tracing::{error, info, warn};
 use crate::apps::{self, AppsView};
 use crate::default_devices::DefaultDevicesView;
 use crate::device_settings::{CapabilitiesView, DeviceSettingsView, ResamplerView};
-use crate::hotkey_views::{CaptureView, HotkeyBindingView, HotkeyRowView, HotkeyTargetView};
+use crate::hotkey_views::{HotkeyBindingView, HotkeyRowView, HotkeyTargetView};
 use crate::recording::{RecorderStateView, RecorderView, RecordingView, prepare_recording_path, recording_folder};
 use crate::view::{
     DeviceView, DuplicateView, EngineState, EngineView, FormatView, NodeStatus, NodeView, NoticeKind, NoticeView,
@@ -312,8 +312,7 @@ enum Request {
         reply: oneshot::Sender<Vec<RouteVerdict>>,
     },
     MatrixVerdicts(oneshot::Sender<Vec<PairVerdict>>),
-    CaptureHotkey(oneshot::Sender<Result<oneshot::Receiver<CaptureResult>, CommandError>>),
-    FinishCapture(CaptureResult),
+    SetHotkeysPaused(bool),
     LandingCount {
         node: NodeId,
         reply: oneshot::Sender<usize>,
@@ -470,20 +469,9 @@ impl ControllerHandle {
         .await?
     }
 
-    /// 由界面结束录入：收到了按键，或者用户放弃了录入。
-    pub fn finish_hotkey_capture(&self, result: CaptureResult) {
-        let _ = self.requests.send(Request::FinishCapture(result));
-    }
-
-    /// 录入下一个按键组合。
-    pub async fn capture_hotkey(&self) -> Result<CaptureView, CommandError> {
-        let wait = self.ask(Request::CaptureHotkey).await??;
-        let result = wait.await.map_err(|_| CommandError::Unavailable)?;
-        Ok(match result {
-            CaptureResult::Captured(key) => CaptureView::Captured { key: key.into() },
-            CaptureResult::Cancelled => CaptureView::Cancelled,
-            CaptureResult::Cleared => CaptureView::Cleared,
-        })
+    /// 界面录入新按键期间暂停全部热键。
+    pub fn set_hotkeys_paused(&self, paused: bool) {
+        let _ = self.requests.send(Request::SetHotkeysPaused(paused));
     }
 
     /// 落在这个节点上的应用数（Aemeath 做过的指派），删除节点前提示用。
@@ -764,17 +752,14 @@ impl Controller {
                     self.stop_recording(node)
                 });
             }
-            Request::FinishCapture(result) => {
+            Request::SetHotkeysPaused(paused) => {
                 if let Some(service) = &self.hotkeys {
-                    service.finish_capture(result);
+                    if paused {
+                        service.pause();
+                    } else {
+                        service.resume();
+                    }
                 }
-            }
-            Request::CaptureHotkey(reply) => {
-                let result = match &self.hotkeys {
-                    Some(service) => Ok(service.capture()),
-                    None => Err(CommandError::Unavailable),
-                };
-                let _ = reply.send(result);
             }
             Request::LandingCount { node, reply } => {
                 let endpoint = self.landing_endpoint(node).await;

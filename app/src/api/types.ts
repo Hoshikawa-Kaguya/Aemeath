@@ -192,8 +192,6 @@ export interface HotkeyRowView {
   occupied: boolean
 }
 
-export type CaptureView = { type: 'captured'; key: HotkeyView } | { type: 'cancelled' } | { type: 'cleared' }
-
 export type RecordFormat = 'wav' | 'flac'
 export type RecordDepth = 'int16' | 'int24' | 'float32'
 

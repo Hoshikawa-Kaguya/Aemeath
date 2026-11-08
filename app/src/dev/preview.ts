@@ -193,7 +193,6 @@ let state: ViewState = {
   slots: [],
 }
 const undoStack: ViewState[] = []
-let finishCapture: ((result: unknown) => void) | null = null
 
 function slotsOf(current: ViewState): SlotView[] {
   const rows: SlotView[] = []
@@ -400,14 +399,6 @@ mockIPC(
           ? updateNode({ node: target.node }, { muteHotkey: args.binding as NodeView['muteHotkey'] }, false)
           : state
       }
-      case 'capture_hotkey':
-        return new Promise((resolve) => {
-          finishCapture = resolve
-        })
-      case 'finish_hotkey_capture':
-        finishCapture?.(args.result)
-        finishCapture = null
-        return null
       case 'set_panic_mute':
         return commit({ ...state, panicMute: args.active as boolean }, false)
       case 'start_recording':

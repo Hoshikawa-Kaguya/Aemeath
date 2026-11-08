@@ -2,13 +2,12 @@
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { backend } from '@/api/backend'
-import type { CaptureView, HotkeyBindingView, HotkeyModeView, HotkeyTargetView, HotkeyView } from '@/api/types'
+import type { HotkeyBindingView, HotkeyModeView, HotkeyTargetView, HotkeyView } from '@/api/types'
 import { useAppStore } from '@/stores/app'
-import { captureFromKey, captureFromPointer, formatHotkey } from './hotkeyLabels'
+import { captureFromKey, captureFromPointer, formatHotkey, type CaptureResult } from './hotkeyLabels'
 
 // 一个热键的编辑控件（M3 计划 H7、H12）：节点设置、连线的"热键…"对话框和热键页共用，改的是同一份数据。
-// 录入有两条路，先到的算数：后端的低级钩子（窗口没有焦点时、Win 组合键），界面自己的键鼠事件（窗口有焦点时钩子收不到按键）。
-// Esc 取消，Backspace 清除，点别处也取消。
+// 录入只在窗口有焦点时进行，由界面自己监听键鼠事件。Esc 取消，Backspace 清除，点别处或窗口失去焦点都回到录入前的状态。
 const props = defineProps<{
   target: HotkeyTargetView
   binding: HotkeyBindingView | null
@@ -37,8 +36,33 @@ function modeFor(key: HotkeyView, wanted: HotkeyModeView): HotkeyModeView {
   return bare && wanted === 'toggle' && !props.toggleOnly ? 'hold' : wanted
 }
 
-function finish(result: CaptureView): void {
-  backend.finishHotkeyCapture(result).catch((error: unknown) => store.showToast(store.errorText(error)))
+function setPaused(paused: boolean): void {
+  backend.setHotkeysPaused(paused).catch((error: unknown) => store.showToast(store.errorText(error)))
+}
+
+function startCapture(): void {
+  capturing.value = true
+  window.addEventListener('keydown', onCaptureKey, true)
+  window.addEventListener('pointerdown', onCapturePointer, true)
+  window.addEventListener('blur', endCapture)
+  setPaused(true)
+}
+
+function endCapture(): void {
+  capturing.value = false
+  window.removeEventListener('keydown', onCaptureKey, true)
+  window.removeEventListener('pointerdown', onCapturePointer, true)
+  window.removeEventListener('blur', endCapture)
+  setPaused(false)
+}
+
+function finish(result: CaptureResult): void {
+  endCapture()
+  if (result.type === 'captured') {
+    void apply({ key: result.key, mode: modeFor(result.key, mode.value) })
+  } else if (result.type === 'cleared') {
+    void apply(null)
+  }
 }
 
 // 在捕获阶段拦下：Esc 不能关掉对话框，Delete 不能删掉选中的节点
@@ -55,36 +79,11 @@ function onCapturePointer(event: PointerEvent): void {
   finish(captureFromPointer(event))
 }
 
-function removeListeners(): void {
-  window.removeEventListener('keydown', onCaptureKey, true)
-  window.removeEventListener('pointerdown', onCapturePointer, true)
-}
-
 onBeforeUnmount(() => {
   if (capturing.value) {
-    finish({ type: 'cancelled' })
-    removeListeners()
+    endCapture()
   }
 })
-
-async function capture(): Promise<void> {
-  capturing.value = true
-  window.addEventListener('keydown', onCaptureKey, true)
-  window.addEventListener('pointerdown', onCapturePointer, true)
-  try {
-    const result = await backend.captureHotkey()
-    if (result.type === 'captured') {
-      await apply({ key: result.key, mode: modeFor(result.key, mode.value) })
-    } else if (result.type === 'cleared') {
-      await apply(null)
-    }
-  } catch (error) {
-    store.showToast(store.errorText(error))
-  } finally {
-    removeListeners()
-    capturing.value = false
-  }
-}
 
 function setMode(event: Event): void {
   if (props.binding !== null) {
@@ -95,7 +94,7 @@ function setMode(event: Event): void {
 
 <template>
   <div class="hotkey-field">
-    <button type="button" class="key" :class="{ capturing }" :disabled="capturing" @click="capture">
+    <button type="button" class="key" :class="{ capturing }" :disabled="capturing" @click="startCapture">
       {{ capturing ? t('hotkey.pressKey') : binding === null ? t('hotkey.none') : formatHotkey(binding.key) }}
     </button>
     <select
