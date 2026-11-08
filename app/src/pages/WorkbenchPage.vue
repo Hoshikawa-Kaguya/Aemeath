@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, provide, ref, useTemplateRef } from 'vue'
+import { computed, onBeforeUnmount, onMounted, provide, ref, useTemplateRef, watch } from 'vue'
 import {
   ConnectionMode,
   VueFlow,
+  getRectOfNodes,
   useVueFlow,
   type Edge,
   type Node,
@@ -39,18 +40,33 @@ import {
 
 /** 点阵背景的间距（工作台坐标） */
 const GRID = 20
-const FIT_PADDING = 0.2
+const MIN_ZOOM = 0.25
+const MAX_ZOOM = 2
+/** 自适应时，内容离工作台边缘的最小距离（屏幕像素） */
+const FIT_MARGIN_PX = 10
+/** 端口圆点伸出节点卡片左右两侧的距离（工作台坐标） */
+const PORT_OVERHANG = 8
 const FIT_DURATION_MS = 200
+/** 滚轮每像素的缩放量（2 的指数）：一格滚轮（100 像素）约 4%，Vue Flow 默认是 15% */
+const WHEEL_ZOOM_RATE = 0.0006
 /** 新节点放在视口中央，减去节点卡片的一半大小 */
 const NODE_HALF_WIDTH = 118
 const NODE_HALF_HEIGHT = 30
 const PERCENT = 100
-/** 打开时按 100% 显示（与原型一致），左上角留一点边距；"适应窗口"由用户点击 */
+/** 工作台为空时的视口；有节点时进入页面会自适应（onNodesInitialized） */
 const INITIAL_VIEWPORT = { x: 24, y: 24, zoom: 1 }
 
 const { t } = useI18n()
 const store = useAppStore()
-const { screenToFlowCoordinate, fitView, viewport } = useVueFlow()
+const { screenToFlowCoordinate, setViewport, getNodes, viewport, d3Zoom } = useVueFlow()
+
+watch(
+  d3Zoom,
+  (zoom) => {
+    zoom?.wheelDelta((event: WheelEvent) => -event.deltaY * WHEEL_ZOOM_RATE)
+  },
+  { immediate: true },
+)
 
 type Selection = { type: 'node'; id: number } | { type: 'route'; from: number; to: number } | null
 const selection = ref<Selection>(null)
@@ -403,8 +419,35 @@ function openAddDialog(center: { x: number; y: number }): void {
   void addDialog.value?.open({ x: center.x - NODE_HALF_WIDTH, y: center.y - NODE_HALF_HEIGHT })
 }
 
-function fit(): void {
-  void fitView({ padding: FIT_PADDING, maxZoom: 1, duration: FIT_DURATION_MS })
+/** 全部节点缩放到正好放下并居中：较紧的一边离工作台边缘 FIT_MARGIN_PX */
+function fit(duration = FIT_DURATION_MS): void {
+  const element = pane.value
+  if (element === null || getNodes.value.length === 0) {
+    return
+  }
+  const bounds = getRectOfNodes(getNodes.value)
+  const scale = Math.min(
+    (element.clientWidth - 2 * FIT_MARGIN_PX) / (bounds.width + 2 * PORT_OVERHANG),
+    (element.clientHeight - 2 * FIT_MARGIN_PX) / bounds.height,
+  )
+  const zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, scale))
+  void setViewport(
+    {
+      x: element.clientWidth / 2 - (bounds.x + bounds.width / 2) * zoom,
+      y: element.clientHeight / 2 - (bounds.y + bounds.height / 2) * zoom,
+      zoom,
+    },
+    { duration },
+  )
+}
+
+/** 进入页面（启动或切换回来）时自适应一次；之后新增节点不再动视口 */
+let fittedOnEntry = false
+function onNodesInitialized(): void {
+  if (!fittedOnEntry && getNodes.value.length > 0) {
+    fittedOnEntry = true
+    fit(0)
+  }
 }
 
 function isTyping(target: EventTarget | null): boolean {
@@ -481,7 +524,7 @@ onBeforeUnmount(() => {
         <fluent-button appearance="subtle" @click="addNode">
           <AppIcon slot="start" name="plus" />{{ t('wb.add') }}
         </fluent-button>
-        <fluent-button appearance="subtle" @click="fit">
+        <fluent-button appearance="subtle" @click="fit()">
           <AppIcon slot="start" name="fit" />{{ t('wb.fit') }}
         </fluent-button>
         <span class="caption zoom">{{ t('wb.zoom', { percent: Math.round(viewport.zoom * PERCENT) }) }}</span>
@@ -490,16 +533,14 @@ onBeforeUnmount(() => {
         <VueFlow
           :nodes="flowNodes"
           :edges="flowEdges"
-          :min-zoom="0.25"
-          :max-zoom="2"
-          :pan-on-scroll="true"
-          :zoom-on-scroll="false"
-          zoom-activation-key-code="Control"
+          :min-zoom="MIN_ZOOM"
+          :max-zoom="MAX_ZOOM"
           :delete-key-code="null"
           :connection-mode="ConnectionMode.Strict"
           :default-viewport="INITIAL_VIEWPORT"
           :connect-on-click="false"
           :elevate-edges-on-select="false"
+          @nodes-initialized="onNodesInitialized"
           @connect-start="onConnectStart"
           @connect-end="onConnectEnd"
           @node-drag-start="onNodeDragStart"
@@ -562,7 +603,7 @@ onBeforeUnmount(() => {
 /* 三栏布局（原型的 #page-workbench）：工作台 | 路由矩阵，下方整行是控制台 */
 .workbench {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 460px;
+  grid-template-columns: minmax(0, 1fr) fit-content(50%);
   grid-template-rows: minmax(0, 1fr) 292px;
   height: 100%;
 }

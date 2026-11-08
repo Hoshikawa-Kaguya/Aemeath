@@ -27,6 +27,24 @@ pub struct Preferences {
     /// Windows 按可执行文件持久保存指派，撤销时要求该程序正有音频会话，所以记下来，以便日后撤销。
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub app_landings: BTreeMap<String, String>,
+    /// 主窗口上次的位置和大小
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window: Option<WindowPlacement>,
+    /// 上次停留的页面，由界面解释，后端只保存
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_page: Option<String>,
+}
+
+/// 主窗口的位置和大小（物理像素）。`maximized` 时其余字段是还原后的位置和大小。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WindowPlacement {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+    #[serde(default)]
+    pub maximized: bool,
 }
 
 #[cfg(test)]

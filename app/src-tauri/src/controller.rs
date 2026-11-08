@@ -16,7 +16,7 @@ use aemeath_control::slots::registration::{RegistrationProgress, all_slots, regi
 use aemeath_control::slots::{MaintainerConfig, MaintainerTiming, SlotMaintainer, SlotStatus};
 use aemeath_control::usbip_cli::UsbipCli;
 use aemeath_core::model::{DeviceRef, LabelPosition, Node, NodeKind, NodeName, Position};
-use aemeath_core::preferences::LanguagePreference;
+use aemeath_core::preferences::{LanguagePreference, WindowPlacement};
 use aemeath_core::store::{Config, ConfigStore, Loaded};
 use aemeath_core::workspace::{EditError, NodeSpec, Workspace};
 use aemeath_protocol::ids::{EndpointId, NodeId, SlotId, SlotNumber, TopologyRevision};
@@ -208,6 +208,8 @@ pub enum Edit {
         index: usize,
     },
     SetLanguage(LanguagePreference),
+    SetLastPage(String),
+    SetWindowPlacement(WindowPlacement),
     Undo,
 }
 
@@ -777,6 +779,18 @@ impl Controller {
             Edit::Unpin(node) => workspace.unpin(node),
             Edit::MovePin { node, index } => workspace.move_pin(node, index)?,
             Edit::SetLanguage(language) => self.config.preferences.language = language,
+            Edit::SetLastPage(page) => self.config.preferences.last_page = Some(page),
+            Edit::SetWindowPlacement(placement) => {
+                let window = &mut self.config.preferences.window;
+                // 最大化时读到的是整个屏幕，保留上次的还原位置和大小
+                *window = Some(match *window {
+                    Some(previous) if placement.maximized => WindowPlacement {
+                        maximized: true,
+                        ..previous
+                    },
+                    _ => placement,
+                });
+            }
             Edit::Undo => match self.undo.pop() {
                 Some(snapshot) => workspace.restore(snapshot),
                 None => return Ok(()),
@@ -1129,6 +1143,7 @@ impl Controller {
             can_undo: !self.undo.is_empty(),
             usbip_version: self.usbip_version.clone(),
             language: self.config.preferences.language.clone(),
+            last_page: self.config.preferences.last_page.clone(),
             nodes,
             routes: workspace.routes().iter().map(RouteView::from).collect(),
             console: workspace.console().iter().map(|id| id.0).collect(),

@@ -78,6 +78,7 @@ let state: ViewState = {
   canUndo: false,
   usbipVersion: '0.9.8.1',
   language: { mode: 'system' },
+  lastPage: null,
   nodes,
   routes: [
     { from: 1, to: 3, gainDb: -3, enabled: true, labelPosition: 0.5 },
@@ -388,6 +389,8 @@ mockIPC(
         const previous = undoStack.pop()
         return previous === undefined ? state : commit(previous, false)
       }
+      case 'set_last_page':
+        return commit({ ...state, lastPage: args.page as string }, false)
       case 'set_language':
         return commit({ ...state, language: args.language as ViewState['language'] }, false)
       case 'list_devices':

@@ -2,12 +2,13 @@
 // 所有编辑都经后端执行，返回的新快照整体替换旧的（src-tauri/src/view.rs）。
 
 import { defineStore } from 'pinia'
-import { computed, ref, shallowRef } from 'vue'
+import { computed, ref, shallowRef, watch } from 'vue'
 import { backend, onStateChanged } from '@/api/backend'
 import type { CommandError, NodeView, ViewState } from '@/api/types'
 import { i18n, localeFor, setLocale } from '@/i18n'
 
-export type Page = 'workbench' | 'devices' | 'apps' | 'tools' | 'settings'
+const PAGES = ['workbench', 'devices', 'apps', 'tools', 'settings'] as const
+export type Page = (typeof PAGES)[number]
 
 export interface Toast {
   message: string
@@ -58,6 +59,9 @@ export const useAppStore = defineStore('app', () => {
   function receive(next: ViewState): void {
     const previous = state.value
     state.value = next
+    if (previous === null) {
+      page.value = PAGES.find((known) => known === next.lastPage) ?? page.value
+    }
     if (previous === null || JSON.stringify(previous.language) !== JSON.stringify(next.language)) {
       applyLocale(localeFor(next.language))
     }
@@ -95,6 +99,8 @@ export const useAppStore = defineStore('app', () => {
       return false
     }
   }
+
+  watch(page, (current) => void run(() => backend.setLastPage(current)))
 
   async function start(): Promise<void> {
     await onStateChanged(receive)

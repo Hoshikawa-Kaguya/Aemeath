@@ -167,6 +167,8 @@ export interface ViewState {
   canUndo: boolean
   usbipVersion: string | null
   language: LanguagePreference
+  /** 上次停留的页面；没有记录时为 null */
+  lastPage: string | null
   nodes: NodeView[]
   routes: RouteView[]
   /** 固定到控制台的节点 ID，从左到右 */

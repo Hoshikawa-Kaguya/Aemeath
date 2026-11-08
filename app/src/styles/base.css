@@ -25,6 +25,26 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* 滚动条只有一个窄滑块，没有箭头和滑槽 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border-radius: 3px;
+  background: var(--stroke-strong);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-3);
+}
+
 input,
 textarea {
   user-select: text;

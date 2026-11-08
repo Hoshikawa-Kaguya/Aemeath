@@ -20,9 +20,10 @@ mod window;
 
 use std::process::ExitCode;
 
+use aemeath_core::store::ConfigStore;
 use aemeath_runtime::config::RuntimeConfig;
 use aemeath_runtime::logging::{self, Process};
-use tauri::{Emitter, Manager, RunEvent};
+use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 
 use crate::controller::ControllerHandle;
 use crate::meters::MeterHub;
@@ -58,10 +59,18 @@ fn main() -> ExitCode {
             app.manage(controller);
             app.manage(MeterHub::start(config.meter_memory_name.clone()));
             app.manage(tray::create(app.handle())?);
+            app.manage(ConfigStore::new(&config.data_dir));
             if let Some(window) = app.get_webview_window(tray::MAIN_WINDOW) {
-                window::apply_min_size(&window);
+                window::prepare(&window);
             }
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if matches!(event, WindowEvent::CloseRequested { .. }) {
+                let app = window.app_handle().clone();
+                let placement = window::capture(&app);
+                tauri::async_runtime::spawn(window::remember(app, placement));
+            }
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_state,
@@ -93,6 +102,7 @@ fn main() -> ExitCode {
             commands::set_node_gate,
             commands::undo,
             commands::set_language,
+            commands::set_last_page,
             commands::list_devices,
             commands::check_slots,
             commands::watch_meters,

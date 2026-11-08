@@ -365,10 +365,11 @@ function isHot(node: NodeView, axis: 'from' | 'to'): boolean {
 </template>
 
 <style scoped>
+/* 宽度跟随矩阵本身（WorkbenchPage 的 fit-content 列），放不下时在 .matrix-wrap 里滚动 */
 .matrix-pane {
   display: flex;
   flex-direction: column;
-  min-width: 0;
+  min-width: 300px;
   min-height: 0;
 }
 
@@ -452,6 +453,8 @@ function isHot(node: NodeView, axis: 'from' | 'to'): boolean {
   flex: 1;
   min-height: 0;
   overflow: auto;
+  /* 出现竖向滚动条时不挤占矩阵的宽度，否则又会多出横向滚动条 */
+  scrollbar-gutter: stable;
   padding: 8px 8px 12px;
 }
 
@@ -675,6 +678,12 @@ table.mx {
 
 .cell.self {
   visibility: hidden;
+}
+
+/* 状态行和图例的文字不决定面板宽度 */
+.mx-info,
+.legend {
+  contain: inline-size;
 }
 
 .mx-info {

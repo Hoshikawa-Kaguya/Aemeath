@@ -24,6 +24,7 @@ pub struct ViewState {
     pub can_undo: bool,
     pub usbip_version: Option<String>,
     pub language: LanguagePreference,
+    pub last_page: Option<String>,
     pub nodes: Vec<NodeView>,
     pub routes: Vec<RouteView>,
     /// 固定到控制台的节点 ID，从左到右

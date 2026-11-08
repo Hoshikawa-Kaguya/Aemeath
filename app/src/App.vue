@@ -29,7 +29,8 @@ onMounted(() => {
       <!-- 内容区是叠在 Mica 上的一层半透明底色，标题栏和导航保持透明，让 Mica 直接透出来 -->
       <main class="content">
         <!-- 切换页面时的进入动画（WinUI 的页面进入：上移加淡入） -->
-        <Transition name="page-enter" mode="out-in">
+        <!-- 等第一份快照到了再显示，否则上次停留在别的页面时会先闪一下工作台 -->
+        <Transition v-if="store.state !== null" name="page-enter" mode="out-in">
           <WorkbenchPage v-if="store.page === 'workbench'" />
           <DevicesPage v-else-if="store.page === 'devices'" />
           <AppsPage v-else-if="store.page === 'apps'" />

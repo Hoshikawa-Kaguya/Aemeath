@@ -13,7 +13,7 @@ import { workbenchKey, type RouteData } from './context'
 // - 单击标签选中连线；单击圆点开关连线。只有"按下和松开都在圆点上、没有移动"才算单击圆点。
 // - 按下后一移动就开始拖动（不必长按、不必先选中）。标签只在连线上滑动：指针停在哪，标签就滑到连线上离它最近的点
 //   （位置随连线保存）。
-// - 悬停在标签上滚动即调增益，不必先选中；滚动平移工作台时指针扫过标签不会改增益（hoverWheel.ts）。
+// - 悬停在标签上滚动即调增益，不必先选中；滚轮缩放工作台时指针扫过标签不会改增益（hoverWheel.ts）。
 //   按住 Ctrl 时总是调增益。
 const props = defineProps<EdgeProps<RouteData>>()
 const { t } = useI18n()
@@ -39,7 +39,7 @@ let release: (() => void) | null = null
 
 const hoverWheel = createHoverWheel()
 
-/** 悬停在标签上滚动即调增益；滚动平移工作台时扫过标签不算（见 hoverWheel.ts）。按住 Ctrl 时总是调增益 */
+/** 悬停在标签上滚动即调增益；滚轮缩放工作台时扫过标签不算（见 hoverWheel.ts）。按住 Ctrl 时总是调增益 */
 function onWheel(event: WheelEvent): void {
   if (!hoverWheel.accepts() && !event.ctrlKey) {
     return

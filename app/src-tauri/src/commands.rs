@@ -336,6 +336,11 @@ pub async fn set_language(controller: State<'_, ControllerHandle>, language: Lan
     controller.edit(Edit::SetLanguage(language)).await
 }
 
+#[tauri::command]
+pub async fn set_last_page(controller: State<'_, ControllerHandle>, page: String) -> Reply<ViewState> {
+    controller.edit(Edit::SetLastPage(page)).await
+}
+
 /// 一台可选的外部设备。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

@@ -99,7 +99,7 @@ pub fn show_main_window(app: &AppHandle) {
     };
     match WebviewWindowBuilder::from_config(app, config).and_then(|builder| builder.build()) {
         Ok(window) => {
-            crate::window::apply_min_size(&window);
+            crate::window::prepare(&window);
             let _ = window.set_focus();
         }
         Err(error) => error!(%error, "cannot reopen the main window"),
@@ -110,6 +110,7 @@ pub fn show_main_window(app: &AppHandle) {
 fn quit_app(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
+        crate::window::remember(app.clone(), crate::window::capture(&app)).await;
         let confirmed = match app.try_state::<ControllerHandle>() {
             Some(controller) => controller.shutdown_engine().await,
             None => false,

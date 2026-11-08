@@ -218,6 +218,14 @@ mod tests {
                     r"C:\Games\game.exe".to_owned(),
                     "{0.0.0.00000000}.{in1}".to_owned(),
                 )]),
+                window: Some(crate::preferences::WindowPlacement {
+                    x: -100,
+                    y: 20,
+                    width: 1600,
+                    height: 900,
+                    maximized: true,
+                }),
+                last_page: Some("devices".to_owned()),
             },
         }
     }

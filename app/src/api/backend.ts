@@ -62,6 +62,7 @@ export const backend = {
   setNodeGate: (node: number, thresholdDb: number | null) => invoke<ViewState>('set_node_gate', { node, thresholdDb }),
   undo: () => invoke<ViewState>('undo'),
   setLanguage: (language: LanguagePreference) => invoke<ViewState>('set_language', { language }),
+  setLastPage: (page: string) => invoke<ViewState>('set_last_page', { page }),
   listDevices: (direction: 'input' | 'output') => invoke<DeviceChoice[]>('list_devices', { direction }),
   checkSlots: () => invoke<void>('check_slots'),
   setTrayLabels: (labels: { open: string; redetect: string; quit: string }) =>

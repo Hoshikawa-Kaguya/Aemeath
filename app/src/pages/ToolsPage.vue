@@ -101,10 +101,10 @@ const ROLES: Role[] = ['default', 'communications']
 </template>
 
 <style scoped>
+/* 整页一起滚动，滚动条占满内容区的全部高度 */
 .page {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
   height: 100%;
+  overflow: auto;
 }
 
 .page-title {
@@ -120,8 +120,6 @@ const ROLES: Role[] = ['default', 'communications']
 
 .body {
   padding: 8px 24px 32px;
-  overflow: auto;
-  min-height: 0;
 }
 
 .set-group {
