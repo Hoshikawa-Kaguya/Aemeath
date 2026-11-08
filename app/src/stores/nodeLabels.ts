@@ -1,15 +1,19 @@
-// 节点的代号和副标题（工作台、设备页共用）。
-// 代号沿用原型：外部输入 A1、A2…，外部输出 D1、D2…（按节点 ID 顺序），虚拟节点用槽位 In1、Out2。
+// 节点的代号和副标题（工作台、路由矩阵、控制台、设备页共用）。
+// 代号全部大写并带编号（维护者 2026-11-08）：外部输入 A1、A2…，外部输出 D1、D2…，总线 BUS1、BUS2…
+// （都按节点 ID 顺序）；虚拟节点用所占槽位的编号 IN1、OUT2，与 Windows 中的设备名 "Aemeath In 1" 对应。
 
-import type { NodeView, SlotRef } from '@/api/types'
+import type { NodeKind, NodeView, SlotRef } from '@/api/types'
 import { i18n } from '@/i18n'
 
-const EXTERNAL_INPUT_PREFIX = 'A'
-const EXTERNAL_OUTPUT_PREFIX = 'D'
-const BUS_CODE = 'BUS'
+/** 按节点 ID 顺序编号的节点类型及其代号前缀 */
+const NUMBERED_PREFIX: Partial<Record<NodeKind, string>> = {
+  externalInput: 'A',
+  externalOutput: 'D',
+  bus: 'BUS',
+}
 
 export function slotCode(slot: SlotRef): string {
-  return `${slot.direction === 'in' ? 'In' : 'Out'}${slot.number}`
+  return `${slot.direction === 'in' ? 'IN' : 'OUT'}${slot.number}`
 }
 
 /** 槽位的固定设备名，例如 "Aemeath In 1" */
@@ -25,10 +29,7 @@ export function nodeCode(node: NodeView, all: readonly NodeView[]): string {
   if (node.slot !== null) {
     return slotCode(node.slot)
   }
-  if (node.kind === 'bus') {
-    return BUS_CODE
-  }
-  const prefix = node.kind === 'externalInput' ? EXTERNAL_INPUT_PREFIX : EXTERNAL_OUTPUT_PREFIX
+  const prefix = NUMBERED_PREFIX[node.kind] ?? ''
   const sameKind = all.filter((other) => other.kind === node.kind).sort((a, b) => a.id - b.id)
   return `${prefix}${sameKind.findIndex((other) => other.id === node.id) + 1}`
 }

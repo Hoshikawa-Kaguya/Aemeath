@@ -2,43 +2,63 @@
 //!
 //! 菜单文字由界面按当前语言提供（`set_tray_labels`），界面加载之前用英文。
 
-use tauri::menu::{Menu, MenuItem};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, WebviewWindowBuilder, Wry};
 use tracing::{error, info};
 
 use crate::controller::ControllerHandle;
 
-const MAIN_WINDOW: &str = "main";
+pub const MAIN_WINDOW: &str = "main";
 const MENU_OPEN: &str = "open";
+const MENU_REDETECT: &str = "redetect";
 const MENU_QUIT: &str = "quit";
 const DEFAULT_OPEN_LABEL: &str = "Open Aemeath";
+const DEFAULT_REDETECT_LABEL: &str = "Re-detect all devices";
 const DEFAULT_QUIT_LABEL: &str = "Quit Aemeath";
 const TOOLTIP: &str = "Aemeath";
 
 /// 托盘菜单项，供界面换语言时更新文字（Tauri 托管状态）。
 pub struct TrayMenu {
     open: MenuItem<Wry>,
+    redetect: MenuItem<Wry>,
     quit: MenuItem<Wry>,
 }
 
+/// 托盘菜单的文字（界面按当前语言提供）。
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct TrayLabels {
+    pub open: String,
+    pub redetect: String,
+    pub quit: String,
+}
+
 impl TrayMenu {
-    pub fn set_labels(&self, open: &str, quit: &str) -> tauri::Result<()> {
-        self.open.set_text(open)?;
-        self.quit.set_text(quit)
+    pub fn set_labels(&self, labels: &TrayLabels) -> tauri::Result<()> {
+        self.open.set_text(&labels.open)?;
+        self.redetect.set_text(&labels.redetect)?;
+        self.quit.set_text(&labels.quit)
     }
 }
 
 pub fn create(app: &AppHandle) -> tauri::Result<TrayMenu> {
     let open = MenuItem::with_id(app, MENU_OPEN, DEFAULT_OPEN_LABEL, true, None::<&str>)?;
+    // 选型报告 6.5 节：托盘菜单里有"重新检测全部设备"
+    let redetect = MenuItem::with_id(app, MENU_REDETECT, DEFAULT_REDETECT_LABEL, true, None::<&str>)?;
     let quit = MenuItem::with_id(app, MENU_QUIT, DEFAULT_QUIT_LABEL, true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open, &quit])?;
+    let separator = PredefinedMenuItem::separator(app)?;
+    let menu = Menu::with_items(app, &[&open, &redetect, &separator, &quit])?;
     let mut builder = TrayIconBuilder::with_id(MAIN_WINDOW)
         .tooltip(TOOLTIP)
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
             MENU_OPEN => show_main_window(app),
+            MENU_REDETECT => {
+                if let Some(controller) = app.try_state::<ControllerHandle>() {
+                    controller.redetect(None);
+                }
+            }
             MENU_QUIT => quit_app(app),
             _ => {}
         })
@@ -56,7 +76,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<TrayMenu> {
         builder = builder.icon(icon.clone());
     }
     builder.build(app)?;
-    Ok(TrayMenu { open, quit })
+    Ok(TrayMenu { open, redetect, quit })
 }
 
 /// 显示主窗口；窗口已被关闭（销毁）时按配置重建。
@@ -79,6 +99,7 @@ pub fn show_main_window(app: &AppHandle) {
     };
     match WebviewWindowBuilder::from_config(app, config).and_then(|builder| builder.build()) {
         Ok(window) => {
+            crate::window::apply_min_size(&window);
             let _ = window.set_focus();
         }
         Err(error) => error!(%error, "cannot reopen the main window"),

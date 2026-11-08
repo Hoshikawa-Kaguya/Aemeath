@@ -7,7 +7,7 @@
 //! - 节点 ID 只增不减、不复用（引擎换拓扑时按 ID 接过旧状态，复用 ID 会让新节点继承旧节点的增益）。
 
 use aemeath_protocol::ids::{NodeId, SlotDirection, SlotId, SlotNumber};
-use aemeath_protocol::topology::{self, NodeRole, RouteCheckError, RouteRejection, Strip};
+use aemeath_protocol::topology::{self, DeviceSettings, NodeRole, RouteCheckError, RouteRejection, Strip};
 use aemeath_protocol::units::GainDb;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -25,6 +25,9 @@ pub struct Workspace {
     routes: Vec<Route>,
     /// 下一个新节点的 ID（只增不减）
     next_node_id: u32,
+    /// 被固定到控制台的节点，按控制台上从左到右的顺序（GLOSSARY：固定）
+    #[serde(default)]
+    console: Vec<NodeId>,
 }
 
 /// 新建节点时的类型；虚拟节点可以指定槽位编号，不指定时自动分配。
@@ -53,6 +56,10 @@ pub enum EditError {
     DeviceInUse { by: NodeId },
     #[error("the clock master must be an external device node")]
     InvalidClockMaster,
+    #[error("node {0} is not an input node and cannot have a gate")]
+    GateNotAllowed(NodeId),
+    #[error("node {0} is not an external device node")]
+    NotAnExternalNode(NodeId),
     #[error("cannot route: {0}")]
     Route(#[from] RouteRejection),
 }
@@ -73,7 +80,42 @@ impl Workspace {
             nodes: Vec::new(),
             routes: Vec::new(),
             next_node_id: FIRST_NODE_ID,
+            console: Vec::new(),
         }
+    }
+
+    /// 控制台上的节点，从左到右。
+    pub fn console(&self) -> &[NodeId] {
+        &self.console
+    }
+
+    pub fn is_pinned(&self, id: NodeId) -> bool {
+        self.console.contains(&id)
+    }
+
+    /// 固定到控制台的最右端；已固定时不变。
+    pub fn pin(&mut self, id: NodeId) -> Result<(), EditError> {
+        self.index_of(id)?;
+        if !self.console.contains(&id) {
+            self.console.push(id);
+        }
+        Ok(())
+    }
+
+    pub fn unpin(&mut self, id: NodeId) {
+        self.console.retain(|pinned| *pinned != id);
+    }
+
+    /// 在控制台上把节点移到第 `index` 个位置（超出范围时放到最右端）。
+    pub fn move_pin(&mut self, id: NodeId, index: usize) -> Result<(), EditError> {
+        let from = self
+            .console
+            .iter()
+            .position(|pinned| *pinned == id)
+            .ok_or(EditError::UnknownNode(id))?;
+        self.console.remove(from);
+        self.console.insert(index.min(self.console.len()), id);
+        Ok(())
     }
 
     pub fn nodes(&self) -> &[Node] {
@@ -127,11 +169,13 @@ impl Workspace {
         };
         let id = NodeId(self.next_node_id);
         self.next_node_id += 1;
+        let io = kind.is_external().then(DeviceSettings::default);
         self.nodes.push(Node {
             id,
             name,
             kind,
             strip: Strip::default(),
+            io,
             position,
         });
         Ok(id)
@@ -141,6 +185,7 @@ impl Workspace {
     pub fn remove_node(&mut self, id: NodeId) -> Result<Node, EditError> {
         let index = self.index_of(id)?;
         self.routes.retain(|route| route.from != id && route.to != id);
+        self.unpin(id);
         if self.engine.clock_master == Some(id) {
             self.engine.clock_master = None;
         }
@@ -157,8 +202,42 @@ impl Workspace {
         Ok(())
     }
 
+    /// 设定通道条。只有输入节点可以设门限（GLOSSARY：门限）。
     pub fn set_strip(&mut self, id: NodeId, strip: Strip) -> Result<(), EditError> {
-        self.node_mut(id)?.strip = strip;
+        let node = self.node_mut(id)?;
+        if strip.gate.is_some() && node.kind.role() != NodeRole::Input {
+            return Err(EditError::GateNotAllowed(id));
+        }
+        node.strip = strip;
+        Ok(())
+    }
+
+    /// 让外部设备节点改用另一个端点（按名称的后备匹配，或用户从同名候选中选定；选型报告 6.5 节）。
+    /// 设备设置、通道条、连线都保留。
+    pub fn replace_device(&mut self, id: NodeId, device: DeviceRef) -> Result<(), EditError> {
+        let role = self.node(id).ok_or(EditError::UnknownNode(id))?.kind.role();
+        let existing = self.nodes.iter().find(|node| {
+            node.id != id
+                && node.kind.role() == role
+                && node.kind.device().is_some_and(|own| own.endpoint == device.endpoint)
+        });
+        if let Some(node) = existing {
+            return Err(EditError::DeviceInUse { by: node.id });
+        }
+        match &mut self.node_mut(id)?.kind {
+            NodeKind::ExternalInput { device: own } | NodeKind::ExternalOutput { device: own } => *own = device,
+            _ => return Err(EditError::NotAnExternalNode(id)),
+        }
+        Ok(())
+    }
+
+    /// 设定外部设备节点的设备设置（独占、格式、缓冲、重采样算法，ADR-0014）。
+    pub fn set_device_settings(&mut self, id: NodeId, settings: DeviceSettings) -> Result<(), EditError> {
+        let node = self.node_mut(id)?;
+        if !node.kind.is_external() {
+            return Err(EditError::NotAnExternalNode(id));
+        }
+        node.io = Some(settings);
         Ok(())
     }
 
@@ -296,10 +375,15 @@ impl Workspace {
         self.next_node_id = next_node_id;
     }
 
-    /// 配置文件读入后的一致性：节点 ID 不能达到或超过下一个待分配的 ID。
+    /// 配置文件读入后的一致性：节点 ID 不能达到或超过下一个待分配的 ID；控制台只引用存在的节点、且不重复。
     /// 其余结构规则（槽位、连线、主时钟）由编译后的路由拓扑统一校验，见 [`crate::store`]。
     pub(crate) fn ids_are_consistent(&self) -> bool {
-        self.nodes.iter().all(|node| node.id.0 < self.next_node_id)
+        let pins_valid = self
+            .console
+            .iter()
+            .enumerate()
+            .all(|(index, id)| self.node(*id).is_some() && !self.console[..index].contains(id));
+        pins_valid && self.nodes.iter().all(|node| node.id.0 < self.next_node_id)
     }
 }
 
@@ -333,7 +417,7 @@ mod tests {
     #[test]
     fn virtual_nodes_take_the_lowest_free_slot() {
         let mut workspace = Workspace::new(EngineSettings::default());
-        let first = add(&mut workspace, "默认输入", NodeSpec::VirtualInput(None));
+        let first = add(&mut workspace, "游戏", NodeSpec::VirtualInput(None));
         let second = add(&mut workspace, "游戏", NodeSpec::VirtualInput(None));
         let obs = add(&mut workspace, "OBS", NodeSpec::VirtualOutput(None));
         assert_eq!(
@@ -500,6 +584,64 @@ mod tests {
         let mic = add(&mut workspace, "Mic", NodeSpec::ExternalInput(device("mic")));
         workspace.set_clock_master(Some(mic)).unwrap();
         workspace.set_clock_master(None).unwrap();
+    }
+
+    #[test]
+    fn pins_keep_their_order_and_follow_deletions() {
+        let mut workspace = Workspace::new(EngineSettings::default());
+        let mic = add(&mut workspace, "Mic", NodeSpec::ExternalInput(device("mic")));
+        let bus = add(&mut workspace, "Bus", NodeSpec::Bus);
+        let game = add(&mut workspace, "Game", NodeSpec::VirtualInput(None));
+        workspace.pin(mic).unwrap();
+        workspace.pin(bus).unwrap();
+        workspace.pin(game).unwrap();
+        workspace.pin(mic).unwrap();
+        assert_eq!(workspace.console(), &[mic, bus, game]);
+        workspace.move_pin(game, 0).unwrap();
+        assert_eq!(workspace.console(), &[game, mic, bus]);
+        workspace.move_pin(game, 99).unwrap();
+        assert_eq!(workspace.console(), &[mic, bus, game]);
+        workspace.remove_node(bus).unwrap();
+        assert_eq!(workspace.console(), &[mic, game]);
+        workspace.unpin(mic);
+        assert_eq!(workspace.console(), &[game]);
+        assert_eq!(workspace.pin(NodeId(99)), Err(EditError::UnknownNode(NodeId(99))));
+        assert!(workspace.ids_are_consistent());
+    }
+
+    #[test]
+    fn a_device_can_be_replaced_unless_another_node_uses_it() {
+        let mut workspace = Workspace::new(EngineSettings::default());
+        let mic = add(&mut workspace, "Mic", NodeSpec::ExternalInput(device("mic")));
+        let other = add(&mut workspace, "Other", NodeSpec::ExternalInput(device("other")));
+        workspace.replace_device(mic, device("mic-new-port")).unwrap();
+        assert_eq!(
+            workspace.node(mic).unwrap().kind.device().unwrap().endpoint,
+            EndpointId("mic-new-port".to_owned())
+        );
+        assert_eq!(
+            workspace.replace_device(mic, device("other")),
+            Err(EditError::DeviceInUse { by: other })
+        );
+        let bus = add(&mut workspace, "Bus", NodeSpec::Bus);
+        assert_eq!(
+            workspace.replace_device(bus, device("x")),
+            Err(EditError::NotAnExternalNode(bus))
+        );
+    }
+
+    #[test]
+    fn only_input_nodes_take_a_gate() {
+        let mut workspace = Workspace::new(EngineSettings::default());
+        let mic = add(&mut workspace, "Mic", NodeSpec::ExternalInput(device("mic")));
+        let bus = add(&mut workspace, "Bus", NodeSpec::Bus);
+        let gated = Strip {
+            gate: Some(aemeath_protocol::units::GateThreshold::new(-45.0).unwrap()),
+            ..Strip::default()
+        };
+        workspace.set_strip(mic, gated).unwrap();
+        assert_eq!(workspace.node(mic).unwrap().strip, gated);
+        assert_eq!(workspace.set_strip(bus, gated), Err(EditError::GateNotAllowed(bus)));
     }
 
     #[test]

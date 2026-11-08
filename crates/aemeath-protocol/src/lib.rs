@@ -21,4 +21,5 @@ pub mod units;
 /// 协议版本。消息格式有任何不兼容的变化都要加一。
 ///
 /// 引擎和主程序总是一起发布，所以握手时要求版本完全相同（见 [`message::AppToEngine::Hello`]）。
-pub const PROTOCOL_VERSION: ids::ProtocolVersion = ids::ProtocolVersion(1);
+/// 2：M2 起通道条带门限，外部设备节点带设备设置。
+pub const PROTOCOL_VERSION: ids::ProtocolVersion = ids::ProtocolVersion(2);

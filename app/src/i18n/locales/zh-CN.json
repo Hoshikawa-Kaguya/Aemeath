@@ -24,7 +24,36 @@
     "aria": "主导航",
     "workbench": "工作台",
     "devices": "设备",
+    "apps": "应用",
+    "tools": "工具",
     "settings": "设置"
+  },
+  "apps": {
+    "sub": "落点决定一个应用的声音实际播放到哪个端点。这里只列出正在出声的程序。",
+    "now": "当前落点",
+    "followSystem": "跟随系统默认",
+    "virtualInput": "{node}（{device}）",
+    "exclusive": "{name}（Aemeath 正在独占）",
+    "landingAria": "{app} 的落点",
+    "system": "系统声音",
+    "systemHint": "系统声音总是跟随系统默认设备。",
+    "restart": "重启该应用后生效",
+    "unknownDevice": "其他设备",
+    "empty": "现在没有程序在出声。",
+    "unavailable": "无法读取应用的音频会话。",
+    "note": "指派按程序保存，这个程序以后每次启动都会直接播放到指派的设备。有的程序（例如 Discord、部分游戏）会自己选择设备，对它们指派无效，需要在程序内部设置。"
+  },
+  "tools": {
+    "sub": "辅助小功能。这里只改 Windows 的设置，不改工作台。",
+    "defaults": "系统默认设备",
+    "defaultsSub": "直接设定 Windows 的默认设备和默认通信设备，选中后立即生效。Aemeath 不会记录或还原这些设置。",
+    "render": "播放",
+    "capture": "录音",
+    "default": "默认设备",
+    "communications": "默认通信设备",
+    "none": "（没有）",
+    "exclusive": "{name}（Aemeath 正在独占）",
+    "unavailable": "无法读取 Windows 的音频设备。"
   },
   "kind": {
     "externalInput": "外部输入",
@@ -34,7 +63,7 @@
     "bus": "总线"
   },
   "wb": {
-    "hint": "从端口拖动即可连线 · 单击连线选中后按 Del 删除 · 在连线上滚动滚轮调增益",
+    "hint": "从端口拖动即可连线 · 单击连线选中后按 Del 删除 · 鼠标停在连线标签上滚动滚轮调增益 · 拖动标签可沿连线移动",
     "add": "添加节点",
     "fit": "适应窗口",
     "undo": "撤销",
@@ -46,12 +75,18 @@
     "slotName": "Aemeath {direction} {number}",
     "directionIn": "In",
     "directionOut": "Out",
-    "defaultInput": "默认输入",
     "pending": "正在准备…",
     "rename": "重命名 {name}",
+    "formatLine": "{rate} kHz · {format} · {mode}",
+    "exclusive": "独占",
+    "shared": "共享",
+    "redetect": "重新检测",
+    "useShared": "改用共享模式",
+    "chooseDevice": "选择设备…",
     "offline": {
       "waitingForDevice": "离线 · 等待设备",
-      "inUseByOtherApp": "离线 · 被其他程序独占",
+      "inUseByOtherApp": "离线 · 被其他程序占用",
+      "exclusiveNotAllowed": "离线 · Windows 不允许独占这个设备",
       "noSignal": "离线 · 没有信号",
       "slotRepairing": "正在重新挂载虚拟设备",
       "slotFailing": "虚拟设备无法挂载"
@@ -63,7 +98,7 @@
     "select": "选中从 {src} 到 {dst} 的连线：{state}，{gain}",
     "stateOn": "开启",
     "stateOff": "关闭",
-    "moveHint": "拖动可沿连线移动这个标签（Alt+← / Alt+→）"
+    "moveHint": "滚动滚轮调增益。拖动可沿连线移动这个标签（Alt+← / Alt+→）。"
   },
   "drag": {
     "hint": "放到节点上即可连线 · Esc 取消",
@@ -77,6 +112,7 @@
   "toast": {
     "routeDeleted": "已删除连线：{src} → {dst}",
     "nodeDeleted": "已删除节点：{name}",
+    "deviceReplaced": "{node} 已改用新接入的同名设备：{device}",
     "undo": "撤销",
     "dismiss": "关闭"
   },
@@ -102,6 +138,7 @@
     "kindHint": {
       "externalInput": "这台电脑上的麦克风或其他录音设备",
       "virtualInput": "一个虚拟播放设备，应用可以把声音播放到这里",
+      "bus": "把送进来的声音求和后再分发出去，不对应任何设备",
       "virtualOutput": "一个虚拟录音设备，OBS 等应用可以从这里录制",
       "externalOutput": "这台电脑上的耳机、音箱或其他播放设备"
     }
@@ -144,13 +181,18 @@
   },
   "sampleFormat": {
     "int16": "16 位整数",
-    "int24": "24 位整数",
-    "int24In32": "24 位整数",
+    "int24": "24 位整数（紧凑）",
+    "int24In32": "24 位整数（32 位容器）",
     "int32": "32 位整数",
     "float32": "32 位浮点",
     "float64": "64 位浮点"
   },
   "set": {
+    "detect": "设备检测",
+    "detectNow": "重新检测全部设备",
+    "detectSub": "离线的设备会自动重新检测（例如 NVIDIA Broadcast 比 Aemeath 晚就绪）。需要立即重试时用这个按钮。",
+    "detectButton": "立即检测",
+    "detectStarted": "正在重新检测离线设备。",
     "ui": "界面",
     "lang": "语言",
     "langSub": "立即生效。",
@@ -167,6 +209,125 @@
   },
   "tray": {
     "open": "打开 Aemeath",
+    "redetect": "重新检测全部设备",
     "quit": "退出 Aemeath"
+  },
+  "preset": {
+    "title": "工作台是空的",
+    "body": "可以用预设开始：一个虚拟输入（应用播放到这里）和一个虚拟输出（OBS 等从这里录制），不带连线。也可以自己添加节点。",
+    "use": "使用预设",
+    "inputName": "虚拟输入",
+    "outputName": "虚拟输出"
+  },
+  "device": {
+    "exclusive": "独占这个设备（推荐）",
+    "exclusiveHint": "Aemeath 独自使用这个设备，声音不经过 Windows 的混音和重采样；其他程序不能同时使用它。",
+    "formatLabel": "设备格式",
+    "format": "{rate} kHz · {format}",
+    "recommended": "推荐（打开设备时选定）",
+    "recommendedFormat": "推荐：{format}",
+    "probing": "正在读取设备支持的格式…",
+    "probeFailed": "无法读取设备支持的格式（设备不在或正被其他程序占用），可以先用推荐格式。",
+    "buffer": "缓冲",
+    "bufferDefault": "设备默认（{ms} ms）",
+    "bufferDefaultUnknown": "设备默认",
+    "bufferMinimum": "设备最小（{ms} ms）",
+    "bufferMinimumUnknown": "设备最小",
+    "bufferCustom": "自定义",
+    "bufferMs": "缓冲（毫秒）",
+    "bufferHint": "缓冲越小延迟越低，但更容易因系统繁忙而断续。自定义的值会被调整到设备允许的最接近的值。",
+    "sharedHint": "共享时设备格式由 Windows 决定，其他程序可以同时使用这个设备。",
+    "sharedFormat": "共享时设备格式由 Windows 决定，当前为 {format}。其他程序可以同时使用这个设备。",
+    "resampler": "重采样算法",
+    "resamplerGlobal": "跟随全局默认",
+    "resamplerGlobalHint": "使用设置页里的默认重采样算法。"
+  },
+  "resampler": {
+    "sincHigh": {
+      "name": "Sinc 高质量",
+      "hint": "直到 20 kHz 都保持平直，适合音乐和录音。附加延迟约 2.7 ms，CPU 开销最高。"
+    },
+    "sincStandard": {
+      "name": "Sinc 标准（推荐）",
+      "hint": "听感上与高质量档没有差别，只在 20 kHz 附近略有衰减。附加延迟约 1.3 ms。"
+    },
+    "polynomial": {
+      "name": "多项式插值",
+      "hint": "几乎没有附加延迟、CPU 开销很低；低频好，高频差（15 kHz 以上失真明显）。"
+    },
+    "linear": {
+      "name": "线性插值",
+      "hint": "开销最低，但混叠明显，只适合语音或 CPU 极为紧张的情况。"
+    }
+  },
+  "strip": {
+    "gate": "门限",
+    "aria": "通道条 {name}",
+    "gateAria": "{name} 的门限阈值",
+    "gainAria": "{name} 的增益",
+    "mute": "静音",
+    "muteAria": "静音 {name}",
+    "dragHint": "{name} · 拖动标题可以调整顺序"
+  },
+  "mx": {
+    "title": "路由矩阵",
+    "pinOnly": "仅固定节点",
+    "from": "INPUT",
+    "to": "OUTPUT",
+    "empty": "添加输入节点和输出节点后，这里会列出它们之间的连线。",
+    "off": "关",
+    "stOn": "开启 {gain}",
+    "stOff": "已连接但关闭",
+    "stNone": "未连接",
+    "cell": "{src} → {dst}：{state}",
+    "idle": "将鼠标移到格子上，查看声音从哪里送到哪里。",
+    "lgOn": "开启（数字 = 发送增益 dB）",
+    "lgOff": "已连接但关闭",
+    "lgNone": "未连接",
+    "lgKeys": "单击：新建或开关 · Del：删除 · 停在格子上滚动滚轮：±1 dB",
+    "newRoute": "新建连线"
+  },
+  "grp": {
+    "in": "输入",
+    "proc": "处理",
+    "out": "输出"
+  },
+  "con": {
+    "title": "控制台",
+    "caption": "已固定节点：{n}",
+    "pin": "固定节点",
+    "allPinned": "所有节点都已固定",
+    "empty": "还没有固定的节点。用\"固定节点\"按钮或节点的菜单把常用的节点放到这里。"
+  },
+  "nodeSettings": {
+    "title": "节点设置：{name}",
+    "slot": "槽位",
+    "slotHint": "改选槽位后，应用需要改用新的设备名。",
+    "gateOff": "关",
+    "gateHint": "信号低于阈值时自动关闭这一路。滑块最左端表示关闭门限。",
+    "candidates": "选择要改用的设备",
+    "candidatesHint": "原来的设备不见了，找到了多台同名的设备（{device}），请选择这个节点要改用哪一台。",
+    "useCandidate": "改用这台设备",
+    "confirm": "确定"
+  },
+  "menu": {
+    "aria": "{name} 的菜单",
+    "nodeSettings": "节点设置…",
+    "rename": "改名",
+    "pin": "固定到控制台",
+    "unpin": "从控制台取消固定",
+    "redetect": "重新检测设备",
+    "deleteNode": "删除节点",
+    "routeOn": "开启连线",
+    "routeOff": "关闭连线",
+    "resetGain": "增益重置为 0 dB",
+    "resetLabel": "标签放回连线中点",
+    "deleteRoute": "删除连线",
+    "addHere": "在此处添加节点…",
+    "fit": "适应窗口",
+    "cut": "剪切",
+    "copy": "复制",
+    "paste": "粘贴",
+    "selectAll": "全选"
   }
 }

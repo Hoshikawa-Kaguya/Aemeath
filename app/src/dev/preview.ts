@@ -5,14 +5,38 @@
 import type { Channel } from '@tauri-apps/api/core'
 import { emit } from '@tauri-apps/api/event'
 import { mockIPC, mockWindows } from '@tauri-apps/api/mocks'
-import type { NodeView, RouteView, SlotView, ViewState } from '@/api/types'
-import { roleOf } from '@/api/types'
+import type { Capabilities, FormatView, NodeView, RouteView, SlotView, ViewState } from '@/api/types'
+import { DEFAULT_DEVICE_SETTINGS, roleOf } from '@/api/types'
 
 const LONG_NAME = '直播推流混音输出 · 给 OBS 录制和推流使用的一个非常非常长的节点名称，用来测试截断效果'
 const METER_INTERVAL_MS = 33
+const INT32_48K: FormatView = { sampleRate: 48000, sampleFormat: 'int32', channels: 2 }
 
 function node(partial: Partial<NodeView> & Pick<NodeView, 'id' | 'name' | 'kind' | 'x' | 'y'>): NodeView {
-  return { slot: null, device: null, gainDb: 0, muted: false, status: { state: 'ok' }, ...partial }
+  const external = partial.kind === 'externalInput' || partial.kind === 'externalOutput'
+  return {
+    slot: null,
+    device: null,
+    gainDb: 0,
+    muted: false,
+    gateDb: null,
+    io: external ? { ...DEFAULT_DEVICE_SETTINGS } : null,
+    format: external ? INT32_48K : null,
+    candidates: [],
+    status: { state: 'ok' },
+    ...partial,
+  }
+}
+
+/** 模拟的设备能力：两个采样率 × 三种样本格式 */
+const CAPABILITIES: Capabilities = {
+  exclusiveFormats: [44100, 48000].flatMap((sampleRate) =>
+    (['int16', 'int24In32', 'int32'] as const).map((sampleFormat) => ({ sampleRate, sampleFormat, channels: 2 })),
+  ),
+  recommended: INT32_48K,
+  sharedFormat: { sampleRate: 48000, sampleFormat: 'float32', channels: 2 },
+  defaultPeriodMs: 10,
+  minimumPeriodMs: 2.667,
 }
 
 const nodes: NodeView[] = [
@@ -21,10 +45,12 @@ const nodes: NodeView[] = [
     name: '麦克风 · Rear Mic',
     kind: 'externalInput',
     device: { endpointId: 'mic', name: 'Rear Mic (Realtek USB Audio)' },
+    gateDb: -45,
     x: 40,
     y: 60,
   }),
-  node({ id: 2, name: '默认输入', kind: 'virtualInput', slot: { direction: 'in', number: 1 }, x: 40, y: 260 }),
+  node({ id: 2, name: '游戏与浏览器', kind: 'virtualInput', slot: { direction: 'in', number: 1 }, x: 40, y: 260 }),
+  node({ id: 6, name: '直播总线', kind: 'bus', x: 260, y: 160 }),
   node({ id: 3, name: LONG_NAME, kind: 'virtualOutput', slot: { direction: 'out', number: 1 }, x: 480, y: 40 }),
   node({
     id: 4,
@@ -39,7 +65,8 @@ const nodes: NodeView[] = [
     name: 'NVIDIA Broadcast',
     kind: 'externalInput',
     device: { endpointId: 'nv', name: 'Microphone (NVIDIA Broadcast)' },
-    status: { state: 'offline', reason: 'waitingForDevice' },
+    status: { state: 'offline', reason: 'inUseByOtherApp' },
+    format: null,
     x: 40,
     y: 420,
   }),
@@ -48,7 +75,6 @@ const nodes: NodeView[] = [
 let state: ViewState = {
   engine: { state: 'running', sampleRate: 48000 },
   registration: null,
-  firstRun: false,
   canUndo: false,
   usbipVersion: '0.9.8.1',
   language: { mode: 'system' },
@@ -58,6 +84,8 @@ let state: ViewState = {
     { from: 2, to: 4, gainDb: 0, enabled: true, labelPosition: 0.5 },
     { from: 1, to: 4, gainDb: -6, enabled: false, labelPosition: 0.35 },
   ],
+  console: [1, 2, 6, 3],
+  notices: [],
   slots: [],
 }
 const undoStack: ViewState[] = []
@@ -136,6 +164,11 @@ function updateRoute(args: Args, change: Partial<RouteView>, undoable: boolean):
   return commit({ ...state, routes }, undoable)
 }
 
+function updateNode(args: Args, change: Partial<NodeView>, undoable: boolean): ViewState {
+  const nodes = state.nodes.map((n) => (n.id === args.node ? { ...n, ...change } : n))
+  return commit({ ...state, nodes }, undoable)
+}
+
 state = commit(state, false)
 mockWindows('main')
 mockIPC(
@@ -181,6 +214,161 @@ mockIPC(
           },
           false,
         )
+      case 'list_apps':
+        return {
+          apps: [
+            {
+              processId: 101,
+              name: 'cloudmusic',
+              executable: 'G:\\CloudMusic\\cloudmusic.exe',
+              landing: 'in1',
+              assigned: 'in1',
+              system: false,
+            },
+            {
+              processId: 102,
+              name: 'game',
+              executable: 'D:\\Games\\game.exe',
+              landing: 'lg',
+              assigned: 'in1',
+              system: false,
+            },
+            {
+              processId: 103,
+              name: LONG_NAME,
+              executable: 'C:\\Program Files\\Very Long Vendor\\app.exe',
+              landing: 'vm',
+              assigned: null,
+              system: false,
+            },
+            { processId: 0, name: '', executable: null, landing: 'lg', assigned: null, system: true },
+          ],
+          choices: [
+            {
+              endpointId: 'in1',
+              kind: 'virtualInput',
+              name: '游戏与浏览器',
+              detail: '扬声器 (Aemeath Dev In 1)',
+              exclusiveByAemeath: false,
+            },
+            {
+              endpointId: 'lg',
+              kind: 'externalOutput',
+              name: 'LG ULTRAGEAR+ (NVIDIA High Definition Audio)',
+              detail: null,
+              exclusiveByAemeath: true,
+            },
+            {
+              endpointId: 'rdo',
+              kind: 'externalOutput',
+              name: 'Realtek Digital Output (Realtek USB Audio)',
+              detail: null,
+              exclusiveByAemeath: false,
+            },
+            {
+              endpointId: 'vm',
+              kind: 'other',
+              name: 'Voicemeeter Input (VB-Audio Voicemeeter VAIO)',
+              detail: null,
+              exclusiveByAemeath: false,
+            },
+          ],
+        }
+      case 'set_landing':
+        return null
+      case 'list_default_devices':
+        return {
+          render: [
+            {
+              endpointId: 'lg',
+              name: 'LG ULTRAGEAR+ (NVIDIA High Definition Audio)',
+              isDefault: false,
+              isCommunications: false,
+              exclusiveByAemeath: true,
+            },
+            {
+              endpointId: 'in1',
+              name: '扬声器 (Aemeath Dev In 1)',
+              isDefault: true,
+              isCommunications: false,
+              exclusiveByAemeath: false,
+            },
+            {
+              endpointId: 'rdo',
+              name: 'Realtek Digital Output (Realtek USB Audio)',
+              isDefault: false,
+              isCommunications: true,
+              exclusiveByAemeath: false,
+            },
+          ],
+          capture: [
+            {
+              endpointId: 'mic',
+              name: 'Rear Mic (Realtek USB Audio)',
+              isDefault: true,
+              isCommunications: true,
+              exclusiveByAemeath: true,
+            },
+            {
+              endpointId: 'out1',
+              name: '线路 (Aemeath Dev Out 1)',
+              isDefault: false,
+              isCommunications: false,
+              exclusiveByAemeath: false,
+            },
+          ],
+        }
+      case 'set_default_device':
+        return null
+      case 'probe_device':
+        return CAPABILITIES
+      case 'set_device_settings':
+        return updateNode(args, { io: args.settings as NodeView['io'] }, true)
+      case 'redetect':
+        return null
+      case 'matrix_verdicts':
+        return state.nodes.flatMap((from) =>
+          state.nodes.flatMap((to) => {
+            const rejection = check(from.id, to.id)
+            return rejection === null || rejection === 'duplicate' || roleOf(from.kind) === 'out'
+              ? []
+              : roleOf(to.kind) === 'in'
+                ? []
+                : [{ from: from.id, to: to.id, rejection }]
+          }),
+        )
+      case 'pin_node':
+        return commit(
+          {
+            ...state,
+            console: args.pinned
+              ? [...state.console, args.node as number]
+              : state.console.filter((id) => id !== args.node),
+          },
+          false,
+        )
+      case 'move_pin': {
+        const rest = state.console.filter((id) => id !== args.node)
+        rest.splice(args.index as number, 0, args.node as number)
+        return commit({ ...state, console: rest }, false)
+      }
+      case 'change_slot':
+        return updateNode(
+          args,
+          {
+            slot: {
+              direction: state.nodes.find((n) => n.id === args.node)?.slot?.direction ?? 'in',
+              number: args.number as number,
+            },
+          },
+          true,
+        )
+      case 'set_node_gain':
+        return updateNode(args, { gainDb: args.gainDb as number }, false)
+      case 'set_node_muted':
+        return updateNode(args, { muted: args.muted as boolean }, true)
+      case 'set_node_gate':
+        return updateNode(args, { gateDb: args.thresholdDb as number | null }, false)
       case 'rename_node':
         return commit(
           { ...state, nodes: state.nodes.map((n) => (n.id === args.node ? { ...n, name: args.name as string } : n)) },
@@ -192,6 +380,7 @@ mockIPC(
             ...state,
             nodes: state.nodes.filter((n) => n.id !== args.node),
             routes: state.routes.filter((r) => r.from !== args.node && r.to !== args.node),
+            console: state.console.filter((id) => id !== args.node),
           },
           true,
         )

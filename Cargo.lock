@@ -18,6 +18,7 @@ dependencies = [
  "aemeath-runtime",
  "aemeath-sys",
  "serde",
+ "serde_json",
  "tauri",
  "tauri-build",
  "thiserror 2.0.21",

@@ -32,10 +32,14 @@ interface Level {
   right: number
 }
 
+/** 横向（工作台节点：两根条上下排列，从左往右长）或竖向（控制台通道条：两根条左右排列，从下往上长） */
+export type MeterOrientation = 'horizontal' | 'vertical'
+
 interface Meter {
   node: number
   canvas: HTMLCanvasElement
   readout: HTMLElement | null
+  orientation: MeterOrientation
   drawn: Level | null
   readoutText: string
 }
@@ -59,8 +63,13 @@ class MeterRenderer {
   private lastReadout = 0
   private subscribed = false
 
-  register(node: number, canvas: HTMLCanvasElement, readout: HTMLElement | null): () => void {
-    const meter: Meter = { node, canvas, readout, drawn: null, readoutText: '' }
+  register(
+    node: number,
+    canvas: HTMLCanvasElement,
+    readout: HTMLElement | null,
+    orientation: MeterOrientation = 'horizontal',
+  ): () => void {
+    const meter: Meter = { node, canvas, readout, orientation, drawn: null, readoutText: '' }
     this.meters.add(meter)
     this.ensureRunning()
     return () => {
@@ -159,34 +168,46 @@ class MeterRenderer {
     if (context === null) {
       return
     }
+    // 沿电平增长方向的长度（length）与两根条并排方向的宽度（breadth）；竖向时从底部往上画
+    const vertical = meter.orientation === 'vertical'
+    const length = vertical ? height : width
+    const breadth = vertical ? width : height
     const gap = BAR_GAP * ratio
-    const barHeight = (height - gap) / 2
+    const barBreadth = (breadth - gap) / 2
+    /** 在"沿电平方向 [start, end)、第 index 根条"的位置填色 */
+    const fill = (index: number, start: number, end: number) => {
+      const across = index * (barBreadth + gap)
+      if (vertical) {
+        context.fillRect(across, length - end, barBreadth, end - start)
+      } else {
+        context.fillRect(start, across, end - start, barBreadth)
+      }
+    }
     context.clearRect(0, 0, width, height)
     const muted = this.muted.has(meter.node)
+    const midEnd = fraction(MID_DB) * length
+    const highEnd = fraction(HIGH_DB) * length
     for (const [index, value] of [shown.left, shown.right].entries()) {
-      const y = index * (barHeight + gap)
       context.fillStyle = palette.track
-      context.fillRect(0, y, width, barHeight)
+      fill(index, 0, length)
       if (value <= 0) {
         continue
       }
-      const end = value * width
-      const midEnd = fraction(MID_DB) * width
-      const highEnd = fraction(HIGH_DB) * width
+      const end = value * length
       if (muted) {
         context.fillStyle = palette.muted
-        context.fillRect(0, y, end, barHeight)
+        fill(index, 0, end)
         continue
       }
       context.fillStyle = palette.low
-      context.fillRect(0, y, Math.min(end, midEnd), barHeight)
+      fill(index, 0, Math.min(end, midEnd))
       if (end > midEnd) {
         context.fillStyle = palette.mid
-        context.fillRect(midEnd, y, Math.min(end, highEnd) - midEnd, barHeight)
+        fill(index, midEnd, Math.min(end, highEnd))
       }
       if (end > highEnd) {
         context.fillStyle = palette.high
-        context.fillRect(highEnd, y, end - highEnd, barHeight)
+        fill(index, highEnd, end)
       }
     }
   }

@@ -20,6 +20,9 @@ export type IconName =
   | 'lang'
   | 'undo'
   | 'grip'
+  | 'more'
+  | 'apps'
+  | 'tools'
 
 defineProps<{ name: IconName }>()
 </script>

@@ -13,7 +13,8 @@ use thiserror::Error;
 
 use crate::graph;
 use crate::ids::{EndpointId, NodeId, SlotDirection, SlotId, TopologyRevision};
-use crate::units::{GainDb, SampleRate};
+use crate::message::DeviceFormat;
+use crate::units::{BufferMs, GainDb, GateThreshold, SampleRate};
 
 /// 一份拓扑里节点数的上限。只用来拒绝异常输入：16 个槽位加上外部设备和总线，远小于这个数。
 pub const MAX_NODES: usize = 256;
@@ -55,6 +56,81 @@ pub struct TopologyNode {
     pub id: NodeId,
     pub kind: NodeKind,
     pub strip: Strip,
+    /// 外部设备节点的打开方式与重采样算法；只有外部设备节点可以有。外部设备节点没有时按默认值（独占）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub io: Option<DeviceSettings>,
+}
+
+/// 外部设备节点的设备设置（ADR-0014）。
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeviceSettings {
+    #[serde(default)]
+    pub access: DeviceAccess,
+    /// 按节点覆盖的重采样算法；None 表示使用全局默认（[`RouteTopology::resampler`]）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resampler: Option<Resampler>,
+}
+
+impl DeviceSettings {
+    /// 实际使用的重采样算法
+    pub fn resampler_or(&self, global: Resampler) -> Resampler {
+        self.resampler.unwrap_or(global)
+    }
+}
+
+/// 外部设备的打开方式（GLOSSARY：独占）。默认独占。
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
+pub enum DeviceAccess {
+    /// Aemeath 独自使用端点；设备格式和缓冲由用户决定
+    Exclusive {
+        #[serde(default)]
+        format: FormatChoice,
+        #[serde(default)]
+        buffer: BufferChoice,
+    },
+    /// 与其他程序共用端点；设备格式由 Windows 决定
+    Shared,
+}
+
+impl Default for DeviceAccess {
+    fn default() -> Self {
+        Self::Exclusive {
+            format: FormatChoice::default(),
+            buffer: BufferChoice::default(),
+        }
+    }
+}
+
+impl DeviceAccess {
+    pub fn is_exclusive(&self) -> bool {
+        matches!(self, Self::Exclusive { .. })
+    }
+}
+
+/// 独占时的设备格式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(tag = "choice", rename_all = "snake_case", deny_unknown_fields)]
+pub enum FormatChoice {
+    /// 打开时按 [`crate::message::DeviceCapabilities::recommended`] 选定
+    #[default]
+    Recommended,
+    /// 用户指定的格式；设备不再支持时退回推荐格式并记录警告
+    Fixed { format: DeviceFormat },
+}
+
+/// 独占时的缓冲（设备周期）。
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[serde(tag = "choice", rename_all = "snake_case", deny_unknown_fields)]
+pub enum BufferChoice {
+    /// 设备的默认周期（通常 10 ms）
+    #[default]
+    DeviceDefault,
+    /// 设备的最小周期
+    DeviceMinimum,
+    /// 自定义；不低于设备的最小周期，并按设备要求对齐
+    Milliseconds { ms: BufferMs },
 }
 
 /// 节点类型。M1 只有 IO 节点和总线；应用源、外部插入、录音节点以后加入并提升协议版本。
@@ -143,12 +219,15 @@ impl<D> NodeKind<D> {
     }
 }
 
-/// 通道条参数。M1 只有增益和静音；门限和监听在 M2 加入。
+/// 通道条参数（GLOSSARY：通道条）。输入节点的处理顺序是门限 → 增益 → 静音；Aemeath 不提供 Solo 和监听（ADR-0004）。
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Strip {
     pub gain: GainDb,
     pub muted: bool,
+    /// 门限阈值；None 表示关。只有输入节点可以设门限
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gate: Option<GateThreshold>,
 }
 
 impl Default for Strip {
@@ -156,6 +235,7 @@ impl Default for Strip {
         Self {
             gain: GainDb::UNITY,
             muted: false,
+            gate: None,
         }
     }
 }
@@ -246,6 +326,12 @@ pub enum TopologyError {
     },
     #[error("the clock master {0} is not an external device node")]
     InvalidClockMaster(NodeId),
+    #[error("{0} has a gate, but only input nodes have one")]
+    GateOnNonInput(NodeId),
+    #[error("{0} has device settings, but only external device nodes have them")]
+    DeviceSettingsOnNonExternal(NodeId),
+    #[error("{0} has a fixed device format without channels")]
+    InvalidDeviceFormat(NodeId),
     #[error("a route refers to {0}, which is not in the topology")]
     UnknownNode(NodeId),
     #[error("the route from {from} to {to} is not allowed: {rejection}")]
@@ -283,6 +369,22 @@ impl RouteTopology {
         for node in &self.nodes {
             if nodes.insert(node.id, &node.kind).is_some() {
                 return Err(TopologyError::DuplicateNode(node.id));
+            }
+            if node.strip.gate.is_some() && node.kind.role() != NodeRole::Input {
+                return Err(TopologyError::GateOnNonInput(node.id));
+            }
+            if let Some(io) = &node.io {
+                if !node.kind.is_external() {
+                    return Err(TopologyError::DeviceSettingsOnNonExternal(node.id));
+                }
+                if let DeviceAccess::Exclusive {
+                    format: FormatChoice::Fixed { format },
+                    ..
+                } = io.access
+                    && format.channels == 0
+                {
+                    return Err(TopologyError::InvalidDeviceFormat(node.id));
+                }
             }
             if let Some(endpoint) = node.kind.device() {
                 if !endpoint.is_well_formed() {
@@ -352,6 +454,7 @@ mod tests {
             id,
             kind,
             strip: Strip::default(),
+            io: None,
         }
     }
 
@@ -477,6 +580,60 @@ mod tests {
                 first: MIC,
                 second: second_mic,
             })
+        );
+    }
+
+    #[test]
+    fn only_input_nodes_have_a_gate() {
+        let threshold = Some(GateThreshold::new(-40.0).unwrap());
+        let mut topology = sample_topology();
+        topology.nodes[0].strip.gate = threshold;
+        assert_eq!(topology.validate(), Ok(()));
+        topology.nodes[2].strip.gate = threshold;
+        assert_eq!(topology.validate(), Err(TopologyError::GateOnNonInput(BUS)));
+    }
+
+    #[test]
+    fn device_settings_default_to_exclusive_and_only_fit_external_nodes() {
+        let settings: DeviceSettings = serde_json::from_str("{}").unwrap();
+        assert_eq!(settings, DeviceSettings::default());
+        assert!(settings.access.is_exclusive());
+        assert_eq!(
+            serde_json::to_string(&settings).unwrap(),
+            r#"{"access":{"mode":"exclusive","format":{"choice":"recommended"},"buffer":{"choice":"device_default"}}}"#
+        );
+        let custom: DeviceSettings =
+            serde_json::from_str(r#"{"access":{"mode":"exclusive","buffer":{"choice":"milliseconds","ms":3.5}}}"#)
+                .unwrap();
+        assert_eq!(
+            custom.access,
+            DeviceAccess::Exclusive {
+                format: FormatChoice::Recommended,
+                buffer: BufferChoice::Milliseconds {
+                    ms: BufferMs::new(3.5).unwrap()
+                },
+            }
+        );
+        assert!(serde_json::from_str::<BufferChoice>(r#"{"choice":"milliseconds","ms":0.1}"#).is_err());
+
+        let mut topology = sample_topology();
+        topology.nodes[0].io = Some(DeviceSettings {
+            access: DeviceAccess::Shared,
+            resampler: Some(Resampler::Linear),
+        });
+        assert_eq!(topology.validate(), Ok(()));
+        topology.nodes[2].io = Some(DeviceSettings::default());
+        assert_eq!(
+            topology.validate(),
+            Err(TopologyError::DeviceSettingsOnNonExternal(BUS))
+        );
+    }
+
+    #[test]
+    fn strips_without_a_gate_keep_the_m1_wire_format() {
+        assert_eq!(
+            serde_json::to_string(&Strip::default()).unwrap(),
+            r#"{"gain":0.0,"muted":false}"#
         );
     }
 

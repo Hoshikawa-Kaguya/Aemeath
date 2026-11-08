@@ -7,7 +7,7 @@ import { backend, onStateChanged } from '@/api/backend'
 import type { CommandError, NodeView, ViewState } from '@/api/types'
 import { i18n, localeFor, setLocale } from '@/i18n'
 
-export type Page = 'workbench' | 'devices' | 'settings'
+export type Page = 'workbench' | 'devices' | 'apps' | 'tools' | 'settings'
 
 export interface Toast {
   message: string
@@ -23,7 +23,8 @@ export const useAppStore = defineStore('app', () => {
   const page = ref<Page>('workbench')
   const toast = ref<Toast | null>(null)
   let toastTimer = 0
-  let initializing = false
+  /** 已经显示过的最大提示编号 */
+  let lastNotice = 0
 
   const nodes = computed(() => state.value?.nodes ?? [])
   const routes = computed(() => state.value?.routes ?? [])
@@ -60,17 +61,28 @@ export const useAppStore = defineStore('app', () => {
     if (previous === null || JSON.stringify(previous.language) !== JSON.stringify(next.language)) {
       applyLocale(localeFor(next.language))
     }
-    if (next.firstRun && !initializing) {
-      // 首次启动：用当前语言的名称创建默认输入（ADR-0009）
-      initializing = true
-      void run(() => backend.initialize(i18n.global.t('node.defaultInput'))).finally(() => (initializing = false))
+    showNotices(next, previous === null)
+  }
+
+  /** 后端的一次性提示：只显示没见过的；界面刚打开时，之前的提示都算见过（不重放） */
+  function showNotices(next: ViewState, firstSnapshot: boolean): void {
+    const fresh = next.notices.filter((notice) => notice.id > lastNotice)
+    lastNotice = Math.max(lastNotice, ...next.notices.map((notice) => notice.id))
+    const latest = fresh.at(-1)
+    if (firstSnapshot || latest === undefined) {
+      return
+    }
+    switch (latest.kind.type) {
+      case 'deviceReplaced':
+        showToast(i18n.global.t('toast.deviceReplaced', { node: latest.kind.node, device: latest.kind.device }))
+        break
     }
   }
 
   function applyLocale(locale: string): void {
     setLocale(locale)
     const { t } = i18n.global
-    backend.setTrayLabels(t('tray.open'), t('tray.quit')).catch(() => {})
+    backend.setTrayLabels({ open: t('tray.open'), redetect: t('tray.redetect'), quit: t('tray.quit') }).catch(() => {})
   }
 
   /** 执行一个返回新快照的命令；失败时显示原因。返回是否成功。 */

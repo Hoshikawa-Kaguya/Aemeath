@@ -132,17 +132,21 @@ onUnmounted(() => {
 }
 
 /* 窗口变窄时整块隐藏放不下的标签，不截断文字 */
+/* 放不下的标签换到第二行，被 overflow 整个藏起来。容器比标签高 2 px：标签上下的描边在 125%、150% 缩放下
+   取整时不会被裁掉（以前标签不是 border-box，实际高 26 px，底边描边被 24 px 的容器裁掉） */
 .chips {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
-  height: 24px;
+  height: 26px;
   overflow: hidden;
   min-width: 0;
   margin-left: 12px;
 }
 
 .chip {
+  box-sizing: border-box;
   flex: none;
   display: inline-flex;
   align-items: center;

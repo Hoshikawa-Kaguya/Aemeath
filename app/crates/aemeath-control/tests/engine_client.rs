@@ -52,6 +52,7 @@ fn topology(bus: u32) -> RouteTopology {
             id: NodeId(bus),
             kind: NodeKind::Bus,
             strip: Strip::default(),
+            io: None,
         }],
         routes: Vec::new(),
     }

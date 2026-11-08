@@ -11,7 +11,9 @@ use aemeath_protocol::message::{DeviceFormat, SampleFormat};
 use aemeath_protocol::units::SampleRate;
 use thiserror::Error;
 use windows::Win32::Foundation::FALSE;
-use windows::Win32::Media::Audio::{WAVEFORMATEX, WAVEFORMATEXTENSIBLE, WAVEFORMATEXTENSIBLE_0};
+use windows::Win32::Media::Audio::{
+    ERole, WAVEFORMATEX, WAVEFORMATEXTENSIBLE, WAVEFORMATEXTENSIBLE_0, eCommunications, eConsole, eMultimedia,
+};
 use windows::Win32::Media::KernelStreaming::{KSDATAFORMAT_SUBTYPE_PCM, WAVE_FORMAT_EXTENSIBLE};
 use windows::Win32::Media::Multimedia::{KSDATAFORMAT_SUBTYPE_IEEE_FLOAT, WAVE_FORMAT_IEEE_FLOAT};
 use windows::Win32::System::Com::{CLSCTX_ALL, CoCreateInstance, CoTaskMemFree};
@@ -28,8 +30,8 @@ const SPEAKER_STEREO: u32 = 0x3;
 const STEREO_CHANNELS: u16 = 2;
 
 /// 未公开的 IPolicyConfig（Windows 7 起的布局，Windows 10/11 沿用）。
-/// 方法顺序就是虚表顺序，不能调整（名字无关，按 Rust 惯例写成 snake_case）；只声明到用到的 SetDeviceFormat 为止。
-/// 返回的 WAVEFORMATEX 由 CoTaskMemAlloc 分配，调用方负责释放。
+/// 方法顺序就是虚表顺序，不能调整（名字无关，按 Rust 惯例写成 snake_case）；只声明到用到的 SetDefaultEndpoint 为止，
+/// 中间不用的方法只占位置，绝不调用。返回的 WAVEFORMATEX 由 CoTaskMemAlloc 分配，调用方负责释放。
 #[interface("f8679f50-850a-41cf-9c72-430f290290c8")]
 unsafe trait IPolicyConfig: IUnknown {
     fn get_mix_format(&self, device_id: PCWSTR, format: *mut *mut WAVEFORMATEX) -> HRESULT;
@@ -46,6 +48,21 @@ unsafe trait IPolicyConfig: IUnknown {
         endpoint_format: *const WAVEFORMATEX,
         mix_format: *const WAVEFORMATEX,
     ) -> HRESULT;
+    fn get_processing_period(&self) -> HRESULT;
+    fn set_processing_period(&self) -> HRESULT;
+    fn get_share_mode(&self) -> HRESULT;
+    fn set_share_mode(&self) -> HRESULT;
+    fn get_property_value(&self) -> HRESULT;
+    fn set_property_value(&self) -> HRESULT;
+    fn set_default_endpoint(&self, device_id: PCWSTR, role: ERole) -> HRESULT;
+}
+
+/// Windows 默认设备的两种角色（声音设置里的"默认设备"和"默认通信设备"）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DefaultRole {
+    /// 控制台与多媒体
+    Default,
+    Communications,
 }
 
 #[derive(Debug, Error)]
@@ -88,6 +105,21 @@ impl PolicyConfig {
         // SAFETY: format 由 CoTaskMemAlloc 分配，所有权在调用方，读取后不再使用
         unsafe { CoTaskMemFree(Some(format as *const _)) };
         parsed.ok_or(FormatError::Unsupported)
+    }
+
+    /// 把端点设为某个角色的 Windows 默认设备（工具页的"系统默认设备"）。不需要管理员权限。
+    pub fn set_default_endpoint(&self, endpoint_id: &str, role: DefaultRole) -> windows::core::Result<()> {
+        let id = HSTRING::from(endpoint_id);
+        let roles: &[ERole] = match role {
+            // 与 Windows 声音设置一致："默认设备"同时是控制台和多媒体两个角色
+            DefaultRole::Default => &[eConsole, eMultimedia],
+            DefaultRole::Communications => &[eCommunications],
+        };
+        for raw in roles {
+            // SAFETY: id 在调用期间有效；role 是文档规定的取值
+            unsafe { self.config.set_default_endpoint(PCWSTR(id.as_ptr()), *raw) }.ok()?;
+        }
+        Ok(())
     }
 
     /// 设定端点的设备格式（只支持立体声，v1 的槽位都是立体声）。

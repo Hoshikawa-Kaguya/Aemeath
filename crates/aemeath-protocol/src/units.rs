@@ -47,6 +47,94 @@ impl From<GainDb> for f32 {
 #[error("gain {0} dB is not finite or outside {min}..={max} dB", min = GainDb::MIN, max = GainDb::MAX)]
 pub struct GainError(pub f32);
 
+/// 门限阈值，单位 dBFS（GLOSSARY：门限）：信号峰值低于它时关闭这一路。
+///
+/// 范围 −80 到 0 dBFS：再低就与本底噪声无法区分，高于 0 则永远不会打开。"关"用 `Option::None` 表示。
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(try_from = "f32", into = "f32")]
+pub struct GateThreshold(f32);
+
+impl GateThreshold {
+    pub const MIN: f32 = -80.0;
+    pub const MAX: f32 = 0.0;
+
+    pub fn new(db: f32) -> Result<Self, GateThresholdError> {
+        if db.is_finite() && (Self::MIN..=Self::MAX).contains(&db) {
+            Ok(Self(db))
+        } else {
+            Err(GateThresholdError(db))
+        }
+    }
+
+    pub fn db(self) -> f32 {
+        self.0
+    }
+}
+
+impl TryFrom<f32> for GateThreshold {
+    type Error = GateThresholdError;
+
+    fn try_from(db: f32) -> Result<Self, Self::Error> {
+        Self::new(db)
+    }
+}
+
+impl From<GateThreshold> for f32 {
+    fn from(threshold: GateThreshold) -> Self {
+        threshold.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Error)]
+#[error(
+    "gate threshold {0} dBFS is not finite or outside {min}..={max} dBFS",
+    min = GateThreshold::MIN,
+    max = GateThreshold::MAX
+)]
+pub struct GateThresholdError(pub f32);
+
+/// 独占模式的缓冲（设备周期），单位 ms（ADR-0014：用户可以自定义）。
+///
+/// 范围只用来拒绝异常值：实际使用时还会被限制到设备的最小周期以上，并按设备要求对齐。
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(try_from = "f32", into = "f32")]
+pub struct BufferMs(f32);
+
+impl BufferMs {
+    pub const MIN: f32 = 1.0;
+    pub const MAX: f32 = 100.0;
+
+    pub fn new(ms: f32) -> Result<Self, BufferMsError> {
+        if ms.is_finite() && (Self::MIN..=Self::MAX).contains(&ms) {
+            Ok(Self(ms))
+        } else {
+            Err(BufferMsError(ms))
+        }
+    }
+
+    pub fn ms(self) -> f32 {
+        self.0
+    }
+}
+
+impl TryFrom<f32> for BufferMs {
+    type Error = BufferMsError;
+
+    fn try_from(ms: f32) -> Result<Self, Self::Error> {
+        Self::new(ms)
+    }
+}
+
+impl From<BufferMs> for f32 {
+    fn from(buffer: BufferMs) -> Self {
+        buffer.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Error)]
+#[error("buffer {0} ms is not finite or outside {min}..={max} ms", min = BufferMs::MIN, max = BufferMs::MAX)]
+pub struct BufferMsError(pub f32);
+
 /// 采样率，单位 Hz。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(try_from = "u32", into = "u32")]
@@ -108,6 +196,14 @@ mod tests {
     fn gain_is_validated_when_deserializing() {
         assert_eq!(serde_json::from_str::<GainDb>("-6.5").unwrap().db(), -6.5);
         assert!(serde_json::from_str::<GainDb>("1000").is_err());
+    }
+
+    #[test]
+    fn gate_threshold_is_bounded() {
+        assert!(GateThreshold::new(-40.0).is_ok());
+        assert!(GateThreshold::new(GateThreshold::MIN - 1.0).is_err());
+        assert!(GateThreshold::new(0.5).is_err());
+        assert!(serde_json::from_str::<GateThreshold>("-90").is_err());
     }
 
     #[test]

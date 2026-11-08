@@ -1,4 +1,4 @@
-//! 执行路由拓扑：通道条增益与静音、连线增益与开关、求和（选型报告 6.2 节）。
+//! 执行路由拓扑：通道条（输入节点的门限、增益、静音）、连线增益与开关、求和（选型报告 6.2 节）。
 //!
 //! 构建在控制线程进行（会分配内存）；[`Mixer::process`] 在调度线程按块运行，不分配内存、不加锁。
 //!
@@ -12,10 +12,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use aemeath_dsp::gain::{SmoothedGain, db_to_linear};
+use aemeath_dsp::gate::Gate;
 use aemeath_protocol::graph;
 use aemeath_protocol::ids::{EndpointId, NodeId, SlotId, TopologyRevision};
 use aemeath_protocol::topology::{NodeKind, NodeRole, RouteTopology};
-use aemeath_protocol::units::SampleRate;
+use aemeath_protocol::units::{GateThreshold, SampleRate};
 
 use crate::STEREO;
 use crate::meters::MeterBank;
@@ -30,6 +31,9 @@ const RAMP_SECONDS: f64 = 0.010;
 struct MixNode {
     /// 节点类型：角色、槽位、外部端点都从这里取
     kind: NodeKind,
+    /// 门限：只有输入节点有；位于增益之前（门限 → 增益 → 静音）
+    gate: Option<Gate>,
+    gate_threshold: Option<f32>,
     strip: SmoothedGain,
     strip_target: f32,
     /// 这个节点本块的信号（通道条之后），交错立体声
@@ -99,8 +103,12 @@ impl Mixer {
                 } else {
                     db_to_linear(node.strip.gain.db())
                 };
+                let gate_threshold = node.strip.gate.map(GateThreshold::db);
                 MixNode {
                     kind: node.kind.clone(),
+                    gate: (node.kind.role() == NodeRole::Input)
+                        .then(|| Gate::new(topology.engine_sample_rate.hz(), gate_threshold)),
+                    gate_threshold,
                     strip: SmoothedGain::fixed(strip_target),
                     strip_target,
                     buffer: vec![0.0; MAX_BLOCK_FRAMES * STEREO],
@@ -232,6 +240,11 @@ impl Mixer {
                 let mut strip = old_node.strip;
                 strip.set_target(node.strip_target, self.ramp_frames);
                 node.strip = strip;
+                // 门限接过当前的开合状态，只换阈值，避免换拓扑时门限突然打开或关闭
+                if let (Some(gate), Some(old_gate)) = (&mut node.gate, old_node.gate) {
+                    *gate = old_gate;
+                    gate.set_threshold(node.gate_threshold);
+                }
             }
         }
         for (route, source) in self.routes.iter_mut().zip(&self.inherit_routes) {
@@ -358,7 +371,12 @@ impl Mixer {
             let node = &mut self.nodes[index];
             let mut peaks = [0f32; STEREO];
             for frame in buffer[..len].as_chunks_mut::<STEREO>().0.iter_mut() {
-                let gain = node.strip.next_gain();
+                // 门限按增益之前的信号判定
+                let gate = node
+                    .gate
+                    .as_mut()
+                    .map_or(1.0, |gate| gate.next_gain(frame[0], frame[1]));
+                let gain = node.strip.next_gain() * gate;
                 for (sample, peak) in frame.iter_mut().zip(peaks.iter_mut()) {
                     *sample *= gain;
                     *peak = peak.max(sample.abs());
@@ -406,6 +424,7 @@ mod tests {
             id,
             kind,
             strip: Strip::default(),
+            io: None,
         }
     }
 
@@ -499,6 +518,35 @@ mod tests {
     }
 
     #[test]
+    fn the_gate_closes_quiet_inputs_before_the_gain() {
+        let mut gated = topology(vec![route(GAME, OBS, 0.0)]);
+        gated.nodes[0].strip.gate = Some(GateThreshold::new(-40.0).unwrap());
+        // +20 dB 的增益不影响判定：门限看的是增益之前的信号
+        gated.nodes[0].strip.gain = GainDb::new(20.0).unwrap();
+        let (mut mixer, _) = build(&gated, None);
+        let one_second = 48_000 / FRAMES;
+        assert_eq!(run(&mut mixer, 0.001, 0.0, one_second), 0.0, "quiet input is gated");
+        let reopened = run(&mut mixer, 0.05, 0.0, 10);
+        assert!((reopened - 0.05 * db_to_linear(20.0)).abs() < 1e-4, "{reopened}");
+    }
+
+    #[test]
+    fn replacing_the_topology_keeps_the_gate_state() {
+        let mut first = topology(vec![route(GAME, OBS, 0.0)]);
+        first.nodes[0].strip.gate = Some(GateThreshold::new(-40.0).unwrap());
+        let (mut old, layout) = build(&first, None);
+        run(&mut old, 0.001, 0.0, 48_000 / FRAMES);
+
+        let mut second = first.clone();
+        second.revision = TopologyRevision(2);
+        second.nodes[0].strip.gate = Some(GateThreshold::new(-50.0).unwrap());
+        let (mut new, _) = build(&second, Some(&layout));
+        new.inherit(&mut old);
+        // 新阈值下 0.001（−60 dBFS）仍低于阈值，门限保持关闭，而不是从打开状态重新开始
+        assert_eq!(run(&mut new, 0.001, 0.0, 1), 0.0);
+    }
+
+    #[test]
     fn replacing_the_topology_continues_from_the_current_gain() {
         let first = topology(vec![route(GAME, OBS, 0.0)]);
         let (mut old, layout) = build(&first, None);
@@ -569,7 +617,7 @@ mod tests {
         };
         let (mut first, layout) = build(&with_microphone(1), None);
         let (_, consumer) = rtrb::RingBuffer::<f32>::new(16);
-        first.attach_port(4, Port::input(consumer, 4));
+        first.attach_port(4, Port::input(consumer, 4, 0));
 
         let (mut second, layout) = build(&with_microphone(2), Some(&layout));
         assert!(second.inherits_port(4));
@@ -579,7 +627,7 @@ mod tests {
         // 控制线程已经接了新端口（设备流重建）：不再从旧混音器接
         let (mut third, _) = build(&with_microphone(3), Some(&layout));
         let (_, fresh) = rtrb::RingBuffer::<f32>::new(16);
-        third.attach_port(4, Port::input(fresh, 4));
+        third.attach_port(4, Port::input(fresh, 4, 0));
         third.inherit(&mut second);
         assert!(
             second.nodes[4].port.is_some(),

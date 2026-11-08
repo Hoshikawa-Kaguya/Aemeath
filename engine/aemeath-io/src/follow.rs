@@ -1,11 +1,12 @@
 //! 主时钟跟随（S4）：让所有虚拟设备的时间线锁定到主时钟设备上。
 //!
-//! 以静音方式另开一条主时钟设备的共享流（播放端写静音，录音端读出丢弃），每秒读取一次 `IAudioClock`
-//! 的位置与对应的 QPC：
+//! 每秒从主时钟设备的 [`ClockTap`] 取一次 `IAudioClock` 的位置与对应的 QPC（由那台设备的 IO 线程读取，
+//! 不另开流：外部设备默认独占打开，第二条流打不开，ADR-0014）：
 //! - 频率：对最近 30 个样本做"主时钟秒数 ~ QPC 秒数"的线性回归，斜率就是主时钟相对 QPC 的速率；
 //! - 相位：时间线实际走过的微帧数与按主时钟应走过的微帧数之差，以 [`KP_PER_SECOND`] 的速度拉回（锁相环）。
 //!   只锁频率时残余误差会累积成相位漂移；锁相位后虚拟设备不需要 ASRC（S4 实测相位误差 ±18 µs）。
 //!
+//! 设备重新打开后（读数的会话编号变了），位置从零开始，重新建立基准；期间时间线保持上一次的速率。
 //! 时间线通过 [`ClockTarget`] 调整，所以本 crate 不依赖引擎。线程退出时把它交还调用方，供下一个跟随线程使用。
 
 use std::collections::VecDeque;
@@ -15,12 +16,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use aemeath_protocol::ids::EndpointId;
-use wasapi::{AudioClient, WasapiError};
-
-use crate::bridge::BridgeError;
-use crate::device::{self, EventWatch, OpenStream, SessionEnd, Waited};
-use crate::{IoDirection, STEREO, StatusSink};
+use crate::clock::{ClockReading, ClockTap};
+use crate::device;
 
 const MICROFRAMES_PER_SECOND: f64 = 8_000.0;
 /// 回归窗口：最近 30 个样本（30 s）
@@ -31,9 +28,10 @@ const MIN_SAMPLES: usize = 5;
 pub const KP_PER_SECOND: f64 = 0.1;
 /// 相位校正量上限（相对速率）
 const MAX_PHASE_CORRECTION: f64 = 100e-6;
-const SAMPLE_PERIOD: Duration = Duration::from_secs(1);
-/// 开流后跳过这段再开始采样，避开启动时的抖动
-const WARM_UP: Duration = Duration::from_secs(2);
+/// 新会话开始后跳过这么多个读数再建立基准，避开开流时的抖动
+const WARM_UP_READINGS: u32 = 2;
+/// 检查新读数和停止信号的间隔
+const POLL: Duration = Duration::from_millis(100);
 const LOG_PERIOD: Duration = Duration::from_secs(60);
 const HNS_PER_SECOND: f64 = 1e7;
 const PPM: f64 = 1e6;
@@ -53,12 +51,13 @@ pub struct Follower {
 }
 
 impl Follower {
-    pub fn spawn(endpoint: EndpointId, direction: IoDirection, target: Box<dyn ClockTarget>) -> io::Result<Self> {
+    /// `tap` 是主时钟设备的 IO 线程写入的读数快照。
+    pub fn spawn(tap: ClockTap, target: Box<dyn ClockTarget>) -> io::Result<Self> {
         let stop = device::stop_flag();
         let thread_stop = Arc::clone(&stop);
         let thread = thread::Builder::new()
             .name("aemeath-clock-follow".to_owned())
-            .spawn(move || run(&endpoint, direction, target, &thread_stop))?;
+            .spawn(move || run(&tap, target, &thread_stop))?;
         Ok(Self { stop, thread })
     }
 
@@ -69,74 +68,52 @@ impl Follower {
     }
 }
 
-fn run(
-    endpoint: &EndpointId,
-    direction: IoDirection,
-    mut target: Box<dyn ClockTarget>,
-    stop: &AtomicBool,
-) -> Box<dyn ClockTarget> {
-    // 跟随线程只读取时钟，不参与实时音频，不提升优先级。
-    // 主时钟设备的状态由它自己的桥接线程报告，这里不重复报告
-    let quiet: StatusSink = Arc::new(|_| {});
-    device::run_with_retry(endpoint, direction, stop, &quiet, |stream| {
-        match follow(stream, direction, target.as_mut(), stop) {
-            Ok(()) => SessionEnd::Finished,
-            Err(error) => SessionEnd::failed(&error),
-        }
-    });
-    target
+/// 一个会话内的基准与回归窗口。
+struct Lock {
+    session: u64,
+    skipped: u32,
+    /// (主时钟位置, QPC, 锁定时的时间线位置)
+    origin: Option<(u64, i64, f64)>,
+    window: VecDeque<(f64, f64)>,
 }
 
-fn follow(
-    stream: &OpenStream,
-    direction: IoDirection,
-    target: &mut dyn ClockTarget,
-    stop: &AtomicBool,
-) -> Result<(), BridgeError> {
-    let clock = stream.client.get_audioclock()?;
-    let frequency = clock.get_frequency()? as f64;
-    let mut io = SilentIo::new(stream, direction)?;
-    stream.client.start_stream()?;
-    let mut watch = EventWatch::new();
-    tracing::info!(?direction, "clock master following started");
+impl Lock {
+    fn new(session: u64) -> Self {
+        Self {
+            session,
+            skipped: 0,
+            origin: None,
+            window: VecDeque::with_capacity(WINDOW + 1),
+        }
+    }
+}
 
-    let started = Instant::now();
-    let mut next_sample = started + WARM_UP;
-    let mut last_log = started;
-    // (主时钟位置, QPC, 锁定时的时间线位置)
-    let mut origin: Option<(u64, i64, f64)> = None;
-    let mut window: VecDeque<(f64, f64)> = VecDeque::with_capacity(WINDOW + 1);
+// 跟随线程只读取时钟，不参与实时音频，不提升优先级。
+fn run(tap: &ClockTap, mut target: Box<dyn ClockTarget>, stop: &AtomicBool) -> Box<dyn ClockTarget> {
+    tracing::info!("clock master following started");
+    let mut lock: Option<Lock> = None;
+    let mut last_reading: Option<ClockReading> = None;
+    let mut last_log = Instant::now();
     while !stop.load(Ordering::Relaxed) {
-        if let Waited::Event = watch.wait(stream)? {
-            io.service(stream)?;
-        }
-        if Instant::now() < next_sample {
+        thread::sleep(POLL);
+        let Some(reading) = tap.latest() else {
+            continue;
+        };
+        if last_reading == Some(reading) {
             continue;
         }
-        next_sample += SAMPLE_PERIOD;
-
-        let (position, qpc) = clock.get_position()?;
-        let qpc = i64::try_from(qpc).unwrap_or(i64::MAX);
-        let (origin_position, origin_qpc, origin_microframe) =
-            *origin.get_or_insert((position, qpc, target.position(qpc)));
-        let master_seconds = position.saturating_sub(origin_position) as f64 / frequency;
-        let real_seconds = (qpc - origin_qpc) as f64 / HNS_PER_SECOND;
-        window.push_back((real_seconds, master_seconds));
-        if window.len() > WINDOW {
-            window.pop_front();
-        }
-        if window.len() < MIN_SAMPLES {
+        last_reading = Some(reading);
+        let current = match &mut lock {
+            Some(current) if current.session == reading.session => current,
+            _ => lock.insert(Lock::new(reading.session)),
+        };
+        if current.skipped < WARM_UP_READINGS {
+            current.skipped += 1;
             continue;
         }
-
-        let rate = slope(&window);
-        let desired = origin_microframe + master_seconds * MICROFRAMES_PER_SECOND;
-        let phase_error_seconds = (target.position(qpc) - desired) / MICROFRAMES_PER_SECOND;
-        let correction = (-KP_PER_SECOND * phase_error_seconds).clamp(-MAX_PHASE_CORRECTION, MAX_PHASE_CORRECTION);
-        let factor = rate * (1.0 + correction);
-        target.set_rate(factor, aemeath_sys::clock::now_hns());
-
-        if last_log.elapsed() >= LOG_PERIOD {
+        if let Some((rate, phase_error_seconds, factor)) = update(current, reading, target.as_mut())
+            && last_log.elapsed() >= LOG_PERIOD
+        {
             tracing::info!(
                 master_ppm = format!("{:.2}", (rate - 1.0) * PPM),
                 phase_error_us = format!("{:.1}", phase_error_seconds * PPM),
@@ -146,8 +123,32 @@ fn follow(
             last_log = Instant::now();
         }
     }
-    let _ = stream.client.stop_stream();
-    Ok(())
+    target
+}
+
+/// 加入一个读数；样本足够时调整时间线，返回 (主时钟速率, 相位误差秒, 实际设定的速率因子)。
+fn update(lock: &mut Lock, reading: ClockReading, target: &mut dyn ClockTarget) -> Option<(f64, f64, f64)> {
+    let frequency = reading.frequency.max(1) as f64;
+    let (origin_position, origin_qpc, origin_microframe) =
+        *lock
+            .origin
+            .get_or_insert((reading.position, reading.qpc, target.position(reading.qpc)));
+    let master_seconds = reading.position.saturating_sub(origin_position) as f64 / frequency;
+    let real_seconds = (reading.qpc - origin_qpc) as f64 / HNS_PER_SECOND;
+    lock.window.push_back((real_seconds, master_seconds));
+    if lock.window.len() > WINDOW {
+        lock.window.pop_front();
+    }
+    if lock.window.len() < MIN_SAMPLES {
+        return None;
+    }
+    let rate = slope(&lock.window);
+    let desired = origin_microframe + master_seconds * MICROFRAMES_PER_SECOND;
+    let phase_error_seconds = (target.position(reading.qpc) - desired) / MICROFRAMES_PER_SECOND;
+    let correction = (-KP_PER_SECOND * phase_error_seconds).clamp(-MAX_PHASE_CORRECTION, MAX_PHASE_CORRECTION);
+    let factor = rate * (1.0 + correction);
+    target.set_rate(factor, aemeath_sys::clock::now_hns());
+    Some((rate, phase_error_seconds, factor))
 }
 
 /// 最小二乘斜率 d(master)/d(real)
@@ -170,57 +171,6 @@ fn slope(window: &VecDeque<(f64, f64)>) -> f64 {
     }
 }
 
-/// 让跟随用的流保持运转：播放端持续写静音，录音端读出丢弃。
-enum SilentIo {
-    Render {
-        client: wasapi::AudioRenderClient,
-        silence: Vec<u8>,
-    },
-    Capture {
-        client: wasapi::AudioCaptureClient,
-        scratch: Vec<u8>,
-    },
-}
-
-impl SilentIo {
-    fn new(stream: &OpenStream, direction: IoDirection) -> Result<Self, WasapiError> {
-        match direction {
-            IoDirection::Output => {
-                let client = stream.client.get_audiorenderclient()?;
-                let silence = Vec::new();
-                let mut io = Self::Render { client, silence };
-                io.service(stream)?;
-                Ok(io)
-            }
-            IoDirection::Input => Ok(Self::Capture {
-                client: stream.client.get_audiocaptureclient()?,
-                scratch: Vec::new(),
-            }),
-        }
-    }
-
-    fn service(&mut self, stream: &OpenStream) -> Result<(), WasapiError> {
-        match self {
-            Self::Render { client, silence } => {
-                let frames = available(&stream.client)?;
-                stream.write_stereo(&vec![0.0; frames * STEREO], silence);
-                client.write_to_device(silence, None)
-            }
-            Self::Capture { client, scratch } => {
-                while let Some(frames) = client.get_next_packet_size()?.filter(|frames| *frames > 0) {
-                    scratch.resize(frames as usize * stream.block_align, 0);
-                    client.read_from_device(scratch)?;
-                }
-                Ok(())
-            }
-        }
-    }
-}
-
-fn available(client: &AudioClient) -> Result<usize, WasapiError> {
-    Ok(client.get_available_space_in_frames()? as usize)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -231,5 +181,41 @@ mod tests {
             .map(|second| (f64::from(second), f64::from(second) * (1.0 + 50e-6)))
             .collect();
         assert!(((slope(&window) - 1.0) * PPM - 50.0).abs() < 1e-6);
+    }
+
+    /// 以 QPC 速率前进的时间线
+    struct FakeTimeline {
+        factor: f64,
+    }
+
+    impl ClockTarget for FakeTimeline {
+        fn position(&self, hns: i64) -> f64 {
+            hns as f64 / HNS_PER_SECOND * MICROFRAMES_PER_SECOND * self.factor
+        }
+
+        fn set_rate(&mut self, factor: f64, _now_hns: i64) {
+            self.factor = factor;
+        }
+    }
+
+    #[test]
+    fn follows_a_faster_master_after_enough_readings() {
+        // IAudioClock 的频率通常是 10 MHz；用设备帧率会让位置取整的误差盖过 0.5 ppm 的容差
+        const FREQUENCY: u64 = 10_000_000;
+        let master_rate = 1.0 + 40e-6;
+        let mut lock = Lock::new(1);
+        let mut timeline = FakeTimeline { factor: 1.0 };
+        let mut applied = None;
+        for second in 0..10_i64 {
+            let reading = ClockReading {
+                session: 1,
+                position: (second as f64 * FREQUENCY as f64 * master_rate) as u64,
+                frequency: FREQUENCY,
+                qpc: second * HNS_PER_SECOND as i64,
+            };
+            applied = update(&mut lock, reading, &mut timeline);
+        }
+        let (rate, _, _) = applied.unwrap();
+        assert!(((rate - 1.0) * PPM - 40.0).abs() < 0.5, "{rate}");
     }
 }

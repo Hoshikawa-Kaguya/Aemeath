@@ -81,6 +81,7 @@ mod tests {
                 id: NodeId(1),
                 kind: NodeKind::Bus,
                 strip: Strip::default(),
+                io: None,
             }],
             routes: vec![],
         }

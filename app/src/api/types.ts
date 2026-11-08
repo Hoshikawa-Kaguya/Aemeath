@@ -11,7 +11,40 @@ export interface SlotRef {
 
 export type NodeKind = 'externalInput' | 'virtualInput' | 'virtualOutput' | 'externalOutput' | 'bus'
 
-export type OfflineReason = 'waitingForDevice' | 'inUseByOtherApp' | 'noSignal' | 'slotRepairing' | 'slotFailing'
+export type OfflineReason =
+  'waitingForDevice' | 'inUseByOtherApp' | 'exclusiveNotAllowed' | 'noSignal' | 'slotRepairing' | 'slotFailing'
+
+/** 重采样算法的 4 档（S5） */
+export type ResamplerKind = 'sincHigh' | 'sincStandard' | 'polynomial' | 'linear'
+
+export type BufferChoice =
+  { choice: 'deviceDefault' } | { choice: 'deviceMinimum' } | { choice: 'milliseconds'; ms: number }
+
+/** 外部设备节点的设备设置（ADR-0014），src-tauri/src/device_settings.rs */
+export interface DeviceSettings {
+  exclusive: boolean
+  /** 独占时的格式；null 表示推荐格式 */
+  format: FormatView | null
+  buffer: BufferChoice
+  /** 按节点覆盖的重采样算法；null 表示跟随全局默认 */
+  resampler: ResamplerKind | null
+}
+
+/** 设备能力（添加节点、节点设置里的格式和缓冲选项） */
+export interface Capabilities {
+  exclusiveFormats: FormatView[]
+  recommended: FormatView | null
+  sharedFormat: FormatView | null
+  defaultPeriodMs: number
+  minimumPeriodMs: number
+}
+
+export const DEFAULT_DEVICE_SETTINGS: DeviceSettings = {
+  exclusive: true,
+  format: null,
+  buffer: { choice: 'deviceDefault' },
+  resampler: null,
+}
 
 export type NodeStatus = { state: 'ok' } | { state: 'pending' } | { state: 'offline'; reason: OfflineReason }
 
@@ -30,7 +63,61 @@ export interface NodeView {
   y: number
   gainDb: number
   muted: boolean
+  /** 门限阈值（dBFS）；null 表示关。只有输入节点会有 */
+  gateDb: number | null
+  /** 外部设备节点的设备设置 */
+  io: DeviceSettings | null
+  /** 外部设备在线时实际使用的设备格式 */
+  format: FormatView | null
+  /** 设备换了端点、又有多个同名设备时，可以改用的候选 */
+  candidates: DeviceView[]
   status: NodeStatus
+}
+
+/** 应用页（src-tauri/src/apps.rs） */
+export interface AppView {
+  processId: number
+  /** 程序名；系统声音为空 */
+  name: string
+  executable: string | null
+  /** 会话当前所在的端点（实际落点） */
+  landing: string
+  /** Aemeath 记录的指派 */
+  assigned: string | null
+  system: boolean
+}
+
+export interface LandingChoice {
+  endpointId: string
+  kind: 'virtualInput' | 'externalOutput' | 'other'
+  name: string
+  detail: string | null
+  exclusiveByAemeath: boolean
+}
+
+export interface AppsView {
+  apps: AppView[]
+  choices: LandingChoice[]
+}
+
+/** 工具页的系统默认设备（src-tauri/src/default_devices.rs） */
+export interface DefaultDeviceView {
+  endpointId: string
+  name: string
+  isDefault: boolean
+  isCommunications: boolean
+  exclusiveByAemeath: boolean
+}
+
+export interface DefaultDevicesView {
+  render: DefaultDeviceView[]
+  capture: DefaultDeviceView[]
+}
+
+/** 后端给出的一次性提示（src-tauri/src/view.rs 的 NoticeView） */
+export interface Notice {
+  id: number
+  kind: { type: 'deviceReplaced'; node: string; device: string }
 }
 
 export interface RouteView {
@@ -77,13 +164,15 @@ export type LanguagePreference = { mode: 'system' } | { mode: 'fixed'; locale: s
 export interface ViewState {
   engine: { state: EngineState; sampleRate: number }
   registration: RegistrationView | null
-  firstRun: boolean
   canUndo: boolean
   usbipVersion: string | null
   language: LanguagePreference
   nodes: NodeView[]
   routes: RouteView[]
+  /** 固定到控制台的节点 ID，从左到右 */
+  console: number[]
   slots: SlotView[]
+  notices: Notice[]
 }
 
 export type Rejection = 'selfRoute' | 'cannotSend' | 'cannotReceive' | 'duplicate' | 'loop'
@@ -93,11 +182,19 @@ export interface RouteVerdict {
   rejection: Rejection | null
 }
 
+/** 路由矩阵里不能新建连线的格子 */
+export interface PairVerdict {
+  from: number
+  to: number
+  rejection: Rejection
+}
+
 export type NewNodeKind =
   | { type: 'externalInput'; endpointId: string; deviceName: string }
   | { type: 'externalOutput'; endpointId: string; deviceName: string }
   | { type: 'virtualInput' }
   | { type: 'virtualOutput' }
+  | { type: 'bus' }
 
 export interface DeviceChoice {
   endpointId: string

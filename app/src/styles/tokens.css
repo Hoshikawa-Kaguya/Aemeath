@@ -6,9 +6,15 @@
 :root {
   --r-ctl: var(--borderRadiusMedium);
   --r-card: var(--borderRadiusXLarge);
+  /* 动效（M2 计划 2.10）：时长和曲线全部取自 Fluent 2 令牌，参照 WinUI 的用法 */
   --dur-fast: var(--durationFaster);
   --dur: var(--durationNormal);
+  --dur-slow: var(--durationSlow);
   --ease: var(--curveDecelerateMax);
+  /* 进入：减速到位；离开：加速离开；位置移动：缓入缓出 */
+  --ease-enter: var(--curveDecelerateMid);
+  --ease-exit: var(--curveAccelerateMid);
+  --ease-move: var(--curveEasyEase);
 
   --text: var(--colorNeutralForeground1);
   --text-2: var(--colorNeutralForeground2);
@@ -125,6 +131,40 @@ fluent-button {
   max-width: 100%;
 }
 
+/* 文本框（Fluent 2 的 Input：底边是强调色的焦点指示） */
+.text-input {
+  height: 32px;
+  padding: 0 10px;
+  border-radius: var(--r-ctl);
+  border: 1px solid var(--stroke-strong);
+  border-bottom-color: var(--colorNeutralStrokeAccessible);
+  background: var(--card-solid);
+  color: var(--text);
+  font: inherit;
+}
+
+.text-input:focus {
+  outline: none;
+  border-bottom: 2px solid var(--accent);
+}
+
+/* 对话框里的"标签 + 控件"一组 */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.field .select {
+  width: 100%;
+}
+
+/* 原生滑块：强调色 */
+.slider {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
 /* 长文字一律截断（节点名最长 64 个字符，不能撑开布局），悬停用 title 显示全名 */
 .ellipsis {
   white-space: nowrap;
@@ -133,8 +173,22 @@ fluent-button {
   min-width: 0;
 }
 
+/* 控件的悬停、按下状态过渡（Fluent 2：颜色变化用最短的时长、线性） */
+button,
+.select,
+.text-input {
+  transition:
+    background-color var(--dur-fast) linear,
+    border-color var(--dur-fast) linear,
+    color var(--dur-fast) linear;
+}
+
+/* Windows 关闭"动画效果"时，WebView2 报告 prefers-reduced-motion：所有动画降为瞬时切换 */
 @media (prefers-reduced-motion: reduce) {
-  * {
+  *,
+  *::before,
+  *::after {
     transition: none !important;
+    animation: none !important;
   }
 }

@@ -6,7 +6,8 @@ import type { LanguagePreference } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
 import { useAppStore } from '@/stores/app'
 
-// 设置页（M1 只有界面语言；引擎采样率、主时钟、重采样等在后续里程碑加入）
+// 设置页：设备检测（立即重新检测全部设备；自动检测始终开启，不提供开关）、界面语言。
+// 引擎采样率、主时钟、全局重采样算法等在后续里程碑加入。
 const SYSTEM = 'system'
 
 const { t } = useI18n()
@@ -22,6 +23,13 @@ function choose(event: Event): void {
   const language: LanguagePreference = value === SYSTEM ? { mode: 'system' } : { mode: 'fixed', locale: value }
   void store.run(() => backend.setLanguage(language))
 }
+
+function redetectAll(): void {
+  backend
+    .redetect(null)
+    .then(() => store.showToast(t('set.detectStarted')))
+    .catch((error: unknown) => store.showToast(store.errorText(error)))
+}
 </script>
 
 <template>
@@ -30,6 +38,17 @@ function choose(event: Event): void {
       <h1 class="page-title">{{ t('nav.settings') }}</h1>
     </header>
     <div class="body">
+      <div class="set-group">
+        <h2>{{ t('set.detect') }}</h2>
+        <div class="set-row">
+          <AppIcon name="sync" />
+          <div class="text">
+            <span>{{ t('set.detectNow') }}</span>
+            <span class="caption">{{ t('set.detectSub') }}</span>
+          </div>
+          <fluent-button @click="redetectAll">{{ t('set.detectButton') }}</fluent-button>
+        </div>
+      </div>
       <div class="set-group">
         <h2>{{ t('set.ui') }}</h2>
         <div class="set-row">

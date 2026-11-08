@@ -10,7 +10,10 @@ use aemeath_core::preferences::LanguagePreference;
 use aemeath_protocol::ids::{SlotDirection, SlotId};
 use aemeath_protocol::message::{DeviceFormat, EndpointStatus, OfflineReason, SampleFormat};
 use aemeath_protocol::topology::RouteRejection;
-use serde::Serialize;
+use aemeath_protocol::units::{SampleRate, SampleRateError};
+use serde::{Deserialize, Serialize};
+
+use crate::device_settings::DeviceSettingsView;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -18,14 +21,31 @@ pub struct ViewState {
     pub engine: EngineView,
     /// 首次注册的进度；已注册时为 None
     pub registration: Option<RegistrationView>,
-    /// 还没有配置文件：界面需要用本地化的名称创建默认输入（ADR-0009）
-    pub first_run: bool,
     pub can_undo: bool,
     pub usbip_version: Option<String>,
     pub language: LanguagePreference,
     pub nodes: Vec<NodeView>,
     pub routes: Vec<RouteView>,
+    /// 固定到控制台的节点 ID，从左到右
+    pub console: Vec<u32>,
     pub slots: Vec<SlotView>,
+    /// 最近的一次性提示（按编号递增），界面只显示没见过的
+    pub notices: Vec<NoticeView>,
+}
+
+/// 后端主动给出的一次性提示。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoticeView {
+    pub id: u64,
+    pub kind: NoticeKind,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum NoticeKind {
+    /// 外部设备换了端点 ID（例如换了 USB 口），已按名称自动改用（选型报告 6.5 节）
+    DeviceReplaced { node: String, device: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -123,6 +143,14 @@ pub struct NodeView {
     pub y: f64,
     pub gain_db: f32,
     pub muted: bool,
+    /// 门限阈值（dBFS）；None 表示关。只有输入节点会有
+    pub gate_db: Option<f32>,
+    /// 外部设备节点的设备设置（ADR-0014）
+    pub io: Option<DeviceSettingsView>,
+    /// 外部设备在线时实际使用的设备格式
+    pub format: Option<FormatView>,
+    /// 设备换了端点、又有多个同名设备时，可以改用的候选（由用户在节点设置里选）
+    pub candidates: Vec<DeviceView>,
     pub status: NodeStatus,
 }
 
@@ -144,6 +172,7 @@ pub enum NodeStatus {
 pub enum OfflineReasonView {
     WaitingForDevice,
     InUseByOtherApp,
+    ExclusiveNotAllowed,
     NoSignal,
     /// 槽位正在重新挂载
     SlotRepairing,
@@ -159,6 +188,7 @@ impl NodeStatus {
                 reason: match reason {
                     OfflineReason::WaitingForDevice => OfflineReasonView::WaitingForDevice,
                     OfflineReason::InUseByOtherApp => OfflineReasonView::InUseByOtherApp,
+                    OfflineReason::ExclusiveNotAllowed => OfflineReasonView::ExclusiveNotAllowed,
                     OfflineReason::NoSignal => OfflineReasonView::NoSignal,
                 },
             },
@@ -238,7 +268,8 @@ impl From<SlotHealth> for SlotHealthView {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+/// 设备格式。界面也用它回传用户选定的独占格式（[`crate::device_settings`]）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FormatView {
     pub sample_rate: u32,
@@ -246,7 +277,26 @@ pub struct FormatView {
     pub channels: u16,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+impl TryFrom<FormatView> for DeviceFormat {
+    type Error = SampleRateError;
+
+    fn try_from(format: FormatView) -> Result<Self, Self::Error> {
+        Ok(Self {
+            sample_rate: SampleRate::new(format.sample_rate)?,
+            sample_format: match format.sample_format {
+                SampleFormatView::Int16 => SampleFormat::Int16,
+                SampleFormatView::Int24 => SampleFormat::Int24,
+                SampleFormatView::Int24In32 => SampleFormat::Int24In32,
+                SampleFormatView::Int32 => SampleFormat::Int32,
+                SampleFormatView::Float32 => SampleFormat::Float32,
+                SampleFormatView::Float64 => SampleFormat::Float64,
+            },
+            channels: format.channels,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum SampleFormatView {
     Int16,
@@ -303,6 +353,15 @@ pub fn kind_view(kind: &NodeKind) -> NodeKindView {
 pub struct RouteVerdict {
     pub node: u32,
     pub rejection: Option<RejectionView>,
+}
+
+/// 路由矩阵里一个不能新建连线的格子及原因（悬停时显示）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PairVerdict {
+    pub from: u32,
+    pub to: u32,
+    pub rejection: RejectionView,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

@@ -107,6 +107,7 @@ fn topology(rate: SampleRate) -> Result<RouteTopology> {
                     slot: slot(SlotDirection::In, 1)?,
                 },
                 strip: Strip::default(),
+                io: None,
             },
             TopologyNode {
                 id: output,
@@ -114,6 +115,7 @@ fn topology(rate: SampleRate) -> Result<RouteTopology> {
                     slot: slot(SlotDirection::Out, 1)?,
                 },
                 strip: Strip::default(),
+                io: None,
             },
         ],
         routes: vec![TopologyRoute {

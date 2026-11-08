@@ -105,6 +105,7 @@ fn topology_with(slot: SlotId) -> RouteTopology {
             id: NodeId(1),
             kind: NodeKind::VirtualInput { slot },
             strip: Strip::default(),
+            io: None,
         }],
         routes: Vec::new(),
     }

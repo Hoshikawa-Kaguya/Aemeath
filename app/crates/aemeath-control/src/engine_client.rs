@@ -10,8 +10,10 @@ use std::time::Duration;
 
 use aemeath_protocol::PROTOCOL_VERSION;
 use aemeath_protocol::frame::{self, FrameDecoder};
-use aemeath_protocol::ids::{NodeId, ProtocolVersion, RequestId, SlotId, TopologyRevision};
-use aemeath_protocol::message::{AppToEngine, DeviceFormat, EndpointStatus, EngineToApp, RejectReason};
+use aemeath_protocol::ids::{EndpointId, NodeId, ProtocolVersion, RequestId, SlotId, TopologyRevision};
+use aemeath_protocol::message::{
+    AppToEngine, DeviceCapabilities, DeviceFormat, EndpointDirection, EndpointStatus, EngineToApp, RejectReason,
+};
 use aemeath_protocol::topology::RouteTopology;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeClient};
@@ -106,7 +108,20 @@ pub enum ClientEvent {
 enum Command {
     /// 请引擎退出；应答或断开后通知 `done`
     ShutdownEngine { done: oneshot::Sender<bool> },
+    /// 查询外部设备的能力；断开或探测失败时答复 None
+    ProbeDevice {
+        endpoint: EndpointId,
+        direction: EndpointDirection,
+        reply: oneshot::Sender<Option<DeviceCapabilities>>,
+    },
+    /// 立即重新检测离线设备；没有连接时直接丢弃
+    Redetect { node: Option<NodeId> },
 }
+
+type ProbeWaiters = Vec<(RequestId, oneshot::Sender<Option<DeviceCapabilities>>)>;
+
+/// 设备探测的最长等待（引擎在阻塞线程上探测，通常约 100 ms）
+const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// 客户端句柄。丢弃时后台任务随之结束（不会让引擎退出）。
 #[derive(Debug)]
@@ -145,6 +160,39 @@ impl EngineClient {
             .ok()
             .and_then(Result::ok)
             .unwrap_or(false)
+    }
+
+    /// 设备探测的句柄：可以复制给其他任务，在控制面的 actor 之外等待应答。
+    pub fn prober(&self) -> EngineProber {
+        EngineProber {
+            commands: self.commands.clone(),
+        }
+    }
+
+    /// 请引擎立即重新检测离线设备；`node` 为 None 表示全部（选型报告 6.5 节的手动检测）。
+    pub fn redetect(&self, node: Option<NodeId>) {
+        let _ = self.commands.send(Command::Redetect { node });
+    }
+}
+
+/// 向引擎查询外部设备能力的句柄（[`EngineClient::prober`]）。
+#[derive(Debug, Clone)]
+pub struct EngineProber {
+    commands: mpsc::UnboundedSender<Command>,
+}
+
+impl EngineProber {
+    /// 查询外部设备的能力（ADR-0014：独占时可选的格式和缓冲）。引擎不在或设备打不开时返回 None。
+    pub async fn probe_device(&self, endpoint: EndpointId, direction: EndpointDirection) -> Option<DeviceCapabilities> {
+        let (reply, wait) = oneshot::channel();
+        self.commands
+            .send(Command::ProbeDevice {
+                endpoint,
+                direction,
+                reply,
+            })
+            .ok()?;
+        tokio::time::timeout(PROBE_TIMEOUT, wait).await.ok()?.ok()?
     }
 }
 
@@ -194,9 +242,17 @@ async fn run(
                         || error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(error) => debug!(%error, "cannot open the engine pipe"),
             }
-            // 未连接时收到的退出请求：引擎不在，直接答复未确认
-            while let Ok(Command::ShutdownEngine { done }) = commands.try_recv() {
-                let _ = done.send(false);
+            // 未连接时收到的命令：引擎不在，退出请求答复未确认，探测答复 None，重新检测直接丢弃
+            while let Ok(command) = commands.try_recv() {
+                match command {
+                    Command::ShutdownEngine { done } => {
+                        let _ = done.send(false);
+                    }
+                    Command::ProbeDevice { reply, .. } => {
+                        let _ = reply.send(None);
+                    }
+                    Command::Redetect { .. } => {}
+                }
             }
             tokio::time::sleep(config.timing.reconnect_interval).await;
         };
@@ -235,6 +291,8 @@ async fn session(
     let mut ping = tokio::time::interval(config.timing.ping_interval);
     ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut shutdown_waiters: Vec<(RequestId, oneshot::Sender<bool>)> = Vec::new();
+    // 断开时随连接一起丢弃，等待方收到"已关闭"，当作 None
+    let mut probe_waiters: ProbeWaiters = Vec::new();
 
     let reason = loop {
         tokio::select! {
@@ -268,7 +326,7 @@ async fn session(
                             outcome = Some(DisconnectReason::VersionMismatch { engine_protocol });
                             break;
                         }
-                        message => handle(message, state, &mut shutdown_waiters, events),
+                        message => handle(message, state, &mut shutdown_waiters, &mut probe_waiters, events),
                     }
                 }
                 if let Some(reason) = outcome {
@@ -292,15 +350,29 @@ async fn session(
                 }
             }
             command = commands.recv() => {
-                let Some(Command::ShutdownEngine { done }) = command else {
+                let Some(command) = command else {
                     break DisconnectReason::Closed;
                 };
                 let request = state.request();
-                if send(pipe, &AppToEngine::Shutdown { request }).await.is_err() {
-                    let _ = done.send(false);
+                let sent = match command {
+                    Command::ShutdownEngine { done } => {
+                        let sent = send(pipe, &AppToEngine::Shutdown { request }).await;
+                        if sent.is_err() {
+                            let _ = done.send(false);
+                        } else {
+                            shutdown_waiters.push((request, done));
+                        }
+                        sent
+                    }
+                    Command::ProbeDevice { endpoint, direction, reply } => {
+                        probe_waiters.push((request, reply));
+                        send(pipe, &AppToEngine::ProbeDevice { request, endpoint, direction }).await
+                    }
+                    Command::Redetect { node } => send(pipe, &AppToEngine::Redetect { request, node }).await,
+                };
+                if sent.is_err() {
                     break DisconnectReason::Closed;
                 }
-                shutdown_waiters.push((request, done));
             }
             _ = ping.tick() => {
                 if !handshaken && Instant::now() >= welcome_deadline {
@@ -330,9 +402,17 @@ fn handle(
     message: EngineToApp,
     state: &mut ClientState,
     shutdown_waiters: &mut Vec<(RequestId, oneshot::Sender<bool>)>,
+    probe_waiters: &mut ProbeWaiters,
     events: &mpsc::UnboundedSender<ClientEvent>,
 ) {
     let event = match message {
+        EngineToApp::DeviceCapabilities { request, capabilities } => {
+            if let Some(index) = probe_waiters.iter().position(|(id, _)| *id == request) {
+                let (_, reply) = probe_waiters.swap_remove(index);
+                let _ = reply.send(capabilities);
+            }
+            return;
+        }
         EngineToApp::Ack { request } => {
             if let Some(index) = shutdown_waiters.iter().position(|(id, _)| *id == request) {
                 let (_, done) = shutdown_waiters.swap_remove(index);

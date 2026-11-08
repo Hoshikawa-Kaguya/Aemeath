@@ -1,5 +1,7 @@
 //! 主程序的偏好设置：与工作台一起保存在配置文件里（[`crate::store`]）。
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 /// 界面语言。
@@ -21,6 +23,10 @@ pub struct Preferences {
     /// 16 个槽位是否已完成首次注册（ADR-0009）。完成前每次启动都会重新注册。
     #[serde(default)]
     pub slots_registered: bool,
+    /// Aemeath 做过的按应用指派：可执行文件的完整路径 → 播放端点 ID（选型报告 5.5 节）。
+    /// Windows 按可执行文件持久保存指派，撤销时要求该程序正有音频会话，所以记下来，以便日后撤销。
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub app_landings: BTreeMap<String, String>,
 }
 
 #[cfg(test)]

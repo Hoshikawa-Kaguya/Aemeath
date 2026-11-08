@@ -1,4 +1,4 @@
-//! 外部设备的 WASAPI 共享流、异步采样率转换（ASRC）桥接，以及主时钟跟随。
+//! 外部设备的 WASAPI 流（默认独占，ADR-0014）、异步采样率转换（ASRC）桥接，以及主时钟跟随。
 //!
 //! 每台外部设备一个 IO 线程（ADR-0008 的线程模型），与引擎的调度线程之间只通过无锁环形缓冲（rtrb）交换音频：
 //! - 外部输入：设备 → 转立体声 → ASRC 到引擎采样率 → 环形缓冲 → 调度线程每 1 ms 取一块。
@@ -6,12 +6,17 @@
 //!
 //! ASRC 的比率由 IO 线程里的 PI 控制器按环形缓冲的水位调整（S5），调度线程不参与。
 //! 环形缓冲在引擎一侧的那一端被丢弃时（拓扑不再使用这台设备），IO 线程自行关闭设备并退出。
+//! IO 线程每秒把设备时钟的读数写进 [`clock::ClockTap`]，主时钟跟随线程从那里读取。
 
 pub mod bridge;
+pub mod capabilities;
+pub mod clock;
 pub mod device;
 pub mod follow;
+pub mod format;
 pub mod input;
 pub mod output;
+pub mod redetect;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -19,9 +24,11 @@ use std::thread::JoinHandle;
 
 use aemeath_protocol::ids::EndpointId;
 use aemeath_protocol::message::EndpointStatus;
-use aemeath_protocol::topology::Resampler;
+use aemeath_protocol::topology::{DeviceAccess, Resampler};
 use aemeath_protocol::units::SampleRate;
 use rtrb::{Consumer, Producer, RingBuffer};
+
+use crate::device::DeviceRequest;
 
 /// 环形缓冲的目标水位（S5 默认值）。外部输入在引擎一侧先攒够这么多才开始读取。
 pub const TARGET_LEVEL_MS: f64 = 15.0;
@@ -49,11 +56,25 @@ pub struct IoEvent {
 /// IO 线程报告状态的回调（由引擎转成自己的事件）。
 pub type StatusSink = Arc<dyn Fn(IoEvent) + Send + Sync>;
 
-#[derive(Debug, Clone)]
+/// 一个 IO 线程的配置。任何一项改变，引擎都会重建这个 IO 线程（切换前后淡出淡入）。
+#[derive(Debug, Clone, PartialEq)]
 pub struct BridgeConfig {
     pub endpoint: EndpointId,
     pub engine_rate: SampleRate,
+    /// 实际使用的重采样算法（节点覆盖或全局默认）
     pub quality: Resampler,
+    pub access: DeviceAccess,
+}
+
+impl BridgeConfig {
+    pub fn request(&self, direction: IoDirection) -> DeviceRequest {
+        DeviceRequest {
+            endpoint: self.endpoint.clone(),
+            direction,
+            access: self.access,
+            engine_rate: self.engine_rate,
+        }
+    }
 }
 
 /// 一个 IO 线程。析构时通知线程停止，并等它关闭设备后退出。

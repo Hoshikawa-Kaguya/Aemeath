@@ -1,5 +1,8 @@
 //! 外部设备节点在引擎一侧的端口：与设备 IO 线程（`aemeath-io`）之间的无锁环形缓冲的一端。
 //!
+//! 每次开始收发（输入攒够水位、输出的设备刚打开）都从 0 淡入：设备流重建（改了独占设置、格式、
+//! 重采样算法）或者设备重新连接后，声音不会以满幅度突然出现（M2 计划 2.5：切换时不爆音）。
+//!
 //! 只在调度线程中读写，不分配内存、不加锁。
 
 use std::sync::Arc;
@@ -7,8 +10,36 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use rtrb::{Consumer, Producer};
 
+use crate::STEREO;
+
 /// 输入端口积压超过目标水位的这么多倍时，丢掉多余的部分（例如调度线程曾被耽搁）
 const BACKLOG_LIMIT_FACTOR: usize = 4;
+
+/// 开始收发时的线性淡入（只在端口内部使用）。
+#[derive(Debug, Clone, Copy)]
+pub struct Onset {
+    total: u32,
+    remaining: u32,
+}
+
+impl Onset {
+    fn new(total: u32) -> Self {
+        Self { total, remaining: 0 }
+    }
+
+    fn restart(&mut self) {
+        self.remaining = self.total;
+    }
+
+    /// 这一帧的增益，并前进一帧。
+    fn next_gain(&mut self) -> f32 {
+        if self.remaining == 0 {
+            return 1.0;
+        }
+        self.remaining -= 1;
+        1.0 - self.remaining as f32 / self.total.max(1) as f32
+    }
+}
 
 #[derive(Debug)]
 pub enum Port {
@@ -17,11 +48,15 @@ pub enum Port {
         consumer: Consumer<f32>,
         prime_samples: usize,
         primed: bool,
+        onset: Onset,
     },
     /// 外部输出：调度线程写入、IO 线程读出。`active` 为 false（设备还没打开或离线）时不写。
     Output {
         producer: Producer<f32>,
         active: Arc<AtomicBool>,
+        /// 上一次写入时设备是否在线，用来发现"刚打开"
+        was_active: bool,
+        onset: Onset,
     },
 }
 
@@ -37,16 +72,23 @@ pub struct PortIssues {
 }
 
 impl Port {
-    pub fn input(consumer: Consumer<f32>, prime_samples: usize) -> Self {
+    /// `fade_frames`：每次开始收发时淡入的帧数（引擎采样率下的 10 ms）
+    pub fn input(consumer: Consumer<f32>, prime_samples: usize, fade_frames: u32) -> Self {
         Self::Input {
             consumer,
             prime_samples,
             primed: false,
+            onset: Onset::new(fade_frames),
         }
     }
 
-    pub fn output(producer: Producer<f32>, active: Arc<AtomicBool>) -> Self {
-        Self::Output { producer, active }
+    pub fn output(producer: Producer<f32>, active: Arc<AtomicBool>, fade_frames: u32) -> Self {
+        Self::Output {
+            producer,
+            active,
+            was_active: false,
+            onset: Onset::new(fade_frames),
+        }
     }
 
     /// 输入端口：读满 `buffer`（交错立体声）；还没攒够或读空时不足的部分是 0。
@@ -55,6 +97,7 @@ impl Port {
             consumer,
             prime_samples,
             primed,
+            onset,
         } = self
         else {
             return;
@@ -64,6 +107,7 @@ impl Port {
                 return;
             }
             *primed = true;
+            onset.restart();
         }
         let backlog = consumer.slots();
         let limit = *prime_samples * BACKLOG_LIMIT_FACTOR;
@@ -87,19 +131,41 @@ impl Port {
             *primed = false;
             issues.underflows += 1;
         }
+        for frame in buffer[..available].as_chunks_mut::<STEREO>().0 {
+            let gain = onset.next_gain();
+            frame[0] *= gain;
+            frame[1] *= gain;
+        }
     }
 
     /// 输出端口：写入 `buffer`（交错立体声），写不下的部分丢弃。设备不在线时什么也不做。
     pub fn push(&mut self, buffer: &[f32], issues: &mut PortIssues) {
-        let Self::Output { producer, active } = self else {
+        let Self::Output {
+            producer,
+            active,
+            was_active,
+            onset,
+        } = self
+        else {
             return;
         };
-        if !active.load(Ordering::Acquire) {
+        let is_active = active.load(Ordering::Acquire);
+        if is_active && !*was_active {
+            onset.restart();
+        }
+        *was_active = is_active;
+        if !is_active {
             return;
         }
         let writable = producer.slots().min(buffer.len());
         if let Ok(chunk) = producer.write_chunk_uninit(writable) {
-            chunk.fill_from_iter(buffer.iter().copied());
+            let mut gain = 1.0;
+            chunk.fill_from_iter(buffer.iter().enumerate().map(|(index, sample)| {
+                if index % STEREO == 0 {
+                    gain = onset.next_gain();
+                }
+                sample * gain
+            }));
         }
         issues.dropped_samples += buffer.len() - writable;
     }
@@ -113,7 +179,7 @@ mod tests {
     #[test]
     fn input_waits_until_primed_then_reprimes_after_running_dry() {
         let (mut producer, consumer) = RingBuffer::new(64);
-        let mut port = Port::input(consumer, 8);
+        let mut port = Port::input(consumer, 8, 0);
         let mut issues = PortIssues::default();
         let mut buffer = [9.0f32; 4];
 
@@ -138,7 +204,7 @@ mod tests {
     #[test]
     fn input_skips_an_excessive_backlog() {
         let (mut producer, consumer) = RingBuffer::new(128);
-        let mut port = Port::input(consumer, 8);
+        let mut port = Port::input(consumer, 8, 0);
         let mut issues = PortIssues::default();
         for value in 0..40 {
             producer.push(value as f32).unwrap();
@@ -153,7 +219,7 @@ mod tests {
     fn output_writes_nothing_while_the_device_is_not_open() {
         let (producer, consumer) = RingBuffer::new(6);
         let active = Arc::new(AtomicBool::new(false));
-        let mut port = Port::output(producer, Arc::clone(&active));
+        let mut port = Port::output(producer, Arc::clone(&active), 0);
         let mut issues = PortIssues::default();
         port.push(&[1.0; 4], &mut issues);
         assert_eq!((consumer.slots(), issues.dropped_samples), (0, 0));
@@ -163,9 +229,35 @@ mod tests {
     }
 
     #[test]
+    fn input_and_output_fade_in_when_they_start() {
+        let (mut producer, consumer) = RingBuffer::new(64);
+        let mut port = Port::input(consumer, 8, 4);
+        let mut issues = PortIssues::default();
+        for _ in 0..8 {
+            producer.push(1.0).unwrap();
+        }
+        let mut buffer = [0.0f32; 8];
+        port.pull(&mut buffer, &mut issues);
+        assert_eq!(buffer, [0.25, 0.25, 0.5, 0.5, 0.75, 0.75, 1.0, 1.0]);
+
+        let (producer, mut consumer) = RingBuffer::new(16);
+        let active = Arc::new(AtomicBool::new(true));
+        let mut port = Port::output(producer, Arc::clone(&active), 2);
+        port.push(&[1.0; 6], &mut issues);
+        let written: Vec<f32> = std::iter::from_fn(|| consumer.pop().ok()).collect();
+        assert_eq!(written, vec![0.5, 0.5, 1.0, 1.0, 1.0, 1.0]);
+        // 设备离线再上线：重新淡入
+        active.store(false, Ordering::Release);
+        port.push(&[1.0; 2], &mut issues);
+        active.store(true, Ordering::Release);
+        port.push(&[1.0; 2], &mut issues);
+        assert_eq!(consumer.pop(), Ok(0.5));
+    }
+
+    #[test]
     fn output_drops_what_does_not_fit() {
         let (producer, mut consumer) = RingBuffer::new(6);
-        let mut port = Port::output(producer, Arc::new(AtomicBool::new(true)));
+        let mut port = Port::output(producer, Arc::new(AtomicBool::new(true)), 0);
         let mut issues = PortIssues::default();
         port.push(&[1.0, 2.0, 3.0, 4.0], &mut issues);
         port.push(&[5.0, 6.0, 7.0, 8.0], &mut issues);

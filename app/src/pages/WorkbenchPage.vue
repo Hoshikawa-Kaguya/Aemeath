@@ -13,13 +13,17 @@ import { useI18n } from 'vue-i18n'
 import { backend } from '@/api/backend'
 import type { NodeView, Rejection, RouteView } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
+import { SEPARATOR, isMenuKey, openMenu, openMenuAt, type MenuItem } from '@/menu/contextMenu'
 import { useAppStore } from '@/stores/app'
 import { nodeCode, nodeSubtitle } from '@/stores/nodeLabels'
 import AddNodeDialog from '@/workbench/AddNodeDialog.vue'
 import IoNode from '@/workbench/IoNode.vue'
+import ConsolePane from '@/workbench/ConsolePane.vue'
+import NodeSettingsDialog from '@/workbench/NodeSettingsDialog.vue'
+import RouteMatrix, { type RoutePair } from '@/workbench/RouteMatrix.vue'
 import PendingRoute from '@/workbench/PendingRoute.vue'
 import RouteEdge from '@/workbench/RouteEdge.vue'
-import { LABEL_STEP, clampLabel } from '@/workbench/curve'
+import { LABEL_MIDDLE, LABEL_STEP, clampLabel } from '@/workbench/curve'
 import {
   GAIN_MAX_DB,
   GAIN_MIN_DB,
@@ -65,6 +69,18 @@ const hovered = ref<number | null>(null)
 const pointer = ref({ x: 0, y: 0 })
 const pane = useTemplateRef<HTMLElement>('pane')
 const addDialog = useTemplateRef<InstanceType<typeof AddNodeDialog>>('addDialog')
+const settingsDialog = useTemplateRef<InstanceType<typeof NodeSettingsDialog>>('settingsDialog')
+/** 从菜单选了"改名"的节点 */
+const renaming = ref<number | null>(null)
+/** 路由矩阵里悬停的格子：工作台上高亮对应的连线和两端节点 */
+const matrixHover = ref<RoutePair | null>(null)
+const selectedPair = computed<RoutePair | null>(() =>
+  selection.value?.type === 'route' ? { from: selection.value.from, to: selection.value.to } : null,
+)
+
+function onMatrixSelect(pair: RoutePair | null): void {
+  selection.value = pair === null ? null : { type: 'route', ...pair }
+}
 /** 正在拖动的节点：拖动中收到新的状态快照时，不把它拉回保存的位置 */
 const dragging = ref<number | null>(null)
 
@@ -129,6 +145,8 @@ const flowNodes = computed<Node<NodeData>[]>(() =>
         subtitle: nodeSubtitle(node),
         selected: selection.value?.type === 'node' && selection.value.id === node.id,
         drop,
+        renaming: renaming.value === node.id,
+        highlighted: matrixHover.value?.from === node.id || matrixHover.value?.to === node.id,
       },
     }
   }),
@@ -151,6 +169,7 @@ const flowEdges = computed<Edge<RouteData>[]>(() =>
       targetName: store.nodeById.get(route.to)?.name ?? '',
       selected:
         selection.value?.type === 'route' && selection.value.from === route.from && selection.value.to === route.to,
+      highlighted: matrixHover.value?.from === route.from && matrixHover.value.to === route.to,
     },
   })),
 )
@@ -187,11 +206,124 @@ const actions: WorkbenchActions = {
   rename(node, name) {
     void store.run(() => backend.renameNode(node.id, name))
   },
+  renameDone() {
+    renaming.value = null
+  },
+  openNodeMenu(event, node) {
+    openMenu(event, nodeMenu(node))
+  },
+  openRouteMenu(event, route) {
+    openMenu(event, routeMenu(route))
+  },
+  openSettings(node) {
+    settingsDialog.value?.open(node)
+  },
   toFlow(point) {
     return screenToFlowCoordinate(point)
   },
 }
 provide(workbenchKey, actions)
+
+function nodeMenu(node: NodeView): MenuItem[] {
+  const pinned = store.state?.console.includes(node.id) === true
+  return [
+    { kind: 'action', label: t('menu.nodeSettings'), run: () => settingsDialog.value?.open(node) },
+    { kind: 'action', label: t('menu.rename'), run: () => (renaming.value = node.id) },
+    {
+      kind: 'action',
+      label: t(pinned ? 'menu.unpin' : 'menu.pin'),
+      run: () => void store.run(() => backend.pinNode(node.id, !pinned)),
+    },
+    ...(node.device === null
+      ? []
+      : [
+          {
+            kind: 'action' as const,
+            label: t('menu.redetect'),
+            run: () =>
+              void backend.redetect(node.id).catch((error: unknown) => store.showToast(store.errorText(error))),
+          },
+        ]),
+    SEPARATOR,
+    { kind: 'action', label: t('menu.deleteNode'), danger: true, run: () => void store.removeNode(node) },
+  ]
+}
+
+function routeMenu(route: RouteView): MenuItem[] {
+  return [
+    {
+      kind: 'action',
+      label: t(route.enabled ? 'menu.routeOff' : 'menu.routeOn'),
+      run: () => actions.toggleRoute(route),
+    },
+    {
+      kind: 'action',
+      label: t('menu.resetGain'),
+      disabled: route.gainDb === 0,
+      run: () => void store.run(() => backend.setRouteGain(route.from, route.to, 0)),
+    },
+    {
+      kind: 'action',
+      label: t('menu.resetLabel'),
+      disabled: route.labelPosition === LABEL_MIDDLE,
+      run: () => actions.moveLabel(route, LABEL_MIDDLE),
+    },
+    SEPARATOR,
+    {
+      kind: 'action',
+      label: t('menu.deleteRoute'),
+      danger: true,
+      run: () => {
+        selection.value = null
+        void store.disconnect(route.from, route.to)
+      },
+    },
+  ]
+}
+
+function paneMenu(at: { x: number; y: number }): MenuItem[] {
+  return [
+    { kind: 'action', label: t('menu.addHere'), run: () => openAddDialog(at) },
+    { kind: 'action', label: t('menu.fit'), disabled: store.nodes.length === 0, run: fit },
+  ]
+}
+
+function onPaneContextMenu(event: MouseEvent): void {
+  selection.value = null
+  const at = screenToFlowCoordinate({ x: event.clientX, y: event.clientY })
+  openMenu(event, paneMenu({ x: Math.round(at.x), y: Math.round(at.y) }))
+}
+
+/** 节点卡片自己处理右键（IoNode）；连线标签也是（RouteEdge）。这里只处理连线路径本身 */
+function onEdgeContextMenu(event: { event: MouseEvent | TouchEvent; edge: Edge<RouteData> }): void {
+  const route = event.edge.data?.route
+  if (event.event instanceof MouseEvent && route !== undefined) {
+    actions.selectRoute(route)
+    openMenu(event.event, routeMenu(route))
+  }
+}
+
+/** 键盘打开菜单（菜单键或 Shift+F10）：针对当前选中的节点或连线，放在它旁边 */
+function openSelectionMenu(): boolean {
+  const current = selection.value
+  if (current?.type === 'node') {
+    const node = store.nodeById.get(current.id)
+    const element = document.querySelector(`.vue-flow__node[data-id="${current.id}"]`)
+    if (node !== undefined && element !== null) {
+      const rect = element.getBoundingClientRect()
+      openMenuAt({ x: rect.left, y: rect.bottom }, nodeMenu(node))
+      return true
+    }
+  } else if (current?.type === 'route') {
+    const route = selectedRoute.value
+    const rect = pane.value?.getBoundingClientRect()
+    if (route !== undefined && rect !== undefined) {
+      openMenuAt({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }, routeMenu(route))
+      return true
+    }
+  }
+  return false
+}
 
 function trackPointer(event: PointerEvent): void {
   const rect = pane.value?.getBoundingClientRect()
@@ -255,10 +387,16 @@ function addNode(): void {
   const center = rect
     ? screenToFlowCoordinate({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 })
     : { x: 0, y: 0 }
-  void addDialog.value?.open({
-    x: Math.round(center.x - NODE_HALF_WIDTH),
-    y: Math.round(center.y - NODE_HALF_HEIGHT),
-  })
+  openAddDialog({ x: Math.round(center.x), y: Math.round(center.y) })
+}
+
+function applyPreset(): void {
+  void store.run(() => backend.applyPreset(t('preset.inputName'), t('preset.outputName')))
+}
+
+/** 新节点以 `center`（工作台坐标）为中心 */
+function openAddDialog(center: { x: number; y: number }): void {
+  void addDialog.value?.open({ x: center.x - NODE_HALF_WIDTH, y: center.y - NODE_HALF_HEIGHT })
 }
 
 function fit(): void {
@@ -282,6 +420,10 @@ function onKeyDown(event: KeyboardEvent): void {
   }
   if (event.key === 'Escape') {
     selection.value = null
+    return
+  }
+  if (isMenuKey(event) && openSelectionMenu()) {
+    event.preventDefault()
     return
   }
   const route = selectedRoute.value
@@ -324,77 +466,124 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="workbench">
-    <div class="pane-head">
-      <h2>{{ t('nav.workbench') }}</h2>
-      <span class="caption ellipsis">{{ t('wb.hint') }}</span>
-      <div class="spacer"></div>
-      <fluent-button appearance="subtle" :disabled="!store.state?.canUndo" @click="store.undo()">
-        <AppIcon slot="start" name="undo" />{{ t('wb.undo') }}
-      </fluent-button>
-      <fluent-button appearance="subtle" @click="addNode">
-        <AppIcon slot="start" name="plus" />{{ t('wb.add') }}
-      </fluent-button>
-      <fluent-button appearance="subtle" @click="fit">
-        <AppIcon slot="start" name="fit" />{{ t('wb.fit') }}
-      </fluent-button>
-      <span class="caption zoom">{{ t('wb.zoom', { percent: Math.round(viewport.zoom * PERCENT) }) }}</span>
-    </div>
-    <div ref="pane" class="graph" :style="gridStyle">
-      <VueFlow
-        :nodes="flowNodes"
-        :edges="flowEdges"
-        :min-zoom="0.25"
-        :max-zoom="2"
-        :pan-on-scroll="true"
-        :zoom-on-scroll="false"
-        zoom-activation-key-code="Control"
-        :delete-key-code="null"
-        :connection-mode="ConnectionMode.Strict"
-        :default-viewport="INITIAL_VIEWPORT"
-        :connect-on-click="false"
-        :elevate-edges-on-select="false"
-        @connect-start="onConnectStart"
-        @connect-end="onConnectEnd"
-        @node-drag-start="onNodeDragStart"
-        @node-drag-stop="onNodeDragStop"
-        @edge-click="onEdgeClick"
-        @pane-click="selection = null"
-      >
-        <template #node-io="props">
-          <IoNode v-bind="props" />
-        </template>
-        <template #edge-route="props">
-          <RouteEdge v-bind="props" />
-        </template>
-        <template #connection-line="line">
-          <PendingRoute
-            :source-x="line.sourceX"
-            :source-y="line.sourceY"
-            :target-x="line.targetX"
-            :target-y="line.targetY"
-            :from-output="connecting?.fromOutput ?? true"
-            :bad="dragTip?.bad ?? false"
-          />
-        </template>
-      </VueFlow>
-      <div
-        v-if="dragTip"
-        class="drag-tip"
-        :class="{ bad: dragTip.bad }"
-        :style="{ left: `${pointer.x}px`, top: `${pointer.y}px` }"
-      >
-        {{ dragTip.text }}
+    <div class="graph-pane">
+      <div class="pane-head">
+        <h2>{{ t('nav.workbench') }}</h2>
+        <span class="caption ellipsis">{{ t('wb.hint') }}</span>
+        <div class="spacer"></div>
+        <fluent-button appearance="subtle" :disabled="!store.state?.canUndo" @click="store.undo()">
+          <AppIcon slot="start" name="undo" />{{ t('wb.undo') }}
+        </fluent-button>
+        <fluent-button appearance="subtle" @click="addNode">
+          <AppIcon slot="start" name="plus" />{{ t('wb.add') }}
+        </fluent-button>
+        <fluent-button appearance="subtle" @click="fit">
+          <AppIcon slot="start" name="fit" />{{ t('wb.fit') }}
+        </fluent-button>
+        <span class="caption zoom">{{ t('wb.zoom', { percent: Math.round(viewport.zoom * PERCENT) }) }}</span>
+      </div>
+      <div ref="pane" class="graph" :style="gridStyle">
+        <VueFlow
+          :nodes="flowNodes"
+          :edges="flowEdges"
+          :min-zoom="0.25"
+          :max-zoom="2"
+          :pan-on-scroll="true"
+          :zoom-on-scroll="false"
+          zoom-activation-key-code="Control"
+          :delete-key-code="null"
+          :connection-mode="ConnectionMode.Strict"
+          :default-viewport="INITIAL_VIEWPORT"
+          :connect-on-click="false"
+          :elevate-edges-on-select="false"
+          @connect-start="onConnectStart"
+          @connect-end="onConnectEnd"
+          @node-drag-start="onNodeDragStart"
+          @node-drag-stop="onNodeDragStop"
+          @edge-click="onEdgeClick"
+          @pane-click="selection = null"
+          @pane-context-menu="onPaneContextMenu"
+          @edge-context-menu="onEdgeContextMenu"
+        >
+          <template #node-io="props">
+            <IoNode v-bind="props" />
+          </template>
+          <template #edge-route="props">
+            <RouteEdge v-bind="props" />
+          </template>
+          <template #connection-line="line">
+            <PendingRoute
+              :source-x="line.sourceX"
+              :source-y="line.sourceY"
+              :target-x="line.targetX"
+              :target-y="line.targetY"
+              :from-output="connecting?.fromOutput ?? true"
+              :bad="dragTip?.bad ?? false"
+            />
+          </template>
+        </VueFlow>
+        <div
+          v-if="dragTip"
+          class="drag-tip"
+          :class="{ bad: dragTip.bad }"
+          :style="{ left: `${pointer.x}px`, top: `${pointer.y}px` }"
+        >
+          {{ dragTip.text }}
+        </div>
+        <!-- 工作台为空时的引导（GLOSSARY：预设）：添加了任何节点后消失 -->
+        <div v-if="store.state !== null && store.nodes.length === 0" class="empty-guide" role="region">
+          <h3>{{ t('preset.title') }}</h3>
+          <p class="caption">{{ t('preset.body') }}</p>
+          <div class="guide-actions">
+            <fluent-button appearance="primary" @click="applyPreset">{{ t('preset.use') }}</fluent-button>
+            <fluent-button @click="addNode">{{ t('wb.add') }}</fluent-button>
+          </div>
+        </div>
       </div>
     </div>
+    <RouteMatrix
+      class="matrix"
+      :selected="selectedPair"
+      :route-menu="routeMenu"
+      @select="onMatrixSelect"
+      @hover="matrixHover = $event"
+    />
+    <ConsolePane class="console" :node-menu="nodeMenu" />
     <AddNodeDialog ref="addDialog" />
+    <NodeSettingsDialog ref="settingsDialog" />
   </section>
 </template>
 
 <style scoped>
+/* 三栏布局（原型的 #page-workbench）：工作台 | 路由矩阵，下方整行是控制台 */
 .workbench {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 460px;
+  grid-template-rows: minmax(0, 1fr) 292px;
+  height: 100%;
+}
+
+.graph-pane {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  grid-column: 1;
+  grid-row: 1;
+  border-right: 1px solid var(--stroke);
+  /* 窗口变窄时标题栏的按钮不能溢出到路由矩阵上 */
+  overflow: hidden;
+}
+
+.matrix {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.console {
+  grid-column: 1 / span 2;
+  grid-row: 2;
+  border-top: 1px solid var(--stroke);
 }
 
 .pane-head {
@@ -428,6 +617,37 @@ onBeforeUnmount(() => {
   flex: 1;
   min-height: 0;
   background-image: radial-gradient(var(--grid-dot) 1.2px, transparent 1.3px);
+}
+
+/* 空工作台的引导卡片：居中、固定宽度 */
+.empty-guide {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 4;
+  width: 380px;
+  transform: translate(-50%, -50%);
+  padding: 20px 24px;
+  border-radius: var(--r-card);
+  background: var(--card-solid);
+  border: 1px solid var(--stroke);
+  box-shadow: var(--shadow16);
+  text-align: center;
+}
+
+.empty-guide h3 {
+  margin: 0 0 6px;
+  font: var(--fontWeightSemibold) var(--fontSizeBase400) / var(--lineHeightBase400) var(--fontFamilyBase);
+}
+
+.empty-guide p {
+  margin: 0 0 16px;
+}
+
+.guide-actions {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
 }
 
 .drag-tip {

@@ -8,6 +8,8 @@
 //! 几秒后重新挂载（相当于重新连接）：引擎 A 的两个外部设备流会收到 `AUDCLNT_E_DEVICE_INVALIDATED`
 //! 或停滞，应报告离线，并在设备回来后自动重新打开。
 //!
+//! 引擎 A 的外部输出以独占方式打开（默认），外部输入以共享方式打开，两条路径都覆盖到。
+//!
 //! 用法：`cargo run -p aemeath-engine --example recovery --release`（约 80 秒，只使用开发槽位）
 
 mod common;
@@ -20,7 +22,9 @@ use aemeath_engine::{Engine, EngineConfig, EngineEvent};
 use aemeath_io::IoDirection;
 use aemeath_protocol::ids::{EndpointId, NodeId, SlotDirection, TopologyRevision};
 use aemeath_protocol::message::EndpointStatus;
-use aemeath_protocol::topology::{NodeKind, Resampler, RouteTopology, Strip, TopologyNode, TopologyRoute};
+use aemeath_protocol::topology::{
+    DeviceAccess, DeviceSettings, NodeKind, Resampler, RouteTopology, Strip, TopologyNode, TopologyRoute,
+};
 use aemeath_protocol::units::{GainDb, SampleRate};
 use aemeath_usbip::identity::IdentityProfile;
 use common::{
@@ -244,6 +248,7 @@ fn node(id: NodeId, kind: NodeKind) -> TopologyNode {
         id,
         kind,
         strip: Strip::default(),
+        io: None,
     }
 }
 
@@ -299,8 +304,16 @@ fn engine_topology(fake_output: EndpointId, fake_input: EndpointId) -> Result<Ro
                     slot: slot(SlotDirection::In, 1)?,
                 },
             ),
+            // 外部输出按默认值独占打开（ADR-0014）；外部输入改为共享，
+            // 因为测试还要以共享方式直接录这台"外部设备"（第一跳），独占时它打不开
             node(external_output, NodeKind::ExternalOutput { device: fake_output }),
-            node(external_input, NodeKind::ExternalInput { device: fake_input }),
+            TopologyNode {
+                io: Some(DeviceSettings {
+                    access: DeviceAccess::Shared,
+                    resampler: None,
+                }),
+                ..node(external_input, NodeKind::ExternalInput { device: fake_input })
+            },
             node(
                 slot_output,
                 NodeKind::VirtualOutput {

@@ -7,6 +7,8 @@ const HANDLE_RATIO = 0.5
 /** 标签位置的范围，与后端 LabelPosition 的限制一致（aemeath-core） */
 export const LABEL_MIN = 0.1
 export const LABEL_MAX = 0.9
+/** 标签的默认锚点：连线中点（后端 LabelPosition::MIDDLE） */
+export const LABEL_MIDDLE = 0.5
 /** 键盘移动标签的步长（Alt+← / Alt+→） */
 export const LABEL_STEP = 0.05
 /** 拖动标签时在曲线上搜索最近点的采样数 */

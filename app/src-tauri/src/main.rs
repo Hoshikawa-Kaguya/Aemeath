@@ -8,11 +8,15 @@
 // 发布版不弹出控制台窗口
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod apps;
 mod commands;
 mod controller;
+mod default_devices;
+mod device_settings;
 mod meters;
 mod tray;
 mod view;
+mod window;
 
 use std::process::ExitCode;
 
@@ -54,21 +58,39 @@ fn main() -> ExitCode {
             app.manage(controller);
             app.manage(MeterHub::start(config.meter_memory_name.clone()));
             app.manage(tray::create(app.handle())?);
+            if let Some(window) = app.get_webview_window(tray::MAIN_WINDOW) {
+                window::apply_min_size(&window);
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_state,
-            commands::initialize,
+            commands::apply_preset,
             commands::add_node,
             commands::remove_node,
             commands::rename_node,
             commands::move_node,
+            commands::change_slot,
+            commands::set_device_settings,
+            commands::replace_device,
+            commands::probe_device,
+            commands::redetect,
+            commands::list_apps,
+            commands::set_landing,
+            commands::list_default_devices,
+            commands::set_default_device,
             commands::route_verdicts,
+            commands::matrix_verdicts,
+            commands::pin_node,
+            commands::move_pin,
             commands::connect,
             commands::disconnect,
             commands::set_route_enabled,
             commands::set_route_gain,
             commands::set_route_label,
+            commands::set_node_gain,
+            commands::set_node_muted,
+            commands::set_node_gate,
             commands::undo,
             commands::set_language,
             commands::list_devices,

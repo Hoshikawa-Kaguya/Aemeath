@@ -7,7 +7,8 @@
 //! 往 Dev In 1 播放 1 kHz 正弦波，用 WASAPI 环回录下外部输出实际收到的声音，逐样本检查连续性；
 //! 外部输入的内容无法预知，只确认 Dev Out 1 上有信号，稳定性看引擎日志里的桥接状态（每分钟一条）。
 //!
-//! 用法：`cargo run -p aemeath-engine --example external --release -- [秒数] [--output 名称] [--input 名称]`
+//! 用法：`cargo run -p aemeath-engine --example external --release -- [秒数] [--output 名称] [--input 名称] [--exclusive]`
+//! 默认两台外部设备都以共享方式打开（为了环回检查）；`--exclusive` 时独占打开，不做环回检查。
 //! 不指定名称时用系统默认的播放和录音设备。外部输出会发出很轻的 1 kHz 提示音。agent 执行时不超过 5 分钟。
 
 mod common;
@@ -17,8 +18,12 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use aemeath_engine::{Engine, EngineConfig, EngineEvent};
+use aemeath_io::IoDirection;
 use aemeath_protocol::ids::{NodeId, SlotDirection, TopologyRevision};
-use aemeath_protocol::topology::{NodeKind, Resampler, RouteTopology, Strip, TopologyNode, TopologyRoute};
+use aemeath_protocol::message::EndpointStatus;
+use aemeath_protocol::topology::{
+    DeviceAccess, DeviceSettings, NodeKind, Resampler, RouteTopology, Strip, TopologyNode, TopologyRoute,
+};
 use aemeath_protocol::units::{GainDb, SampleRate};
 use aemeath_usbip::identity::IdentityProfile;
 use common::{
@@ -41,6 +46,9 @@ struct Options {
     seconds: f64,
     output: Option<String>,
     input: Option<String>,
+    /// 两台外部设备都以独占方式打开（ADR-0014）。独占的流不经过 Windows 混音器，环回录不到，
+    /// 所以这时不做环回检查，只检查两台设备都在线、没有离线
+    exclusive: bool,
 }
 
 fn main() -> ExitCode {
@@ -59,12 +67,14 @@ fn parse() -> Result<Options> {
         seconds: 120.0,
         output: None,
         input: None,
+        exclusive: false,
     };
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--output" => options.output = args.next(),
             "--input" => options.input = args.next(),
+            "--exclusive" => options.exclusive = true,
             seconds => options.seconds = seconds.parse()?,
         }
     }
@@ -86,7 +96,19 @@ fn run() -> Result<bool> {
         usbip_port: PORT,
         identity: IdentityProfile::Development,
     })?;
-    engine.apply_topology(&topology(endpoint_id(&output_device)?, endpoint_id(&input_device)?)?)?;
+    let settings = DeviceSettings {
+        access: if options.exclusive {
+            DeviceAccess::default()
+        } else {
+            DeviceAccess::Shared
+        },
+        resampler: None,
+    };
+    engine.apply_topology(&topology(
+        endpoint_id(&output_device)?,
+        endpoint_id(&input_device)?,
+        settings,
+    )?)?;
     let _attachment = Attachment::attach(PORT, &BUS_IDS);
     let started = Instant::now();
 
@@ -94,10 +116,14 @@ fn run() -> Result<bool> {
     let expected = AMPLITUDE * 10f64.powf(f64::from(OUTPUT_GAIN_DB) / DECIBELS_PER_DECADE);
     let window = seconds - TAIL_SECONDS - SETTLE_SECONDS;
     let output_for_loopback = options.output.clone();
-    let loopback = thread::spawn(move || -> Result<common::Analysis> {
+    let exclusive = options.exclusive;
+    let loopback = thread::spawn(move || -> Result<Option<common::Analysis>> {
+        if exclusive {
+            return Ok(None);
+        }
         wasapi::initialize_mta().ok()?;
         let device = find_device(wasapi::Direction::Render, output_for_loopback.as_deref())?;
-        timed(started, capture_sine(&device, seconds + TAIL_SECONDS, window, expected))
+        timed(started, capture_sine(&device, seconds + TAIL_SECONDS, window, expected)).map(Some)
     });
     let input_path = thread::spawn(move || -> Result<f64> {
         wasapi::initialize_mta().ok()?;
@@ -110,9 +136,19 @@ fn run() -> Result<bool> {
     let analysis = join(&format!("loopback capture of {output_name}"), loopback)?;
     let input_peak = join(&format!("capture from {CAPTURE_SLOT}"), input_path)?;
 
+    // 记录两台外部设备是否上线过、是否离线过
+    let mut online = (false, false);
+    let mut went_offline = false;
     while let Some(event) = engine.next_event(Duration::ZERO) {
         match event {
-            EngineEvent::Endpoint(event) => println!("endpoint {:?}: {:?}", event.direction, event.status),
+            EngineEvent::Endpoint(event) => {
+                println!("endpoint {:?}: {:?}", event.direction, event.status);
+                match (&event.status, event.direction) {
+                    (EndpointStatus::Online { .. }, IoDirection::Output) => online.0 = true,
+                    (EndpointStatus::Online { .. }, IoDirection::Input) => online.1 = true,
+                    (EndpointStatus::Offline { .. }, _) => went_offline = true,
+                }
+            }
             EngineEvent::SlotFormat { slot, format } => println!("slot {slot} format: {format:?}"),
             EngineEvent::SlotConnection { slot, connected } => println!("slot {slot} connected: {connected}"),
         }
@@ -121,18 +157,26 @@ fn run() -> Result<bool> {
     drop(engine);
 
     println!("rendered {rendered:.1} s into {RENDER_SLOT}");
-    println!(
-        "loopback of {output_name} at {} Hz: checked {:.1} s, peak {:.4} (expected {expected:.4}), glitches {}, discontinuity flags {}",
-        analysis.sample_rate,
-        analysis.checked_seconds(),
-        analysis.peak,
-        analysis.glitches,
-        analysis.discontinuities
-    );
     println!("{input_name} → {CAPTURE_SLOT}: peak {input_peak:.5}");
-    let passed = (analysis.peak - expected).abs() < expected * 0.1
-        && analysis.checked_seconds() >= window * 0.95
-        && analysis.glitches == 0;
+    let passed = match analysis {
+        Some(analysis) => {
+            println!(
+                "loopback of {output_name} at {} Hz: checked {:.1} s, peak {:.4} (expected {expected:.4}), glitches {}, discontinuity flags {}",
+                analysis.sample_rate,
+                analysis.checked_seconds(),
+                analysis.peak,
+                analysis.glitches,
+                analysis.discontinuities
+            );
+            (analysis.peak - expected).abs() < expected * 0.1
+                && analysis.checked_seconds() >= window * 0.95
+                && analysis.glitches == 0
+        }
+        None => {
+            println!("exclusive mode: both devices online {online:?}, went offline {went_offline}");
+            online == (true, true) && !went_offline
+        }
+    };
     println!("{}", if passed { "PASS" } else { "FAIL" });
     Ok(passed)
 }
@@ -140,13 +184,15 @@ fn run() -> Result<bool> {
 fn topology(
     output: aemeath_protocol::ids::EndpointId,
     input: aemeath_protocol::ids::EndpointId,
+    settings: DeviceSettings,
 ) -> Result<RouteTopology> {
     let slot_input = NodeId(1);
     let external_output = NodeId(2);
     let external_input = NodeId(3);
     let slot_output = NodeId(4);
-    let node = |id, kind| TopologyNode {
+    let node = |id, kind: NodeKind| TopologyNode {
         id,
+        io: kind.is_external().then_some(settings),
         kind,
         strip: Strip::default(),
     };

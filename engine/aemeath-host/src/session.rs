@@ -15,7 +15,7 @@ use aemeath_engine::meters::MeterBank;
 use aemeath_engine::{Engine, EngineEvent};
 use aemeath_protocol::PROTOCOL_VERSION;
 use aemeath_protocol::frame::{self, FrameDecoder};
-use aemeath_protocol::ids::{RequestId, TopologyRevision};
+use aemeath_protocol::ids::{NodeId, RequestId, TopologyRevision};
 use aemeath_protocol::message::{AppToEngine, EngineToApp, RejectReason};
 use aemeath_protocol::topology::{RouteTopology, TopologyError};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -59,6 +59,22 @@ impl HostState {
         );
         self.topology = Some(topology);
         Ok(())
+    }
+
+    /// 立即重新检测离线的外部设备：`node` 为 None 时全部，否则只有这个节点的设备。
+    fn redetect(&self, node: Option<NodeId>) {
+        let endpoints = self.topology.as_ref().map(|topology| {
+            topology
+                .nodes
+                .iter()
+                .filter(|candidate| node.is_none_or(|id| id == candidate.id))
+                .filter_map(|candidate| candidate.kind.device().cloned())
+                .collect::<Vec<_>>()
+        });
+        match endpoints {
+            Some(endpoints) if node.is_some() => self.engine.redetect(Some(&endpoints)),
+            _ => self.engine.redetect(None),
+        }
     }
 
     /// 换拓扑后，把引擎新的电平组交给转写任务。
@@ -191,6 +207,8 @@ async fn handle(
         AppToEngine::ApplyTopology { request, .. }
         | AppToEngine::Ping { request }
         | AppToEngine::Shutdown { request }
+        | AppToEngine::ProbeDevice { request, .. }
+        | AppToEngine::Redetect { request, .. }
             if !session.handshaken =>
         {
             rejected(request, RejectReason::NotHandshaken, "say hello first".to_owned())
@@ -219,6 +237,23 @@ async fn handle(
             }
         }
         AppToEngine::Ping { request } => EngineToApp::Pong { request },
+        AppToEngine::ProbeDevice {
+            request,
+            endpoint,
+            direction,
+        } => {
+            // 探测要做几十次 COM 调用（约 100 ms），放到阻塞线程上，不卡住管道和心跳
+            let probe = state.engine.device_prober();
+            let capabilities = tokio::task::spawn_blocking(move || probe.probe(&endpoint, direction))
+                .await
+                .ok()
+                .flatten();
+            EngineToApp::DeviceCapabilities { request, capabilities }
+        }
+        AppToEngine::Redetect { request, node } => {
+            state.redetect(node);
+            EngineToApp::Ack { request }
+        }
         AppToEngine::Shutdown { request } => {
             tracing::info!("shutdown requested by the client");
             let _ = send(pipe, &EngineToApp::Ack { request }).await;

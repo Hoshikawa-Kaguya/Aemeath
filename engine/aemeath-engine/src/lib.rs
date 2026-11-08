@@ -26,7 +26,8 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use aemeath_io::IoEvent;
-use aemeath_protocol::ids::SlotId;
+use aemeath_io::capabilities::DeviceProber;
+use aemeath_protocol::ids::{EndpointId, SlotId};
 use aemeath_protocol::message::DeviceFormat;
 use aemeath_protocol::topology::{NodeKind, RouteTopology, TopologyError};
 use aemeath_sys::clock::now_hns;
@@ -41,6 +42,12 @@ use crate::timeline::Timeline;
 
 /// 引擎内部一律是立体声（N 声道节点见选型报告第 10 节）
 pub use aemeath_dsp::STEREO;
+
+/// 重建设备流之前，让这些节点淡出所等的时间。淡出的样本要先走完整条输出链路才到达设备：
+/// 通道条平滑 10 ms + 环形缓冲目标水位 15 ms + 重采样延迟（最多约 3 ms）+ 设备缓冲（默认约 10 ms）。
+/// 只等平滑时间就停掉旧流的话，设备里还在播放淡出之前的满幅度声音，会被突然切断（2026-11-08 E2E 实测为爆音）。
+/// 80 ms 覆盖到约 50 ms 的设备缓冲；更大的自定义缓冲很少见，最坏只是切换瞬间有一点咔哒声。
+const FADE: Duration = Duration::from_millis(80);
 
 #[derive(Debug, Clone, Copy)]
 pub struct EngineConfig {
@@ -123,14 +130,37 @@ impl Engine {
     }
 
     /// 校验并下发一份路由拓扑：导出它占用的槽位，构建混音器交给调度线程。
+    ///
+    /// 有外部设备的流要重建时（独占设置、格式、缓冲或重采样算法变了），先下发一份把这些节点静音的中间拓扑，
+    /// 借通道条的平滑让它们在 [`FADE`] 内淡出，再重建设备；新混音器从静音接过增益，再淡入（M2 计划 2.5）。
     pub fn apply_topology(&mut self, topology: &RouteTopology) -> Result<(), TopologyError> {
         topology.validate()?;
+        let reconfigured = self.devices.reconfigured_nodes(topology);
+        if !reconfigured.is_empty() && self.layout.is_some() {
+            let mut fading = topology.clone();
+            for node in &mut fading.nodes {
+                if reconfigured.contains(&node.id) {
+                    node.strip.muted = true;
+                }
+            }
+            // 中间拓扑不动设备：所有外部节点都从当前混音器接过端口
+            self.install(&fading, false);
+            thread::sleep(FADE);
+        }
+        self.install(topology, true);
+        Ok(())
+    }
+
+    /// 构建混音器交给调度线程；`prepare_devices` 为 false 时不新建、不停止任何设备流。
+    fn install(&mut self, topology: &RouteTopology, prepare_devices: bool) {
         // 先释放调度线程送回的旧混音器
         while self.retired.try_recv().is_ok() {}
 
         let meters = Arc::new(MeterBank::new(topology.nodes.iter().map(|node| node.id).collect()));
         let (mut mixer, layout) = Mixer::build(topology, self.layout.as_ref(), Arc::clone(&meters));
-        self.devices.prepare(topology, &mut mixer);
+        if prepare_devices {
+            self.devices.prepare(topology, &mut mixer);
+        }
         let slots: BTreeSet<SlotId> = topology
             .nodes
             .iter()
@@ -145,7 +175,16 @@ impl Engine {
         }
         self.layout = Some(layout);
         self.meters = Some(meters);
-        Ok(())
+    }
+
+    /// 设备能力的查询器（可以交给其他线程在阻塞线程上使用）。
+    pub fn device_prober(&self) -> DeviceProber {
+        self.devices.prober()
+    }
+
+    /// 立即重新检测离线的外部设备：`endpoints` 为 None 时全部。
+    pub fn redetect(&self, endpoints: Option<&[EndpointId]>) {
+        self.devices.redetect(endpoints);
     }
 
     /// 等待下一个事件，最多 `timeout`。事件接收端已被 [`Self::take_events`] 取走时返回 None。

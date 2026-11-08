@@ -51,6 +51,7 @@ fn topology(revision: u64) -> RouteTopology {
             id: NodeId(1),
             kind: NodeKind::Bus,
             strip: Strip::default(),
+            io: None,
         }],
         routes: vec![],
     }

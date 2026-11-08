@@ -2,19 +2,22 @@
 import { computed, ref, useTemplateRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { backend } from '@/api/backend'
-import type { DeviceChoice, NewNodeKind } from '@/api/types'
+import { DEFAULT_DEVICE_SETTINGS, type DeviceChoice, type DeviceSettings, type NewNodeKind } from '@/api/types'
 import { useAppStore } from '@/stores/app'
+import DeviceSettingsFields from './DeviceSettingsFields.vue'
 
-// "添加节点"对话框：选类型；外部设备再选设备；名称默认取设备名或类型名，可以修改。
-// 虚拟节点的槽位由后端自动分配编号最小的空闲槽位（ADR-0009）。
-type KindChoice = 'externalInput' | 'virtualInput' | 'virtualOutput' | 'externalOutput'
+// "添加节点"对话框：选类型；外部设备再选设备，并在添加时就设定独占、格式、缓冲和重采样算法（ADR-0014，
+// 维护者要求避免添加后再调整）；名称默认取设备名或类型名，可以修改。
+// 虚拟节点的槽位由后端自动分配编号最小的空闲槽位（ADR-0009）。总线不对应任何设备，只有名称。
+type KindChoice = 'externalInput' | 'virtualInput' | 'bus' | 'virtualOutput' | 'externalOutput'
 
 interface FluentDialog extends HTMLElement {
   show(): void
   hide(): void
 }
 
-const KINDS: KindChoice[] = ['externalInput', 'virtualInput', 'virtualOutput', 'externalOutput']
+/** 两列排布：第一行是两种输入，第二行是两种输出，总线单独占最后一整行 */
+const KINDS: KindChoice[] = ['externalInput', 'virtualInput', 'virtualOutput', 'externalOutput', 'bus']
 const NAME_MAX = 64
 
 const emit = defineEmits<{ added: [] }>()
@@ -28,9 +31,11 @@ const endpointId = ref('')
 const name = ref('')
 /** 用户改过名称后，换设备或类型不再覆盖它 */
 const nameEdited = ref(false)
+const io = ref<DeviceSettings>({ ...DEFAULT_DEVICE_SETTINGS })
 let position = { x: 0, y: 0 }
 
 const isExternal = computed(() => kind.value === 'externalInput' || kind.value === 'externalOutput')
+const direction = computed(() => (kind.value === 'externalInput' ? 'input' : 'output'))
 const device = computed(() => devices.value?.find((choice) => choice.endpointId === endpointId.value))
 const canConfirm = computed(() => name.value.trim() !== '' && (!isExternal.value || device.value !== undefined))
 
@@ -62,12 +67,17 @@ watch(kind, async () => {
   await loadDevices()
   suggestName()
 })
-watch(endpointId, suggestName)
+watch(endpointId, () => {
+  suggestName()
+  // 换了设备，上一台设备的格式不一定适用：回到默认值
+  io.value = { ...DEFAULT_DEVICE_SETTINGS }
+})
 
 /** 打开对话框；新节点放在 `at`（工作台坐标） */
 async function open(at: { x: number; y: number }): Promise<void> {
   position = at
   nameEdited.value = false
+  io.value = { ...DEFAULT_DEVICE_SETTINGS }
   dialog.value?.show()
   await loadDevices()
   suggestName()
@@ -91,7 +101,8 @@ async function confirm(): Promise<void> {
     default:
       newKind = { type: kind.value }
   }
-  if (await store.run(() => backend.addNode(newKind, name.value.trim(), position.x, position.y))) {
+  const settings = isExternal.value ? io.value : null
+  if (await store.run(() => backend.addNode(newKind, name.value.trim(), position.x, position.y, settings))) {
     dialog.value?.hide()
     emit('added')
   }
@@ -106,7 +117,7 @@ defineExpose({ open })
       <h2 slot="title" class="title">{{ t('add.title') }}</h2>
       <div class="form">
         <div class="kinds" role="radiogroup" :aria-label="t('add.kind')">
-          <label v-for="choice in KINDS" :key="choice" class="kind">
+          <label v-for="choice in KINDS" :key="choice" class="kind" :class="{ wide: choice === 'bus' }">
             <input v-model="kind" type="radio" name="kind" :value="choice" />
             <span class="choice">
               <b>{{ t(`kind.${choice}`) }}</b>
@@ -124,6 +135,13 @@ defineExpose({ open })
           </select>
           <span v-else class="caption">{{ devices === null ? t('add.loadingDevices') : t('add.noDevices') }}</span>
         </label>
+
+        <DeviceSettingsFields
+          v-if="isExternal && device"
+          v-model="io"
+          :endpoint-id="device.endpointId"
+          :direction="direction"
+        />
 
         <label class="field">
           <span>{{ t('add.name') }}</span>
@@ -169,6 +187,10 @@ defineExpose({ open })
   cursor: pointer;
 }
 
+.kind.wide {
+  grid-column: 1 / -1;
+}
+
 .kind:hover {
   background: var(--card-hover);
 }
@@ -193,32 +215,5 @@ defineExpose({ open })
 
 .choice b {
   font-weight: var(--fontWeightSemibold);
-}
-
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-/* 设备名可能很长：下拉框不超过对话框宽度 */
-.field .select {
-  width: 100%;
-}
-
-.text-input {
-  height: 32px;
-  padding: 0 10px;
-  border-radius: var(--r-ctl);
-  border: 1px solid var(--stroke-strong);
-  border-bottom-color: var(--colorNeutralStrokeAccessible);
-  background: var(--card-solid);
-  color: var(--text);
-  font: inherit;
-}
-
-.text-input:focus {
-  outline: none;
-  border-bottom: 2px solid var(--accent);
 }
 </style>

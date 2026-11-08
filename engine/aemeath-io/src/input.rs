@@ -11,36 +11,41 @@ use aemeath_dsp::resample::{FixedSide, RateController, StereoResampler, relative
 use rtrb::Producer;
 
 use crate::bridge::{BridgeError, BridgeLog, CONTROL_PERIOD};
-use crate::device::{self, EventWatch, OpenStream, SessionEnd, Waited};
-use crate::{BridgeConfig, BridgeHandle, IoDirection, STEREO, StatusSink, TARGET_LEVEL_MS, frames_to_ms};
+use crate::clock::{ClockReader, ClockTap};
+use crate::device::{self, EventWatch, IoContext, OpenStream, SessionEnd, Waited};
+use crate::{BridgeConfig, BridgeHandle, IoDirection, STEREO, TARGET_LEVEL_MS, frames_to_ms};
 
 /// 每次重采样处理的设备帧数：1 ms
 const CHUNKS_PER_SECOND: u32 = 1000;
 /// 读设备数据的初始缓冲：100 ms，不够时再增长
 const INITIAL_READ_MS: u32 = 100;
 
-pub fn spawn_input(config: BridgeConfig, producer: Producer<f32>, status: StatusSink) -> io::Result<BridgeHandle> {
+pub fn spawn_input(
+    config: BridgeConfig,
+    producer: Producer<f32>,
+    context: IoContext,
+    clock: ClockTap,
+) -> io::Result<BridgeHandle> {
     let stop = device::stop_flag();
     let thread_stop = stop.clone();
     let thread = thread::Builder::new()
         .name("aemeath-input".to_owned())
-        .spawn(move || run(&config, producer, &thread_stop, &status))?;
+        .spawn(move || run(&config, producer, &thread_stop, &context, &clock))?;
     Ok(BridgeHandle::new(stop, thread))
 }
 
-fn run(config: &BridgeConfig, mut producer: Producer<f32>, stop: &AtomicBool, status: &StatusSink) {
+fn run(config: &BridgeConfig, mut producer: Producer<f32>, stop: &AtomicBool, context: &IoContext, clock: &ClockTap) {
     let _priority = audio_thread_priority::promote_current_thread_to_real_time(0, config.engine_rate.hz())
         .inspect_err(|error| tracing::warn!(?error, "cannot raise the input thread priority"));
-    device::run_with_retry(&config.endpoint, IoDirection::Input, stop, status, |stream| {
-        session(config, stream, &mut producer, stop)
-    });
-}
-
-fn session(config: &BridgeConfig, stream: &OpenStream, producer: &mut Producer<f32>, stop: &AtomicBool) -> SessionEnd {
-    match run_session(config, stream, producer, stop) {
-        Ok(end) => end,
-        Err(error) => SessionEnd::failed(&error),
-    }
+    device::run_with_retry(
+        &config.request(IoDirection::Input),
+        stop,
+        context,
+        |stream| match run_session(config, stream, &mut producer, stop, clock) {
+            Ok(end) => end,
+            Err(error) => SessionEnd::failed(&error),
+        },
+    );
 }
 
 fn run_session(
@@ -48,9 +53,12 @@ fn run_session(
     stream: &OpenStream,
     producer: &mut Producer<f32>,
     stop: &AtomicBool,
+    clock: &ClockTap,
 ) -> Result<SessionEnd, BridgeError> {
     let capture = stream.client.get_audiocaptureclient()?;
-    let device_rate = stream.sample_rate;
+    let mut clock_reader = ClockReader::new(&stream.client)?;
+    let mut codec = stream.frame_codec();
+    let device_rate = stream.sample_rate();
     let chunk_frames = (device_rate.hz() / CHUNKS_PER_SECOND).max(1) as usize;
     let ratio = f64::from(config.engine_rate.hz()) / f64::from(device_rate.hz());
     let mut resampler = StereoResampler::new(config.quality, ratio, chunk_frames, FixedSide::Input)?;
@@ -85,9 +93,10 @@ fn run_session(
             if info.flags.silent {
                 staging.resize(staging.len() + read as usize * STEREO, 0.0);
             } else {
-                stream.append_stereo(&bytes[..read_len], &mut staging);
+                codec.append_stereo(&bytes[..read_len], &mut staging);
             }
         }
+        clock_reader.poll(clock);
 
         let mut consumed = 0;
         loop {

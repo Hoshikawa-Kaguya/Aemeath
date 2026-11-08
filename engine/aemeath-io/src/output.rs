@@ -14,10 +14,9 @@ use aemeath_dsp::resample::{FixedSide, RateController, StereoResampler, relative
 use rtrb::Consumer;
 
 use crate::bridge::{BridgeError, BridgeLog, CONTROL_PERIOD};
-use crate::device::{self, EventWatch, OpenStream, SessionEnd, Waited};
-use crate::{
-    BridgeConfig, BridgeHandle, IoDirection, STEREO, StatusSink, TARGET_LEVEL_MS, frames_to_ms, target_frames,
-};
+use crate::clock::{ClockReader, ClockTap};
+use crate::device::{self, EventWatch, IoContext, OpenStream, SessionEnd, Waited};
+use crate::{BridgeConfig, BridgeHandle, IoDirection, STEREO, TARGET_LEVEL_MS, frames_to_ms, target_frames};
 
 /// 每次重采样产出的设备帧数：5 ms（S5）
 const CHUNKS_PER_SECOND: u32 = 200;
@@ -32,13 +31,14 @@ pub fn spawn_output(
     config: BridgeConfig,
     consumer: Consumer<f32>,
     active: Arc<AtomicBool>,
-    status: StatusSink,
+    context: IoContext,
+    clock: ClockTap,
 ) -> io::Result<BridgeHandle> {
     let stop = device::stop_flag();
     let thread_stop = stop.clone();
     let thread = thread::Builder::new()
         .name("aemeath-output".to_owned())
-        .spawn(move || run(&config, consumer, &active, &thread_stop, &status))?;
+        .spawn(move || run(&config, consumer, &active, &thread_stop, &context, &clock))?;
     Ok(BridgeHandle::new(stop, thread))
 }
 
@@ -63,13 +63,14 @@ fn run(
     mut consumer: Consumer<f32>,
     active: &AtomicBool,
     stop: &AtomicBool,
-    status: &StatusSink,
+    context: &IoContext,
+    clock: &ClockTap,
 ) {
     let _priority = audio_thread_priority::promote_current_thread_to_real_time(0, config.engine_rate.hz())
         .inspect_err(|error| tracing::warn!(?error, "cannot raise the output thread priority"));
-    device::run_with_retry(&config.endpoint, IoDirection::Output, stop, status, |stream| {
+    device::run_with_retry(&config.request(IoDirection::Output), stop, context, |stream| {
         let _active = ActiveGuard::set(active);
-        match run_session(config, stream, &mut consumer, stop) {
+        match run_session(config, stream, &mut consumer, stop, clock) {
             Ok(end) => end,
             Err(error) => SessionEnd::failed(&error),
         }
@@ -81,9 +82,12 @@ fn run_session(
     stream: &OpenStream,
     consumer: &mut Consumer<f32>,
     stop: &AtomicBool,
+    clock: &ClockTap,
 ) -> Result<SessionEnd, BridgeError> {
     let render = stream.client.get_audiorenderclient()?;
-    let device_rate = stream.sample_rate;
+    let mut clock_reader = ClockReader::new(&stream.client)?;
+    let mut codec = stream.frame_codec();
+    let device_rate = stream.sample_rate();
     let chunk_frames = (device_rate.hz() / CHUNKS_PER_SECOND).max(1) as usize;
     let ratio = f64::from(device_rate.hz()) / f64::from(config.engine_rate.hz());
     let mut resampler = StereoResampler::new(config.quality, ratio, chunk_frames, FixedSide::Output)?;
@@ -111,8 +115,9 @@ fn run_session(
     {
         chunk.commit_all();
     }
+    // 先写满一个缓冲的静音再开流（独占模式要求开流前预先填好一个周期）
     let available = stream.client.get_available_space_in_frames()? as usize;
-    stream.write_stereo(&vec![0.0; available * STEREO], &mut bytes);
+    codec.write_stereo(&vec![0.0; available * STEREO], &mut bytes);
     render.write_to_device(&bytes, None)?;
     stream.client.start_stream()?;
 
@@ -152,8 +157,9 @@ fn run_session(
 
         stereo.clear();
         stereo.extend(queue.drain(..available * STEREO));
-        stream.write_stereo(&stereo, &mut bytes);
+        codec.write_stereo(&stereo, &mut bytes);
         render.write_to_device(&bytes, None)?;
+        clock_reader.poll(clock);
 
         let level_ms = frames_to_ms(consumer.slots() / STEREO, config.engine_rate)
             + frames_to_ms(queue.len() / STEREO, device_rate);

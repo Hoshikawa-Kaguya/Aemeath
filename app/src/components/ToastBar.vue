@@ -34,6 +34,15 @@ const store = useAppStore()
   border: 1px solid var(--stroke-strong);
   box-shadow: var(--shadow);
   font-size: var(--fontSizeBase200);
+  animation: toast-in var(--dur-slow) var(--ease-enter);
+}
+
+/* 提示条从下方滑入 */
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
 }
 
 /* 提示里带节点名，可能很长：最多两行 */

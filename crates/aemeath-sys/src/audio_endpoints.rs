@@ -8,8 +8,10 @@ use windows::Win32::Foundation::PROPERTYKEY;
 use windows::Win32::Media::Audio::{
     DEVICE_STATE, DEVICE_STATE_ACTIVE, DEVICE_STATE_DISABLED, DEVICE_STATE_NOTPRESENT, DEVICE_STATE_UNPLUGGED,
     DEVICE_STATEMASK_ALL, EDataFlow, ERole, IMMDevice, IMMDeviceEnumerator, IMMEndpoint, IMMNotificationClient,
-    IMMNotificationClient_Impl, MMDeviceEnumerator, eCapture, eRender,
+    IMMNotificationClient_Impl, MMDeviceEnumerator, eCapture, eCommunications, eConsole, eRender,
 };
+
+use crate::policy_config::DefaultRole;
 use windows::Win32::System::Com::StructuredStorage::{PropVariantClear, PropVariantToStringAlloc};
 use windows::Win32::System::Com::{CLSCTX_ALL, CoCreateInstance, CoTaskMemFree, STGM_READ};
 use windows::core::{HSTRING, Interface, PCWSTR, PWSTR, implement};
@@ -103,6 +105,21 @@ impl AudioEndpoints {
         // SAFETY: id 在调用期间有效
         match unsafe { self.enumerator.GetDevice(&id) } {
             Ok(device) => describe(&device, None),
+            Err(error) if is_not_found(&error) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// 某个方向、某个角色的 Windows 默认端点 ID；没有默认端点时为 None。
+    pub fn default_endpoint(&self, flow: AudioFlow, role: DefaultRole) -> windows::core::Result<Option<String>> {
+        let raw_role = match role {
+            DefaultRole::Default => eConsole,
+            DefaultRole::Communications => eCommunications,
+        };
+        // SAFETY: 枚举器有效；方向和角色都是文档规定的取值
+        match unsafe { self.enumerator.GetDefaultAudioEndpoint(raw_flow(flow), raw_role) } {
+            // SAFETY: device 有效；GetId 返回的字符串交给 take_co_string 释放
+            Ok(device) => Ok(Some(take_co_string(unsafe { device.GetId()? })?)),
             Err(error) if is_not_found(&error) => Ok(None),
             Err(error) => Err(error),
         }
@@ -206,7 +223,7 @@ fn read_id(id: &PCWSTR) -> Option<String> {
     unsafe { id.to_string() }.ok()
 }
 
-fn raw_flow(flow: AudioFlow) -> EDataFlow {
+pub(crate) fn raw_flow(flow: AudioFlow) -> EDataFlow {
     match flow {
         AudioFlow::Render => eRender,
         AudioFlow::Capture => eCapture,
@@ -274,7 +291,7 @@ fn read_string(
 }
 
 /// 把 CoTaskMemAlloc 分配的字符串复制出来并释放。
-fn take_co_string(text: PWSTR) -> windows::core::Result<String> {
+pub(crate) fn take_co_string(text: PWSTR) -> windows::core::Result<String> {
     if text.is_null() {
         return Ok(String::new());
     }

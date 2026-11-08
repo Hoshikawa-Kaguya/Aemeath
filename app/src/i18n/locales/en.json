@@ -24,7 +24,36 @@
     "aria": "Main navigation",
     "workbench": "Workbench",
     "devices": "Devices",
+    "apps": "Apps",
+    "tools": "Tools",
     "settings": "Settings"
+  },
+  "apps": {
+    "sub": "An app's landing is the device its sound actually plays to. Only apps that are playing sound right now are listed.",
+    "now": "Current landing",
+    "followSystem": "Follow the system default",
+    "virtualInput": "{node} ({device})",
+    "exclusive": "{name} (used exclusively by Aemeath)",
+    "landingAria": "Landing of {app}",
+    "system": "System sounds",
+    "systemHint": "System sounds always follow the default device.",
+    "restart": "Restart the app for this to take effect",
+    "unknownDevice": "Another device",
+    "empty": "No app is playing sound right now.",
+    "unavailable": "Can't read the apps' audio sessions.",
+    "note": "The choice is saved per app: from now on the app plays to the chosen device every time it starts. Some apps (such as Discord and some games) choose their own device and ignore this; set the device inside those apps."
+  },
+  "tools": {
+    "sub": "Small helpers. They only change Windows settings, not the workbench.",
+    "defaults": "System default devices",
+    "defaultsSub": "Set the Windows default device and default communication device directly. Changes take effect right away. Aemeath doesn't remember or restore these settings.",
+    "render": "Playback",
+    "capture": "Recording",
+    "default": "Default device",
+    "communications": "Default communication device",
+    "none": "(none)",
+    "exclusive": "{name} (used exclusively by Aemeath)",
+    "unavailable": "Can't read the Windows audio devices."
   },
   "kind": {
     "externalInput": "External input",
@@ -34,7 +63,7 @@
     "bus": "Bus"
   },
   "wb": {
-    "hint": "Drag from a port to connect · Click a route, then press Del to delete · Scroll a route to change its gain",
+    "hint": "Drag from a port to connect · Click a route, then press Del to delete · Scroll over a route label to change its gain · Drag a label to slide it along its route",
     "add": "Add node",
     "fit": "Fit to window",
     "undo": "Undo",
@@ -46,12 +75,18 @@
     "slotName": "Aemeath {direction} {number}",
     "directionIn": "In",
     "directionOut": "Out",
-    "defaultInput": "Default input",
     "pending": "Starting…",
     "rename": "Rename {name}",
+    "formatLine": "{rate} kHz · {format} · {mode}",
+    "exclusive": "Exclusive",
+    "shared": "Shared",
+    "redetect": "Re-detect",
+    "useShared": "Use shared mode",
+    "chooseDevice": "Choose device…",
     "offline": {
       "waitingForDevice": "Offline · Waiting for the device",
-      "inUseByOtherApp": "Offline · Used exclusively by another app",
+      "inUseByOtherApp": "Offline · In use by another app",
+      "exclusiveNotAllowed": "Offline · Windows doesn't allow exclusive use of this device",
       "noSignal": "Offline · No signal",
       "slotRepairing": "Re-attaching the virtual device",
       "slotFailing": "The virtual device can't be attached"
@@ -63,7 +98,7 @@
     "select": "Select the route from {src} to {dst}: {state}, {gain}",
     "stateOn": "on",
     "stateOff": "off",
-    "moveHint": "Drag to move this label along the route (Alt+← / Alt+→)"
+    "moveHint": "Scroll to change the gain. Drag to slide this label along the route (Alt+← / Alt+→)."
   },
   "drag": {
     "hint": "Drop on a node to connect · Esc to cancel",
@@ -77,6 +112,7 @@
   "toast": {
     "routeDeleted": "Route deleted: {src} → {dst}",
     "nodeDeleted": "Node deleted: {name}",
+    "deviceReplaced": "{node} now uses the newly connected device with the same name: {device}",
     "undo": "Undo",
     "dismiss": "Dismiss"
   },
@@ -102,6 +138,7 @@
     "kindHint": {
       "externalInput": "A microphone or other recording device on this PC",
       "virtualInput": "A virtual playback device that apps can play into",
+      "bus": "Sums what is sent into it and sends it on, without a device",
       "virtualOutput": "A virtual recording device that apps such as OBS can record from",
       "externalOutput": "Headphones, speakers or another playback device on this PC"
     }
@@ -144,13 +181,18 @@
   },
   "sampleFormat": {
     "int16": "16-bit integer",
-    "int24": "24-bit integer",
-    "int24In32": "24-bit integer",
+    "int24": "24-bit integer (packed)",
+    "int24In32": "24-bit integer (32-bit container)",
     "int32": "32-bit integer",
     "float32": "32-bit float",
     "float64": "64-bit float"
   },
   "set": {
+    "detect": "Device detection",
+    "detectNow": "Re-detect all devices",
+    "detectSub": "Offline devices are re-detected automatically (for example when NVIDIA Broadcast is ready later than Aemeath). Use this button to try again right away.",
+    "detectButton": "Detect now",
+    "detectStarted": "Re-detecting offline devices.",
     "ui": "Interface",
     "lang": "Language",
     "langSub": "Takes effect immediately.",
@@ -165,8 +207,127 @@
     "failing": "Some devices can't be attached yet: {slots}. Aemeath keeps retrying.",
     "waitingEngine": "Waiting for the engine to start…"
   },
+  "preset": {
+    "title": "The workbench is empty",
+    "body": "Start from the preset: a virtual input (apps play into it) and a virtual output (OBS and other apps record from it), with no routes. Or add your own nodes.",
+    "use": "Use the preset",
+    "inputName": "Virtual input",
+    "outputName": "Virtual output"
+  },
+  "device": {
+    "exclusive": "Use this device exclusively (recommended)",
+    "exclusiveHint": "Only Aemeath uses the device, and the sound bypasses Windows' mixing and resampling. Other apps can't use it at the same time.",
+    "formatLabel": "Device format",
+    "format": "{rate} kHz · {format}",
+    "recommended": "Recommended (chosen when the device opens)",
+    "recommendedFormat": "Recommended: {format}",
+    "probing": "Reading the formats the device supports…",
+    "probeFailed": "Can't read the formats the device supports (it's missing or in use by another app). You can use the recommended format for now.",
+    "buffer": "Buffer",
+    "bufferDefault": "Device default ({ms} ms)",
+    "bufferDefaultUnknown": "Device default",
+    "bufferMinimum": "Device minimum ({ms} ms)",
+    "bufferMinimumUnknown": "Device minimum",
+    "bufferCustom": "Custom",
+    "bufferMs": "Buffer (milliseconds)",
+    "bufferHint": "A smaller buffer means lower latency but more dropouts when the system is busy. A custom value is adjusted to the nearest value the device allows.",
+    "sharedHint": "In shared mode Windows decides the device format, and other apps can use the device at the same time.",
+    "sharedFormat": "In shared mode Windows decides the device format, currently {format}. Other apps can use the device at the same time.",
+    "resampler": "Resampler",
+    "resamplerGlobal": "Use the global default",
+    "resamplerGlobalHint": "Uses the default resampler from Settings."
+  },
+  "resampler": {
+    "sincHigh": {
+      "name": "Sinc, high quality",
+      "hint": "Flat up to 20 kHz, for music and recording. About 2.7 ms of added latency, the highest CPU use."
+    },
+    "sincStandard": {
+      "name": "Sinc, standard (recommended)",
+      "hint": "Sounds the same as high quality, with a slight roll-off near 20 kHz. About 1.3 ms of added latency."
+    },
+    "polynomial": {
+      "name": "Polynomial",
+      "hint": "Almost no added latency and very low CPU use. Good at low frequencies, poor at high ones (clear distortion above 15 kHz)."
+    },
+    "linear": {
+      "name": "Linear",
+      "hint": "The lowest CPU use, but clearly audible aliasing. Only for speech or when the CPU is very busy."
+    }
+  },
+  "strip": {
+    "gate": "Gate",
+    "aria": "Strip: {name}",
+    "gateAria": "{name} gate threshold",
+    "gainAria": "{name} gain",
+    "mute": "Mute",
+    "muteAria": "Mute {name}",
+    "dragHint": "{name} · Drag the title to reorder"
+  },
+  "mx": {
+    "title": "Route matrix",
+    "pinOnly": "Pinned only",
+    "from": "INPUT",
+    "to": "OUTPUT",
+    "empty": "Add input and output nodes to see the routes between them here.",
+    "off": "Off",
+    "stOn": "on, {gain}",
+    "stOff": "connected but off",
+    "stNone": "not connected",
+    "cell": "{src} → {dst}: {state}",
+    "idle": "Hover a cell to see where the sound goes from and to.",
+    "lgOn": "On (number = send gain in dB)",
+    "lgOff": "Connected but off",
+    "lgNone": "Not connected",
+    "lgKeys": "Click: create or toggle · Del: delete · Scroll over a cell: ±1 dB",
+    "newRoute": "Create route"
+  },
+  "grp": {
+    "in": "Inputs",
+    "proc": "Processing",
+    "out": "Outputs"
+  },
+  "con": {
+    "title": "Console",
+    "caption": "Pinned nodes: {n}",
+    "pin": "Pin node",
+    "allPinned": "All nodes are pinned",
+    "empty": "No pinned nodes yet. Use Pin node or a node's menu to put the nodes you adjust often here."
+  },
+  "nodeSettings": {
+    "title": "Node settings: {name}",
+    "slot": "Slot",
+    "slotHint": "After you change the slot, apps need to use the new device name.",
+    "gateOff": "Off",
+    "gateHint": "Closes this input while the signal is below the threshold. The far left of the slider turns the gate off.",
+    "candidates": "Choose the device to use",
+    "candidatesHint": "The original device is gone, and several devices have the same name ({device}). Choose which one this node should use.",
+    "useCandidate": "Use this device",
+    "confirm": "OK"
+  },
+  "menu": {
+    "aria": "Menu for {name}",
+    "nodeSettings": "Node settings…",
+    "rename": "Rename",
+    "pin": "Pin to console",
+    "unpin": "Unpin from console",
+    "redetect": "Re-detect device",
+    "deleteNode": "Delete node",
+    "routeOn": "Turn route on",
+    "routeOff": "Turn route off",
+    "resetGain": "Reset gain to 0 dB",
+    "resetLabel": "Move the label back to the middle of the route",
+    "deleteRoute": "Delete route",
+    "addHere": "Add node here…",
+    "fit": "Fit to window",
+    "cut": "Cut",
+    "copy": "Copy",
+    "paste": "Paste",
+    "selectAll": "Select all"
+  },
   "tray": {
     "open": "Open Aemeath",
+    "redetect": "Re-detect all devices",
     "quit": "Quit Aemeath"
   }
 }

@@ -1,20 +1,53 @@
 <script setup lang="ts">
+import { nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppIcon, { type IconName } from '@/components/AppIcon.vue'
 import { useAppStore, type Page } from '@/stores/app'
 
-// M1 只有工作台、设备、设置三页；应用、录音、热键在后续里程碑加入（开发计划 M2–M3）
+// 导航：工作台、设备、应用、工具；"设置"固定在最底部。录音、热键两页在 M3 实现前不显示（M2 计划 2.9）
+// 选中指示条只有一个，切换页面时滑到新的选中项（WinUI NavigationView 的效果）。
 const { t } = useI18n()
 const store = useAppStore()
+const rail = useTemplateRef<HTMLElement>('rail')
 
 const top: { page: Page; icon: IconName }[] = [
   { page: 'workbench', icon: 'graph' },
   { page: 'devices', icon: 'slots' },
+  { page: 'apps', icon: 'apps' },
+  { page: 'tools', icon: 'tools' },
 ]
+
+/** 指示条与导航项上下边的距离 */
+const INDICATOR_INSET = 10
+const indicator = ref<{ top: number; height: number } | null>(null)
+
+function placeIndicator(): void {
+  const current = rail.value?.querySelector<HTMLElement>('.nav-item[aria-current="page"]')
+  indicator.value =
+    current === null || current === undefined
+      ? null
+      : { top: current.offsetTop + INDICATOR_INSET, height: current.offsetHeight - INDICATOR_INSET * 2 }
+}
+
+watch(
+  () => store.page,
+  () => void nextTick(placeIndicator),
+)
+onMounted(() => {
+  placeIndicator()
+  window.addEventListener('resize', placeIndicator)
+})
+onBeforeUnmount(() => window.removeEventListener('resize', placeIndicator))
 </script>
 
 <template>
-  <nav class="rail" :aria-label="t('nav.aria')">
+  <nav ref="rail" class="rail" :aria-label="t('nav.aria')">
+    <span
+      v-if="indicator"
+      class="indicator"
+      aria-hidden="true"
+      :style="{ transform: `translateY(${indicator.top}px)`, height: `${indicator.height}px` }"
+    ></span>
     <button
       v-for="item in top"
       :key="item.page"
@@ -39,6 +72,7 @@ const top: { page: Page; icon: IconName }[] = [
 
 <style scoped>
 .rail {
+  position: relative;
   padding: 4px 8px 12px;
   display: flex;
   flex-direction: column;
@@ -69,15 +103,17 @@ const top: { page: Page; icon: IconName }[] = [
   background: var(--layer-alt);
 }
 
-.nav-item[aria-current='page']::before {
-  content: '';
+/* 唯一的选中指示条：在导航项之间滑动 */
+.indicator {
   position: absolute;
-  left: 0;
-  top: 10px;
-  bottom: 10px;
+  top: 0;
+  left: 8px;
+  z-index: 1;
   width: 3px;
   border-radius: 2px;
   background: var(--accent);
+  pointer-events: none;
+  transition: transform var(--dur-slow) var(--ease-move);
 }
 
 /* 设置固定在导航栏最底部 */

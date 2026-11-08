@@ -4,7 +4,7 @@
 //! 只描述"用户搭建了什么"，不含运行时状态（设备是否在线、槽位是否已挂载等由控制面另行跟踪）。
 
 use aemeath_protocol::ids::{EndpointId, NodeId};
-use aemeath_protocol::topology::{self, Resampler, Strip};
+use aemeath_protocol::topology::{self, DeviceSettings, Resampler, Strip};
 use aemeath_protocol::units::{GainDb, SampleRate};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -79,8 +79,18 @@ pub struct Node {
     pub kind: NodeKind,
     #[serde(default)]
     pub strip: Strip,
+    /// 外部设备节点的设备设置（ADR-0014）；其他节点为 None。外部设备节点缺少它时按默认值（独占）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub io: Option<DeviceSettings>,
     #[serde(default)]
     pub position: Position,
+}
+
+impl Node {
+    /// 外部设备节点实际使用的设备设置；其他节点为 None
+    pub fn device_settings(&self) -> Option<DeviceSettings> {
+        self.kind.is_external().then(|| self.io.unwrap_or_default())
+    }
 }
 
 /// 连线标签在连线上的位置（0 起点、1 终点），用户可以拖动以免标签重叠。只是显示偏好。
@@ -143,7 +153,7 @@ pub struct Route {
 pub struct EngineSettings {
     /// 引擎采样率（GLOSSARY）
     pub sample_rate: SampleRate,
-    /// 全局默认的重采样算法（M1 不支持按节点覆盖）
+    /// 全局默认的重采样算法；外部设备节点可以在设备设置里单独指定
     #[serde(default)]
     pub resampler: Resampler,
     /// 主时钟：外部设备节点；为 None 时跟随系统时钟
