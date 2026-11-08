@@ -1,6 +1,7 @@
-//! 引擎进程的配置：数据目录、USB/IP 端口、命名管道与电平共享内存的名称。
+//! 三个进程（引擎、主程序、守护进程）共用的配置：数据目录、USB/IP 端口、命名管道与电平共享内存的名称。
 //!
-//! 正式启动时由守护进程传入参数（ADR-0003）；开发时可以不带参数直接运行。
+//! 正式启动时由守护进程传入参数（ADR-0003），引擎和主程序拿到的是同一组值；开发时可以不带参数直接运行，
+//! 两边按身份算出的默认值一致。
 
 use std::io;
 use std::path::PathBuf;
@@ -10,7 +11,7 @@ use aemeath_usbip::identity::IdentityProfile;
 use thiserror::Error;
 
 #[derive(Debug, Clone)]
-pub struct HostConfig {
+pub struct RuntimeConfig {
     /// 数据目录：日志在 `logs\`，拓扑缓存在 `engine\`（ADR-0012：安装版 `%APPDATA%\Aemeath`，便携版程序目录下的 `data\`）
     pub data_dir: PathBuf,
     pub usbip_port: u16,
@@ -34,7 +35,7 @@ pub enum ConfigError {
     PipeName(io::Error),
 }
 
-impl HostConfig {
+impl RuntimeConfig {
     /// 解析命令行参数：`--data-dir <目录>`、`--usbip-port <端口>`、`--pipe <管道名>`、
     /// `--meters <共享内存名>`，都可以省略。
     pub fn from_args(args: impl IntoIterator<Item = String>) -> Result<Self, ConfigError> {
@@ -89,7 +90,7 @@ mod tests {
 
     #[test]
     fn parses_explicit_arguments() {
-        let config = HostConfig::from_args(args(&[
+        let config = RuntimeConfig::from_args(args(&[
             "--data-dir",
             r"C:\data",
             "--usbip-port",
@@ -105,7 +106,7 @@ mod tests {
 
     #[test]
     fn defaults_include_the_user_sid() {
-        let config = HostConfig::from_args(Vec::new()).unwrap();
+        let config = RuntimeConfig::from_args(Vec::new()).unwrap();
         assert_eq!(config.usbip_port, DEFAULT_USBIP_PORT);
         assert!(
             config.pipe_name.starts_with(r"\\.\pipe\Aemeath.Dev.Engine.S-1-5-"),
@@ -118,15 +119,15 @@ mod tests {
     #[test]
     fn rejects_bad_arguments() {
         assert!(matches!(
-            HostConfig::from_args(args(&["--verbose"])),
+            RuntimeConfig::from_args(args(&["--verbose"])),
             Err(ConfigError::UnknownArgument(_))
         ));
         assert!(matches!(
-            HostConfig::from_args(args(&["--usbip-port"])),
+            RuntimeConfig::from_args(args(&["--usbip-port"])),
             Err(ConfigError::MissingValue(_))
         ));
         assert!(matches!(
-            HostConfig::from_args(args(&["--usbip-port", "x"])),
+            RuntimeConfig::from_args(args(&["--usbip-port", "x"])),
             Err(ConfigError::InvalidValue(_))
         ));
     }

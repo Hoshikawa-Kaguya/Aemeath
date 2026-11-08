@@ -11,14 +11,13 @@ publish.workspace = true
 aemeath-engine = { workspace = true }
 aemeath-io = { workspace = true }
 aemeath-protocol = { workspace = true }
+aemeath-runtime = { workspace = true }
 aemeath-sys = { workspace = true }
 aemeath-usbip = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "signal", "sync", "time"] }
 tracing = { workspace = true }
-tracing-appender = { workspace = true }
-tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "time"] }

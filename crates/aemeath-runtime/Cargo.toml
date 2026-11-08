@@ -1,0 +1,18 @@
+[package]
+name = "aemeath-runtime"
+description = "Process setup shared by the Aemeath engine, app and guardian: arguments and logging"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+aemeath-usbip = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-appender = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[lints]
+workspace = true

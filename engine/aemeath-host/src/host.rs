@@ -8,14 +8,14 @@ use std::io;
 use aemeath_engine::{Engine, EngineConfig, EngineEvent};
 use tokio::net::windows::named_pipe::NamedPipeServer;
 
-use crate::config::HostConfig;
 use crate::meter_publisher;
 use crate::session::{self, HostState, SessionEnd};
 use crate::status::StatusCache;
 use crate::topology_cache::TopologyCache;
+use aemeath_runtime::config::RuntimeConfig;
 
 /// 运行宿主，直到收到 `shutdown` 命令或 `shutdown` future 完成。
-pub async fn run(config: HostConfig, shutdown: impl Future<Output = ()>) -> io::Result<()> {
+pub async fn run(config: RuntimeConfig, shutdown: impl Future<Output = ()>) -> io::Result<()> {
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
         data_dir = %config.data_dir.display(),

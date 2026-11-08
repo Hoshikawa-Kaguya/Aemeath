@@ -6,7 +6,7 @@
 aemeath-host [--data-dir <目录>] [--usbip-port <端口>] [--pipe <管道名>] [--meters <共享内存名>]
 ```
 
-正式运行时由守护进程拉起并传入参数；开发时可以直接运行，按 Ctrl+C 退出。
+正式运行时由守护进程拉起并传入参数；开发时可以直接运行，按 Ctrl+C 退出。参数解析和日志由三个进程共用的 `aemeath-runtime` 提供，主程序接受同样的参数。
 
 ## 默认值
 
@@ -38,5 +38,5 @@ aemeath-host [--data-dir <目录>] [--usbip-port <端口>] [--pipe <管道名>] 
 | 路径 | 内容 |
 |---|---|
 | `logs\engine.<日期>.log` | 按天轮转，保留 14 天；非阻塞写入，实时线程不会被磁盘 IO 拖慢 |
-| `logs\panic.log` | panic 时同步追加（发布构建 `panic = "abort"`，进程随即中止并由守护进程拉起） |
+| `logs\engine.panic.log` | panic 时同步追加（发布构建 `panic = "abort"`，进程随即中止并由守护进程拉起） |
 | `engine\topology.json` | 最近一份成功应用的路由拓扑。先写临时文件再改名；启动时读取并重新校验 |

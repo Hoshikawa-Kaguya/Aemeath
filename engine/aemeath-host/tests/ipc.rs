@@ -9,13 +9,13 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
-use aemeath_host::config::HostConfig;
 use aemeath_protocol::PROTOCOL_VERSION;
 use aemeath_protocol::frame::{self, FrameDecoder};
 use aemeath_protocol::ids::{NodeId, ProtocolVersion, RequestId, TopologyRevision};
 use aemeath_protocol::message::{AppToEngine, EngineToApp, RejectReason};
 use aemeath_protocol::topology::{NodeKind, Resampler, RouteTopology, Strip, TopologyNode};
 use aemeath_protocol::units::SampleRate;
+use aemeath_runtime::config::RuntimeConfig;
 use aemeath_usbip::identity::IdentityProfile;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeClient};
@@ -24,9 +24,9 @@ const TIMEOUT: Duration = Duration::from_secs(10);
 
 static NEXT_TEST: AtomicU32 = AtomicU32::new(0);
 
-fn config(data_dir: PathBuf) -> HostConfig {
+fn config(data_dir: PathBuf) -> RuntimeConfig {
     let test = NEXT_TEST.fetch_add(1, Ordering::Relaxed);
-    HostConfig {
+    RuntimeConfig {
         data_dir,
         usbip_port: 0,
         identity: IdentityProfile::Development,
