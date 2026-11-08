@@ -24,6 +24,8 @@ use tracing::{debug, info, warn};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SlotEndpoint {
     pub id: String,
+    /// Windows 显示的端点名，例如"扬声器 (Aemeath Dev In 1)"
+    pub name: Option<String>,
     pub state: EndpointState,
     /// Windows 为端点确定的设备格式（不在线时也能读到）
     pub format: Option<DeviceFormat>,
@@ -45,10 +47,22 @@ impl From<ComError> for ProbeError {
     }
 }
 
+/// 一台外部设备（不属于 Aemeath 的端点），供新建外部输入、外部输出节点时选择。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExternalDevice {
+    pub endpoint_id: String,
+    /// 端点名，例如"耳机 (LG ULTRAGEAR+)"
+    pub name: String,
+}
+
 type Reply<T> = oneshot::Sender<Result<T, ProbeError>>;
 
 enum Request {
     Snapshot(Reply<BTreeMap<SlotId, SlotEndpoint>>),
+    ExternalDevices {
+        flow: AudioFlow,
+        reply: Reply<Vec<ExternalDevice>>,
+    },
     /// 把设备格式的采样率改成 `rate`，样本格式和声道数保持不变
     SetRate {
         endpoint_id: String,
@@ -92,6 +106,13 @@ impl EndpointProbe {
             rate,
             reply,
         })?;
+        wait.await.map_err(|_| stopped())?
+    }
+
+    /// 某个方向上全部在线的外部设备（不含 Aemeath 的槽位），按名称排序。
+    pub async fn external_devices(&self, flow: AudioFlow) -> Result<Vec<ExternalDevice>, ProbeError> {
+        let (reply, wait) = oneshot::channel();
+        self.send(Request::ExternalDevices { flow, reply })?;
         wait.await.map_err(|_| stopped())?
     }
 
@@ -152,6 +173,9 @@ fn worker(
         for request in batch {
             match request {
                 Request::Snapshot(reply) => snapshot_replies.push(reply),
+                Request::ExternalDevices { flow, reply } => {
+                    let _ = reply.send(worker.external_devices(flow));
+                }
                 Request::SetRate {
                     endpoint_id,
                     rate,
@@ -187,6 +211,7 @@ impl Worker {
                     identity.slot,
                     SlotEndpoint {
                         id: info.id.clone(),
+                        name: info.name.clone(),
                         state: info.state,
                         format,
                     },
@@ -194,6 +219,29 @@ impl Worker {
             }
         }
         Ok(result)
+    }
+
+    fn external_devices(&self, flow: AudioFlow) -> Result<Vec<ExternalDevice>, ProbeError> {
+        let mut devices: Vec<ExternalDevice> = self
+            .endpoints
+            .list(flow)?
+            .into_iter()
+            .filter(|info| info.state == EndpointState::Active)
+            .filter(|info| !self.is_slot(info))
+            .map(|info| ExternalDevice {
+                name: info.name.unwrap_or_else(|| info.id.clone()),
+                endpoint_id: info.id,
+            })
+            .collect();
+        devices.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(devices)
+    }
+
+    /// 端点是否属于 Aemeath 的某个槽位。把槽位当作外部设备接进来会形成回路，所以不列出。
+    fn is_slot(&self, info: &EndpointInfo) -> bool {
+        info.interface_name
+            .as_deref()
+            .is_some_and(|name| self.slots.iter().any(|identity| identity.product_name == name))
     }
 
     fn set_rate(&self, endpoint_id: &str, rate: SampleRate) -> Result<DeviceFormat, ProbeError> {

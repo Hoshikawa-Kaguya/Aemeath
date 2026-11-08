@@ -29,5 +29,5 @@ rustc-ice-*.txt
 .vscode/
 
 # 内部资料与临时文件，不公开
-/agent_tmp/
+agent_tmp/
 .claude/

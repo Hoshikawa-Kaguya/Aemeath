@@ -13,4 +13,11 @@ export default defineConfigWithVueTs(
   pluginVue.configs['flat/recommended'],
   vueTsConfigs.recommended,
   skipFormatting,
+  {
+    rules: {
+      // Fluent 2 的 Web Components 用原生的 slot 属性放置图标和按钮（例如 <fluent-button> 的 start），
+      // 这不是 Vue 已弃用的插槽语法
+      'vue/no-deprecated-slot-attribute': ['error', { ignoreParents: ['/^fluent-/'] }],
+    },
+  },
 )

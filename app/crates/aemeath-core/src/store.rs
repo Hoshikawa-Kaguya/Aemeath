@@ -1,4 +1,4 @@
-//! 配置文件：工作台保存为 JSON（ADR-0012：安装版在 `%APPDATA%\Aemeath`，便携版在程序目录下的 `data\`）。
+//! 配置文件：工作台与偏好设置保存为 JSON（ADR-0012：安装版在 `%APPDATA%\Aemeath`，便携版在程序目录下的 `data\`）。
 //!
 //! - 带结构版本号。遇到更新版本写的配置时拒绝加载，也不覆盖它，避免旧版本把新版本的配置写坏。
 //! - 先写临时文件再改名，写入中途进程被结束不会留下半份配置。
@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::model::EngineSettings;
+use crate::preferences::Preferences;
 use crate::workspace::Workspace;
 
 /// 配置文件的结构版本。结构有不兼容的变化时加一，并在 [`ConfigStore::load`] 中加入迁移。
@@ -26,6 +27,25 @@ const BACKUP_INFIX: &str = "corrupt";
 struct ConfigFile {
     version: u32,
     workspace: Workspace,
+    #[serde(default)]
+    preferences: Preferences,
+}
+
+/// 配置文件的内容。
+#[derive(Debug, Clone, PartialEq)]
+pub struct Config {
+    pub workspace: Workspace,
+    pub preferences: Preferences,
+}
+
+impl Default for Config {
+    /// 空工作台（默认引擎设置）与默认偏好
+    fn default() -> Self {
+        Self {
+            workspace: Workspace::new(EngineSettings::default()),
+            preferences: Preferences::default(),
+        }
+    }
 }
 
 /// 只读出版本号，用来在完整解析之前判断是不是更新版本写的配置。
@@ -34,15 +54,22 @@ struct VersionOnly {
     version: u32,
 }
 
+/// 只读出偏好设置（不校验其余内容）。
+#[derive(Deserialize)]
+struct PreferencesOnly {
+    #[serde(default)]
+    preferences: Preferences,
+}
+
 /// 读取配置的结果。
 #[derive(Debug)]
 pub enum Loaded {
-    Existing(Workspace),
+    Existing(Config),
     /// 还没有配置文件（首次启动）
     Missing,
     /// 配置文件损坏或不合规，已改名备份；返回的是空配置
     Recovered {
-        workspace: Workspace,
+        config: Config,
         backup: PathBuf,
         reason: String,
     },
@@ -87,11 +114,11 @@ impl ConfigStore {
             return Err(StoreError::NewerVersion { found: version });
         }
         match parse(&bytes) {
-            Ok(workspace) => Ok(Loaded::Existing(workspace)),
+            Ok(config) => Ok(Loaded::Existing(config)),
             Err(reason) => {
                 let backup = self.backup()?;
                 Ok(Loaded::Recovered {
-                    workspace: Workspace::new(EngineSettings::default()),
+                    config: Config::default(),
                     backup,
                     reason,
                 })
@@ -99,13 +126,22 @@ impl ConfigStore {
         }
     }
 
-    pub fn save(&self, workspace: &Workspace) -> io::Result<()> {
+    /// 只读出偏好设置，不校验、也不改动配置文件（守护进程选择对话框语言时用）。读不到时返回 None。
+    pub fn peek_preferences(&self) -> Option<Preferences> {
+        let bytes = std::fs::read(&self.path).ok()?;
+        serde_json::from_slice::<PreferencesOnly>(&bytes)
+            .ok()
+            .map(|file| file.preferences)
+    }
+
+    pub fn save(&self, config: &Config) -> io::Result<()> {
         if let Some(folder) = self.path.parent() {
             std::fs::create_dir_all(folder)?;
         }
         let file = ConfigFile {
             version: CONFIG_VERSION,
-            workspace: workspace.clone(),
+            workspace: config.workspace.clone(),
+            preferences: config.preferences.clone(),
         };
         let bytes = serde_json::to_vec_pretty(&file).map_err(io::Error::other)?;
         let temp = self.path.with_extension(format!("json.{TEMP_SUFFIX}"));
@@ -127,7 +163,7 @@ impl ConfigStore {
 }
 
 /// 解析并校验配置；返回错误说明（写进日志和提示中）。
-fn parse(bytes: &[u8]) -> Result<Workspace, String> {
+fn parse(bytes: &[u8]) -> Result<Config, String> {
     let file: ConfigFile = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
     let workspace = file.workspace;
     if !workspace.ids_are_consistent() {
@@ -137,7 +173,10 @@ fn parse(bytes: &[u8]) -> Result<Workspace, String> {
         .compile(TopologyRevision(0))
         .validate()
         .map_err(|error| error.to_string())?;
-    Ok(workspace)
+    Ok(Config {
+        workspace,
+        preferences: file.preferences,
+    })
 }
 
 #[cfg(test)]
@@ -152,7 +191,7 @@ mod tests {
         dir
     }
 
-    fn sample() -> Workspace {
+    fn sample() -> Config {
         let mut workspace = Workspace::new(EngineSettings::default());
         let game = workspace
             .add_node(
@@ -165,7 +204,15 @@ mod tests {
             .add_node(NodeName::new("Bus").unwrap(), NodeSpec::Bus, Position::default())
             .unwrap();
         workspace.connect(game, bus).unwrap();
-        workspace
+        Config {
+            workspace,
+            preferences: Preferences {
+                language: crate::preferences::LanguagePreference::Fixed {
+                    locale: "zh-CN".to_owned(),
+                },
+                slots_registered: true,
+            },
+        }
     }
 
     #[test]
@@ -192,10 +239,10 @@ mod tests {
         let store = ConfigStore::new(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(store.path(), b"{ not json").unwrap();
-        let Loaded::Recovered { workspace, backup, .. } = store.load().unwrap() else {
+        let Loaded::Recovered { config, backup, .. } = store.load().unwrap() else {
             unreachable!("expected recovery")
         };
-        assert!(workspace.nodes().is_empty());
+        assert!(config.workspace.nodes().is_empty());
         assert!(backup.exists());
         assert!(!store.path().exists());
         let _ = std::fs::remove_dir_all(&dir);
@@ -215,6 +262,19 @@ mod tests {
         );
         std::fs::write(store.path(), broken).unwrap();
         assert!(matches!(store.load().unwrap(), Loaded::Recovered { .. }));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn preferences_can_be_peeked_without_touching_the_file() {
+        let dir = temp_dir("peek");
+        let store = ConfigStore::new(&dir);
+        assert_eq!(store.peek_preferences(), None);
+        store.save(&sample()).unwrap();
+        assert_eq!(store.peek_preferences(), Some(sample().preferences));
+        std::fs::write(store.path(), b"{ not json").unwrap();
+        assert_eq!(store.peek_preferences(), None);
+        assert!(store.path().exists(), "peeking never backs up or renames the file");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

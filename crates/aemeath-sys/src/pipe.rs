@@ -8,20 +8,17 @@ use std::ffi::c_void;
 use std::io;
 
 use tokio::net::windows::named_pipe::{NamedPipeServer, PipeMode, ServerOptions};
-use windows::Win32::Foundation::{CloseHandle, HANDLE, HLOCAL, LocalFree};
+use windows::Win32::Foundation::{HLOCAL, LocalFree};
 use windows::Win32::Security::Authorization::ConvertSidToStringSidW;
-use windows::Win32::Security::{GetTokenInformation, TOKEN_QUERY, TOKEN_USER, TokenUser};
-use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+use windows::Win32::Security::{GetTokenInformation, TOKEN_USER, TokenUser};
 use windows::core::PWSTR;
 
 use crate::security::CurrentUserOnly;
+use crate::token::Token;
 
 /// 当前用户的 SID，例如 `S-1-5-21-…`。
 pub fn current_user_sid() -> io::Result<String> {
-    let mut token = HANDLE::default();
-    // SAFETY: GetCurrentProcess 返回伪句柄，无需关闭；token 是有效的输出指针，成功后由下面的 Token 守卫关闭。
-    unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) }?;
-    let token = Token(token);
+    let token = Token::current_process()?;
 
     let mut needed = 0u32;
     // SAFETY: 第一次调用只查询所需长度（不传缓冲区），预期返回"缓冲区不足"错误，忽略之。
@@ -63,16 +60,6 @@ pub fn create_pipe_server(name: &str, first_instance: bool) -> io::Result<NamedP
     // SAFETY: 安全属性完整初始化，其中的描述符在调用期间由 security 保持有效；
     // CreateNamedPipeW 只在调用时读取它们，不保留指针。
     unsafe { options.create_with_security_attributes_raw(name, security.attributes().cast::<c_void>()) }
-}
-
-/// 进程令牌句柄，析构时关闭。
-struct Token(HANDLE);
-
-impl Drop for Token {
-    fn drop(&mut self) {
-        // SAFETY: 句柄由 OpenProcessToken 返回，只在这里关闭一次。
-        let _ = unsafe { CloseHandle(self.0) };
-    }
 }
 
 /// 由系统用 LocalAlloc 分配的字符串，析构时释放。

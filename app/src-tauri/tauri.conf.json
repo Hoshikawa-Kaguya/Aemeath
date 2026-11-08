@@ -3,6 +3,7 @@
   "productName": "Aemeath",
   "version": "0.1.0",
   "identifier": "io.github.aemeath",
+  "mainBinaryName": "aemeath",
   "build": {
     "devUrl": "http://localhost:1420",
     "frontendDist": "../dist",

@@ -1,17 +1,95 @@
 //! 主程序（ADR-0003、ADR-0013）：Rust 后端负责控制面，前端运行在 WebView2 里，窗口完全由前端绘制。
+//!
+//! 用法与引擎相同：`aemeath [--data-dir <目录>] [--usbip-port <端口>] [--pipe <管道名>] [--meters <共享内存名>]`，
+//! 正式运行时由守护进程拉起并传入与引擎相同的参数。
+//!
+//! 关闭窗口时销毁 WebView，程序留在托盘；从托盘退出时请引擎停止，再正常退出（退出码 0）。
 
 // 发布版不弹出控制台窗口
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod commands;
+mod controller;
+mod meters;
+mod tray;
+mod view;
+
 use std::process::ExitCode;
 
+use aemeath_runtime::config::RuntimeConfig;
+use aemeath_runtime::logging::{self, Process};
+use tauri::{Emitter, Manager, RunEvent};
+
+use crate::controller::ControllerHandle;
+use crate::meters::MeterHub;
+
+/// 状态快照的事件名（界面监听）
+const STATE_EVENT: &str = "state-changed";
+
 fn main() -> ExitCode {
-    match tauri::Builder::default().run(tauri::generate_context!()) {
-        Ok(()) => ExitCode::SUCCESS,
+    let config = match RuntimeConfig::from_args(std::env::args().skip(1)) {
+        Ok(config) => config,
         Err(error) => {
-            // 日志在 M1 的 aemeath-app 任务中接入；在此之前只能输出到调试控制台
-            eprintln!("Aemeath failed to start: {error}");
-            ExitCode::FAILURE
+            eprintln!("aemeath: {error}");
+            return ExitCode::FAILURE;
         }
-    }
+    };
+    let _logs = match logging::init(&config.data_dir, Process::App) {
+        Ok(guard) => guard,
+        Err(error) => {
+            eprintln!("aemeath: cannot open the log directory: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    tracing::info!(version = env!("CARGO_PKG_VERSION"), data_dir = %config.data_dir.display(), "app starting");
+
+    let app = tauri::Builder::default()
+        .setup(move |app| {
+            let handle = app.handle().clone();
+            let controller = ControllerHandle::start(config.clone(), move |state| {
+                if let Err(error) = handle.emit(STATE_EVENT, state) {
+                    tracing::debug!(%error, "cannot push the state to the window");
+                }
+            });
+            app.manage(controller);
+            app.manage(MeterHub::start(config.meter_memory_name.clone()));
+            app.manage(tray::create(app.handle())?);
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            commands::get_state,
+            commands::initialize,
+            commands::add_node,
+            commands::remove_node,
+            commands::rename_node,
+            commands::move_node,
+            commands::route_verdicts,
+            commands::connect,
+            commands::disconnect,
+            commands::set_route_enabled,
+            commands::set_route_gain,
+            commands::set_route_label,
+            commands::undo,
+            commands::set_language,
+            commands::list_devices,
+            commands::check_slots,
+            commands::watch_meters,
+            commands::set_tray_labels,
+        ])
+        .build(tauri::generate_context!());
+    let app = match app {
+        Ok(app) => app,
+        Err(error) => {
+            tracing::error!(%error, "Aemeath failed to start");
+            return ExitCode::FAILURE;
+        }
+    };
+    app.run(|_app, event| {
+        // 关闭最后一个窗口时不退出，留在托盘；只有从托盘退出（app.exit）才真正退出
+        if let RunEvent::ExitRequested { code: None, api, .. } = event {
+            api.prevent_exit();
+        }
+    });
+    tracing::info!("app stopped");
+    ExitCode::SUCCESS
 }

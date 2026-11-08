@@ -128,6 +128,7 @@ mod tests {
             health,
             endpoint: Some(SlotEndpoint {
                 id: "{id}".to_owned(),
+                name: None,
                 state: EndpointState::Active,
                 format: Some(DeviceFormat {
                     sample_rate,

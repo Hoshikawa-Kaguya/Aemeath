@@ -46,6 +46,15 @@ impl IdentityProfile {
         Ok(format!(r"\\.\pipe\{product}.Engine.{sid}"))
     }
 
+    /// 守护进程的单实例互斥体名称（每个用户、每个登录会话只运行一个守护进程）。
+    pub fn guardian_instance_name(self) -> io::Result<String> {
+        let sid = aemeath_sys::pipe::current_user_sid()?;
+        let product = match self {
+            Self::Development => "Aemeath.Dev",
+        };
+        Ok(format!(r"Local\{product}.Guardian.{sid}"))
+    }
+
     /// 电平共享内存的名称（`Local\` 命名空间：引擎和主程序在同一个登录会话里），同样带上用户 SID。
     pub fn meter_memory_name(self) -> io::Result<String> {
         let sid = aemeath_sys::pipe::current_user_sid()?;

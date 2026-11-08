@@ -159,6 +159,7 @@ struct NotificationSink {
 }
 
 impl IMMNotificationClient_Impl for NotificationSink_Impl {
+    #[allow(non_snake_case)]
     fn OnDeviceStateChanged(&self, id: &PCWSTR, state: DEVICE_STATE) -> windows::core::Result<()> {
         if let Some(id) = read_id(id) {
             (self.on_change)(EndpointChange::StateChanged {
@@ -169,6 +170,7 @@ impl IMMNotificationClient_Impl for NotificationSink_Impl {
         Ok(())
     }
 
+    #[allow(non_snake_case)]
     fn OnDeviceAdded(&self, id: &PCWSTR) -> windows::core::Result<()> {
         if let Some(id) = read_id(id) {
             (self.on_change)(EndpointChange::Added { id });
@@ -176,6 +178,7 @@ impl IMMNotificationClient_Impl for NotificationSink_Impl {
         Ok(())
     }
 
+    #[allow(non_snake_case)]
     fn OnDeviceRemoved(&self, id: &PCWSTR) -> windows::core::Result<()> {
         if let Some(id) = read_id(id) {
             (self.on_change)(EndpointChange::Removed { id });
@@ -183,10 +186,12 @@ impl IMMNotificationClient_Impl for NotificationSink_Impl {
         Ok(())
     }
 
+    #[allow(non_snake_case)]
     fn OnDefaultDeviceChanged(&self, _flow: EDataFlow, _role: ERole, _id: &PCWSTR) -> windows::core::Result<()> {
         Ok(())
     }
 
+    #[allow(non_snake_case)]
     /// 属性变化非常频繁（音量、格式等），这里不关心
     fn OnPropertyValueChanged(&self, _id: &PCWSTR, _key: &PROPERTYKEY) -> windows::core::Result<()> {
         Ok(())

@@ -289,6 +289,13 @@ impl Workspace {
             .ok_or(EditError::UnknownRoute { from, to })
     }
 
+    /// 恢复到之前的快照（撤销）。保留两者中较大的"下一个节点 ID"：撤销新建节点之后，ID 也不会被再次分配。
+    pub fn restore(&mut self, snapshot: Workspace) {
+        let next_node_id = self.next_node_id.max(snapshot.next_node_id);
+        *self = snapshot;
+        self.next_node_id = next_node_id;
+    }
+
     /// 配置文件读入后的一致性：节点 ID 不能达到或超过下一个待分配的 ID。
     /// 其余结构规则（槽位、连线、主时钟）由编译后的路由拓扑统一校验，见 [`crate::store`]。
     pub(crate) fn ids_are_consistent(&self) -> bool {
@@ -460,6 +467,17 @@ mod tests {
         workspace.remove_node(headphones).unwrap();
         assert!(workspace.routes().is_empty());
         assert_eq!(workspace.engine.clock_master, None);
+    }
+
+    #[test]
+    fn restoring_a_snapshot_keeps_node_ids_unique() {
+        let mut workspace = Workspace::new(EngineSettings::default());
+        let before = workspace.clone();
+        let added = add(&mut workspace, "A", NodeSpec::Bus);
+        workspace.restore(before);
+        assert!(workspace.nodes().is_empty());
+        let next = add(&mut workspace, "B", NodeSpec::Bus);
+        assert_ne!(added, next, "an undone node's ID is not handed out again");
     }
 
     #[test]

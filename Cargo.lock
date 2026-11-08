@@ -12,8 +12,17 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 name = "aemeath-app"
 version = "0.1.0"
 dependencies = [
+ "aemeath-control",
+ "aemeath-core",
+ "aemeath-protocol",
+ "aemeath-runtime",
+ "aemeath-sys",
+ "serde",
  "tauri",
  "tauri-build",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -37,6 +46,16 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "aemeath-dev-cleanup"
+version = "0.1.0"
+dependencies = [
+ "aemeath-control",
+ "aemeath-sys",
+ "aemeath-usbip",
+ "tokio",
 ]
 
 [[package]]
@@ -67,6 +86,15 @@ dependencies = [
 [[package]]
 name = "aemeath-guardian"
 version = "0.1.0"
+dependencies = [
+ "aemeath-control",
+ "aemeath-core",
+ "aemeath-runtime",
+ "aemeath-sys",
+ "embed-resource",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "aemeath-host"
@@ -75,14 +103,13 @@ dependencies = [
  "aemeath-engine",
  "aemeath-io",
  "aemeath-protocol",
+ "aemeath-runtime",
  "aemeath-sys",
  "aemeath-usbip",
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
- "tracing-appender",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -105,6 +132,17 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "aemeath-runtime"
+version = "0.1.0"
+dependencies = [
+ "aemeath-usbip",
+ "thiserror 2.0.21",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
 ]
 
 [[package]]

@@ -1,0 +1,17 @@
+[package]
+name = "aemeath-dev-cleanup"
+description = "Completely uninstall the Aemeath development slots (developer tool)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+aemeath-control = { workspace = true }
+aemeath-sys = { workspace = true }
+aemeath-usbip = { workspace = true }
+tokio = { workspace = true, features = ["rt", "time"] }
+
+[lints]
+workspace = true

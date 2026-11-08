@@ -6,8 +6,16 @@
 pub mod audio_endpoints;
 pub mod clock;
 pub mod com;
+pub mod devices;
+pub mod elevation;
 pub mod pipe;
 pub mod policy_config;
+pub mod registry;
 mod security;
+pub mod service;
 pub mod shared_memory;
+pub mod single_instance;
+pub mod task_dialog;
 pub mod timer;
+mod token;
+pub mod ui_language;

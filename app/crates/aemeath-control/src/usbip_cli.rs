@@ -72,6 +72,20 @@ impl UsbipVersion {
         patch: 8,
         build: 1,
     };
+    /// 支持的最低版本（集成文档第 5 节）
+    pub const MINIMUM: Self = Self {
+        major: 0,
+        minor: 9,
+        patch: 8,
+        build: 0,
+    };
+    /// 已知有问题的版本（低于最低版本，单独列出以便在日志和说明里点名）
+    pub const KNOWN_BROKEN: Self = Self {
+        major: 0,
+        minor: 9,
+        patch: 7,
+        build: 8,
+    };
 }
 
 impl FromStr for UsbipVersion {
@@ -159,6 +173,17 @@ impl UsbipCli {
     pub async fn imported(&self) -> Result<Vec<ImportedDevice>, CliError> {
         let output = self.run(&["port"]).await?;
         Ok(parse_port_list(&output.stdout))
+    }
+
+    /// 启动自检（集成文档第 7 节）：`port` 的输出要么为空，要么至少能解析出一个条目。
+    /// 否则说明命令行与 Aemeath 不兼容，Aemeath 无法管理虚拟设备。
+    pub async fn self_test(&self) -> Result<(), CliError> {
+        let output = self.run(&["port"]).await?;
+        if output.stdout.trim().is_empty() || !parse_port_list(&output.stdout).is_empty() {
+            Ok(())
+        } else {
+            Err(CliError::Unrecognized { stdout: output.stdout })
+        }
     }
 
     /// `attach --once`：挂载一次，返回 vhci 端口号。成功只说明驱动接受了请求，

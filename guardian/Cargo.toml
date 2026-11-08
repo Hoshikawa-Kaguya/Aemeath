@@ -7,5 +7,16 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[build-dependencies]
+embed-resource = { workspace = true }
+
+[dependencies]
+aemeath-control = { workspace = true }
+aemeath-core = { workspace = true }
+aemeath-runtime = { workspace = true }
+aemeath-sys = { workspace = true }
+tokio = { workspace = true, features = ["rt", "time"] }
+tracing = { workspace = true }
+
 [lints]
 workspace = true

@@ -6,9 +6,167 @@
     "minimize": "Minimize",
     "maximize": "Maximize",
     "restore": "Restore down",
-    "close": "Close"
+    "close": "Close",
+    "statusAria": "Engine status"
   },
-  "shell": {
-    "empty": "The workbench will appear here."
+  "chip": {
+    "engineRunning": "Engine running",
+    "engineConnecting": "Starting the engine…",
+    "engineUnresponsive": "Engine not responding",
+    "engineVersionMismatch": "Engine version mismatch",
+    "offline": "Offline nodes: {n}",
+    "slots": "Slots {used}/16",
+    "slotsTip": "Driver: usbip-win2 {version}. Click to open Devices.",
+    "slotsTipNoDriver": "usbip-win2 was not found. Click to open Devices.",
+    "rate": "{rate} kHz"
+  },
+  "nav": {
+    "aria": "Main navigation",
+    "workbench": "Workbench",
+    "devices": "Devices",
+    "settings": "Settings"
+  },
+  "kind": {
+    "externalInput": "External input",
+    "virtualInput": "Virtual input",
+    "virtualOutput": "Virtual output",
+    "externalOutput": "External output",
+    "bus": "Bus"
+  },
+  "wb": {
+    "hint": "Drag from a port to connect · Click a route, then press Del to delete · Scroll a route to change its gain",
+    "add": "Add node",
+    "fit": "Fit to window",
+    "undo": "Undo",
+    "zoom": "{percent}%"
+  },
+  "node": {
+    "aria": "{kind}: {name}",
+    "subtitle": "{kind} · {detail}",
+    "slotName": "Aemeath {direction} {number}",
+    "directionIn": "In",
+    "directionOut": "Out",
+    "defaultInput": "Default input",
+    "pending": "Starting…",
+    "rename": "Rename {name}",
+    "offline": {
+      "waitingForDevice": "Offline · Waiting for the device",
+      "inUseByOtherApp": "Offline · Used exclusively by another app",
+      "noSignal": "Offline · No signal",
+      "slotRepairing": "Re-attaching the virtual device",
+      "slotFailing": "The virtual device can't be attached"
+    }
+  },
+  "route": {
+    "off": "Off · {gain}",
+    "toggle": "Turn the route from {src} to {dst} on or off",
+    "select": "Select the route from {src} to {dst}: {state}, {gain}",
+    "stateOn": "on",
+    "stateOff": "off",
+    "moveHint": "Drag to move this label along the route (Alt+← / Alt+→)"
+  },
+  "drag": {
+    "hint": "Drop on a node to connect · Esc to cancel",
+    "ok": "Connect to {dst}",
+    "selfRoute": "A node can't connect to itself",
+    "duplicate": "This route already exists",
+    "loop": "Can't connect: this would create a loop",
+    "noInput": "Can't connect: {dst} has no input",
+    "noOutput": "Can't connect: {dst} has no output"
+  },
+  "toast": {
+    "routeDeleted": "Route deleted: {src} → {dst}",
+    "nodeDeleted": "Node deleted: {name}",
+    "undo": "Undo",
+    "dismiss": "Dismiss"
+  },
+  "error": {
+    "unavailable": "The control plane is not running.",
+    "invalidName": "Names must be 1 to 64 characters.",
+    "routeRejected": "This route isn't allowed.",
+    "noFreeSlot": "All 8 virtual devices of this direction are in use.",
+    "slotOccupied": "That virtual device is already in use.",
+    "deviceInUse": "This device already has a node.",
+    "notFound": "The node or route no longer exists.",
+    "failed": "Something went wrong: {message}"
+  },
+  "add": {
+    "title": "Add node",
+    "kind": "Node type",
+    "device": "Device",
+    "noDevices": "No available devices in this direction.",
+    "loadingDevices": "Looking for devices…",
+    "name": "Name",
+    "cancel": "Cancel",
+    "confirm": "Add",
+    "kindHint": {
+      "externalInput": "A microphone or other recording device on this PC",
+      "virtualInput": "A virtual playback device that apps can play into",
+      "virtualOutput": "A virtual recording device that apps such as OBS can record from",
+      "externalOutput": "Headphones, speakers or another playback device on this PC"
+    }
+  },
+  "dev": {
+    "sub": "Aemeath provides 16 fixed virtual device slots. A slot is plugged in automatically while a node occupies it and unplugged when no node does, so unused slots stay out of the Windows device list. Device names are fixed; the devices are removed only when Aemeath is uninstalled.",
+    "driver": "Driver",
+    "driverVal": "usbip-win2 {version}",
+    "driverMissing": "usbip-win2 not found",
+    "health": "Attach check",
+    "healthOk": "Every occupied slot is attached",
+    "healthWaiting": "Waiting for the engine",
+    "healthFix": "{n} slot(s) being repaired",
+    "usage": "Slots in use",
+    "usageVal": "{used} of 16",
+    "check": "Check now",
+    "inputs": "Virtual inputs",
+    "inputsSub": "Apps play into these",
+    "outputs": "Virtual outputs",
+    "outputsSub": "Apps such as OBS record from these",
+    "colSlot": "Slot",
+    "colName": "Device name in Windows",
+    "colOcc": "Occupied by",
+    "colState": "Status",
+    "colFmt": "Device format",
+    "stOk": "Plugged in",
+    "stOff": "Unplugged",
+    "stSettling": "Plugging in…",
+    "stEngine": "Waiting for the engine",
+    "stFix": "Re-attaching (attempt {n})",
+    "stFail": "Can't attach (attempt {n})",
+    "free": "Not in use",
+    "freeSub": "Plugs in when a node uses it",
+    "fmt": "{rate} kHz · {format}",
+    "fmtUnknown": "Unknown",
+    "fmtOff": "Unavailable while unplugged",
+    "fmtSame": "Same as the engine · no resampling",
+    "fmtDiff": "Differs from the engine sample rate · silent until slot resampling arrives",
+    "note": "Aemeath sets each virtual device to the engine sample rate when it is first plugged in. Changing a device format briefly disconnects any app that is using that device, such as OBS."
+  },
+  "sampleFormat": {
+    "int16": "16-bit integer",
+    "int24": "24-bit integer",
+    "int24In32": "24-bit integer",
+    "int32": "32-bit integer",
+    "float32": "32-bit float",
+    "float64": "64-bit float"
+  },
+  "set": {
+    "ui": "Interface",
+    "lang": "Language",
+    "langSub": "Takes effect immediately.",
+    "langSys": "Use system language",
+    "langZh": "中文（简体）",
+    "langEn": "English"
+  },
+  "reg": {
+    "title": "Preparing virtual devices",
+    "body": "Aemeath is setting up its 16 virtual devices. The first time, Windows installs a driver for each one, which can take about a minute.",
+    "progress": "{done} of {total}",
+    "failing": "Some devices can't be attached yet: {slots}. Aemeath keeps retrying.",
+    "waitingEngine": "Waiting for the engine to start…"
+  },
+  "tray": {
+    "open": "Open Aemeath",
+    "quit": "Quit Aemeath"
   }
 }

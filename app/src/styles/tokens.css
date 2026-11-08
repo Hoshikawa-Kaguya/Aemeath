@@ -1,0 +1,140 @@
+/*
+ * 语义变量：界面原型（agent_tmp/docs/ui-prototype）用到的颜色和尺寸，全部映射到 Fluent 2 设计令牌（ADR-0013）。
+ * 组件只引用这里的变量，深浅主题随令牌一起切换（theme/theme.ts）。
+ * 半透明的层叠在 Mica 上，所以层、卡片用 color-mix 让 Mica 透出来。
+ */
+:root {
+  --r-ctl: var(--borderRadiusMedium);
+  --r-card: var(--borderRadiusXLarge);
+  --dur-fast: var(--durationFaster);
+  --dur: var(--durationNormal);
+  --ease: var(--curveDecelerateMax);
+
+  --text: var(--colorNeutralForeground1);
+  --text-2: var(--colorNeutralForeground2);
+  --text-3: var(--colorNeutralForeground3);
+  --text-dis: var(--colorNeutralForegroundDisabled);
+
+  --layer: color-mix(in srgb, var(--colorNeutralBackground2) 70%, transparent);
+  --layer-alt: color-mix(in srgb, var(--colorNeutralBackground3) 80%, transparent);
+  --card: color-mix(in srgb, var(--colorNeutralBackground1) 72%, transparent);
+  --card-hover: var(--colorSubtleBackgroundHover);
+  --card-solid: var(--colorNeutralBackground1);
+  --stroke: var(--colorNeutralStroke2);
+  --stroke-strong: var(--colorNeutralStroke1);
+
+  --accent: var(--colorBrandBackground);
+  --accent-text: var(--colorBrandForeground1);
+  --on-accent: var(--colorNeutralForegroundOnBrand);
+  --accent-soft: color-mix(in srgb, var(--colorBrandBackground) 18%, transparent);
+
+  --ok: var(--colorPaletteGreenForeground1);
+  --warn: var(--colorPaletteYellowForeground1);
+  --crit: var(--colorPaletteRedForeground1);
+
+  --grid-dot: color-mix(in srgb, var(--colorNeutralForeground1) 8%, transparent);
+  --shadow: var(--shadow8);
+  --wire-off: var(--colorNeutralStrokeAccessible);
+
+  /* 节点角色的色相：输入、处理、输出 */
+  --in-hue: var(--colorPaletteTealForeground2);
+  --proc-hue: var(--colorPalettePurpleForeground2);
+  --out-hue: var(--colorPaletteDarkOrangeForeground1);
+
+  /* 电平表的三段颜色（-∞ 到 -18 dB、-18 到 -6 dB、-6 dB 以上） */
+  --meter-low: var(--colorPaletteGreenBackground3);
+  --meter-mid: var(--colorPaletteYellowBackground3);
+  --meter-high: var(--colorPaletteRedBackground3);
+  --meter-track: color-mix(in srgb, var(--colorNeutralForeground1) 10%, transparent);
+}
+
+svg.i {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--colorStrokeFocus2);
+  outline-offset: 1px;
+  border-radius: var(--r-ctl);
+}
+
+.caption {
+  font-size: var(--fontSizeBase200);
+  line-height: var(--lineHeightBase200);
+  color: var(--text-3);
+}
+
+/* 节点代号（In1、D1 等） */
+.code {
+  font: var(--fontWeightSemibold) var(--fontSizeBase100) / 16px var(--fontFamilyBase);
+  padding: 0 6px;
+  border-radius: var(--borderRadiusSmall);
+  background: var(--layer-alt);
+  border: 1px solid var(--stroke);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.kind-ico {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--borderRadiusLarge);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+
+[data-role='in'] .kind-ico {
+  background: color-mix(in srgb, var(--in-hue) 20%, transparent);
+  color: var(--in-hue);
+}
+
+[data-role='proc'] .kind-ico {
+  background: color-mix(in srgb, var(--proc-hue) 20%, transparent);
+  color: var(--proc-hue);
+}
+
+[data-role='out'] .kind-ico {
+  background: color-mix(in srgb, var(--out-hue) 20%, transparent);
+  color: var(--out-hue);
+}
+
+/* 按钮文字不折行（Fluent 按钮默认允许换行，窄空间里会把中文拆成两行） */
+fluent-button {
+  white-space: nowrap;
+  flex: none;
+}
+
+/* 原生下拉框（原型的样式） */
+.select {
+  height: 32px;
+  padding: 0 10px;
+  border-radius: var(--r-ctl);
+  border: 1px solid var(--stroke-strong);
+  background: var(--card-solid);
+  color: var(--text);
+  font: inherit;
+  max-width: 100%;
+}
+
+/* 长文字一律截断（节点名最长 64 个字符，不能撑开布局），悬停用 title 显示全名 */
+.ellipsis {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+  }
+}

@@ -1,0 +1,240 @@
+// 开发用的界面预览（只由开发服务器的 preview.html 加载，不进入发布构建）：
+// 用 Tauri 的 mockIPC 模拟后端，便于在普通浏览器（Playwright 驱动的无头 Edge）里检查布局和交互。
+// 这里的连线规则只是为了演示提示文字的简化实现；产品里的规则只在后端（aemeath_protocol::topology::check_route）。
+
+import type { Channel } from '@tauri-apps/api/core'
+import { emit } from '@tauri-apps/api/event'
+import { mockIPC, mockWindows } from '@tauri-apps/api/mocks'
+import type { NodeView, RouteView, SlotView, ViewState } from '@/api/types'
+import { roleOf } from '@/api/types'
+
+const LONG_NAME = '直播推流混音输出 · 给 OBS 录制和推流使用的一个非常非常长的节点名称，用来测试截断效果'
+const METER_INTERVAL_MS = 33
+
+function node(partial: Partial<NodeView> & Pick<NodeView, 'id' | 'name' | 'kind' | 'x' | 'y'>): NodeView {
+  return { slot: null, device: null, gainDb: 0, muted: false, status: { state: 'ok' }, ...partial }
+}
+
+const nodes: NodeView[] = [
+  node({
+    id: 1,
+    name: '麦克风 · Rear Mic',
+    kind: 'externalInput',
+    device: { endpointId: 'mic', name: 'Rear Mic (Realtek USB Audio)' },
+    x: 40,
+    y: 60,
+  }),
+  node({ id: 2, name: '默认输入', kind: 'virtualInput', slot: { direction: 'in', number: 1 }, x: 40, y: 260 }),
+  node({ id: 3, name: LONG_NAME, kind: 'virtualOutput', slot: { direction: 'out', number: 1 }, x: 480, y: 40 }),
+  node({
+    id: 4,
+    name: '监听音箱 · LG ULTRAGEAR+',
+    kind: 'externalOutput',
+    device: { endpointId: 'lg', name: 'LG ULTRAGEAR+ (NVIDIA High Definition Audio)' },
+    x: 480,
+    y: 280,
+  }),
+  node({
+    id: 5,
+    name: 'NVIDIA Broadcast',
+    kind: 'externalInput',
+    device: { endpointId: 'nv', name: 'Microphone (NVIDIA Broadcast)' },
+    status: { state: 'offline', reason: 'waitingForDevice' },
+    x: 40,
+    y: 420,
+  }),
+]
+
+let state: ViewState = {
+  engine: { state: 'running', sampleRate: 48000 },
+  registration: null,
+  firstRun: false,
+  canUndo: false,
+  usbipVersion: '0.9.8.1',
+  language: { mode: 'system' },
+  nodes,
+  routes: [
+    { from: 1, to: 3, gainDb: -3, enabled: true, labelPosition: 0.5 },
+    { from: 2, to: 4, gainDb: 0, enabled: true, labelPosition: 0.5 },
+    { from: 1, to: 4, gainDb: -6, enabled: false, labelPosition: 0.35 },
+  ],
+  slots: [],
+}
+const undoStack: ViewState[] = []
+
+function slotsOf(current: ViewState): SlotView[] {
+  const rows: SlotView[] = []
+  for (const direction of ['in', 'out'] as const) {
+    for (let number = 1; number <= 8; number++) {
+      const occupant = current.nodes.find((n) => n.slot?.direction === direction && n.slot.number === number)
+      const repairing = direction === 'out' && number === 2 && occupant !== undefined
+      rows.push({
+        slot: { direction, number },
+        deviceName: `${direction === 'in' ? '扬声器' : '线路'} (Aemeath Dev ${direction === 'in' ? 'In' : 'Out'} ${number})`,
+        occupant: occupant?.id ?? null,
+        health: occupant
+          ? repairing
+            ? { state: 'retrying', failures: 1 }
+            : { state: 'healthy' }
+          : { state: 'unplugged' },
+        format: { sampleRate: number > 2 && direction === 'out' ? 44100 : 48000, sampleFormat: 'int32', channels: 2 },
+      })
+    }
+  }
+  return rows
+}
+
+function commit(next: ViewState, undoable: boolean): ViewState {
+  if (undoable) {
+    undoStack.push(state)
+  }
+  state = { ...next, canUndo: undoStack.length > 0 }
+  state.slots = slotsOf(state)
+  return state
+}
+
+function reaches(routes: RouteView[], start: number, goal: number): boolean {
+  const stack = [start]
+  const seen = new Set(stack)
+  while (stack.length > 0) {
+    const current = stack.pop()
+    if (current === goal) {
+      return true
+    }
+    for (const route of routes.filter((r) => r.from === current)) {
+      if (!seen.has(route.to)) {
+        seen.add(route.to)
+        stack.push(route.to)
+      }
+    }
+  }
+  return false
+}
+
+function check(from: number, to: number): string | null {
+  const source = state.nodes.find((n) => n.id === from)
+  const target = state.nodes.find((n) => n.id === to)
+  if (source === undefined || target === undefined || from === to) {
+    return 'selfRoute'
+  }
+  if (roleOf(source.kind) === 'out') {
+    return 'cannotSend'
+  }
+  if (roleOf(target.kind) === 'in') {
+    return 'cannotReceive'
+  }
+  if (state.routes.some((r) => r.from === from && r.to === to)) {
+    return 'duplicate'
+  }
+  return reaches(state.routes, to, from) ? 'loop' : null
+}
+
+type Args = Record<string, unknown>
+
+function updateRoute(args: Args, change: Partial<RouteView>, undoable: boolean): ViewState {
+  const routes = state.routes.map((r) => (r.from === args.from && r.to === args.to ? { ...r, ...change } : r))
+  return commit({ ...state, routes }, undoable)
+}
+
+state = commit(state, false)
+mockWindows('main')
+mockIPC(
+  (cmd, payload) => {
+    const args = (payload ?? {}) as Args
+    switch (cmd) {
+      case 'get_state':
+        return state
+      case 'route_verdicts':
+        return state.nodes.map((n) => ({
+          node: n.id,
+          rejection: args.fromOutput ? check(args.node as number, n.id) : check(n.id, args.node as number),
+        }))
+      case 'connect':
+        return commit(
+          {
+            ...state,
+            routes: [
+              ...state.routes,
+              { from: args.from as number, to: args.to as number, gainDb: 0, enabled: true, labelPosition: 0.5 },
+            ],
+          },
+          true,
+        )
+      case 'disconnect':
+        return commit(
+          { ...state, routes: state.routes.filter((r) => !(r.from === args.from && r.to === args.to)) },
+          true,
+        )
+      case 'set_route_enabled':
+        return updateRoute(args, { enabled: args.enabled as boolean }, true)
+      case 'set_route_gain':
+        return updateRoute(args, { gainDb: args.gainDb as number }, false)
+      case 'set_route_label':
+        return updateRoute(args, { labelPosition: args.position as number }, false)
+      case 'move_node':
+        return commit(
+          {
+            ...state,
+            nodes: state.nodes.map((n) =>
+              n.id === args.node ? { ...n, x: args.x as number, y: args.y as number } : n,
+            ),
+          },
+          false,
+        )
+      case 'rename_node':
+        return commit(
+          { ...state, nodes: state.nodes.map((n) => (n.id === args.node ? { ...n, name: args.name as string } : n)) },
+          true,
+        )
+      case 'remove_node':
+        return commit(
+          {
+            ...state,
+            nodes: state.nodes.filter((n) => n.id !== args.node),
+            routes: state.routes.filter((r) => r.from !== args.node && r.to !== args.node),
+          },
+          true,
+        )
+      case 'undo': {
+        const previous = undoStack.pop()
+        return previous === undefined ? state : commit(previous, false)
+      }
+      case 'set_language':
+        return commit({ ...state, language: args.language as ViewState['language'] }, false)
+      case 'list_devices':
+        return args.direction === 'input'
+          ? [{ endpointId: 'mic', name: 'Rear Mic (Realtek USB Audio)' }]
+          : [
+              { endpointId: 'lg', name: 'LG ULTRAGEAR+ (NVIDIA High Definition Audio)' },
+              { endpointId: 'rdo', name: 'Realtek Digital Output (Realtek USB Audio)' },
+            ]
+      case 'watch_meters': {
+        const channel = args.channel as Channel<ArrayBuffer>
+        let phase = 0
+        window.setInterval(() => {
+          phase += 0.15
+          const buffer = new ArrayBuffer(state.nodes.length * 12)
+          const view = new DataView(buffer)
+          state.nodes.forEach((n, index) => {
+            const level = n.status.state === 'ok' ? 0.05 + 0.4 * Math.abs(Math.sin(phase + index)) : 0
+            view.setUint32(index * 12, n.id, true)
+            view.setFloat32(index * 12 + 4, level, true)
+            view.setFloat32(index * 12 + 8, level * 0.8, true)
+          })
+          channel.onmessage(buffer)
+        }, METER_INTERVAL_MS)
+        return null
+      }
+      case 'plugin:window|is_maximized':
+        return false
+      default:
+        return null
+    }
+  },
+  { shouldMockEvents: true },
+)
+
+// 让预览也能测试"状态推送"：每 5 秒推一次当前状态
+window.setInterval(() => void emit('state-changed', state), 5000)
+
+await import('@/main')

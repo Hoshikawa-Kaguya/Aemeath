@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/aemeath-protocol",
     "crates/aemeath-sys",
+    "crates/aemeath-runtime",
     "engine/aemeath-usbip",
     "engine/aemeath-io",
     "engine/aemeath-dsp",
@@ -12,6 +13,7 @@ members = [
     "app/crates/aemeath-control",
     "app/src-tauri",
     "guardian",
+    "tools/aemeath-dev-cleanup",
 ]
 
 [workspace.package]
@@ -25,6 +27,7 @@ publish = false
 # 内部 crate
 aemeath-protocol = { path = "crates/aemeath-protocol" }
 aemeath-sys = { path = "crates/aemeath-sys" }
+aemeath-runtime = { path = "crates/aemeath-runtime" }
 aemeath-usbip = { path = "engine/aemeath-usbip" }
 aemeath-io = { path = "engine/aemeath-io" }
 aemeath-dsp = { path = "engine/aemeath-dsp" }
@@ -55,6 +58,7 @@ tracing-appender = "0.2.5"
 # 固定在 Tauri 2：crates.io 上的最新版已是 3.0 alpha（ADR-0013）
 tauri = "2.12.5"
 tauri-build = "2.7.4"
+embed-resource = "3.0.12"
 
 # 除 aemeath-sys 外一律禁止 unsafe：Windows 调用都集中在 aemeath-sys，由它提供安全的封装（ADR-0008）
 [workspace.lints.rust]

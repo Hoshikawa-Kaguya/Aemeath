@@ -1,4 +1,4 @@
-//! 列出音频端点（含不在线的），以及设备接口名包含给定文字的端点的设备格式。只读，不修改任何设置。
+//! 列出设备接口名包含给定文字的音频端点（含不在线的）：状态、名称、设备格式和端点 ID。只读，不修改任何设置。
 //!
 //! ```text
 //! cargo run -p aemeath-sys --example audio-endpoints [-- <接口名过滤，默认 Aemeath>]
@@ -35,10 +35,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Err(error) => format!("({error})"),
             };
             println!(
-                "{flow:?} {:<10?} {:<22} {:<34} {format}",
+                "{flow:?} {:<10?} {:<22} {:<34} {format}  {}",
                 endpoint.state,
                 endpoint.interface_name.unwrap_or_default(),
                 endpoint.name.unwrap_or_default(),
+                endpoint.id,
             );
         }
     }

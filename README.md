@@ -37,6 +37,10 @@ pnpm tauri dev                # 开发运行主程序（前端热更新）
 pnpm tauri build --no-bundle  # 发布构建；安装包由 Velopack 另行打包
 ```
 
+主程序要连上引擎才能出声。守护进程会依次拉起引擎和主程序；开发时也可以手动先运行引擎（`cargo run -p aemeath-host`），再运行主程序。两者不带参数时，按开发身份算出相同的数据目录（`%APPDATA%\Aemeath Dev`）、管道名和共享内存名。
+
+不启动后端、只检查界面时，在 `app/` 下运行 `pnpm dev`，打开 `http://localhost:1420/preview.html`：预览页用 Tauri 的 `mockIPC` 模拟后端（`src/dev/preview.ts`），只由开发服务器提供，不进入发布构建。
+
 检查（与 CI 相同）：
 
 ```sh
@@ -52,10 +56,11 @@ cargo test --workspace
 
 | 目录 | 内容 |
 |---|---|
-| `crates/` | 共用的库：`aemeath-protocol`（IPC 消息）、`aemeath-sys`（Windows API 封装，唯一允许 `unsafe` 的 crate） |
+| `crates/` | 共用的库：`aemeath-protocol`（IPC 消息、路由拓扑、电平共享内存布局）、`aemeath-sys`（Windows API 封装，唯一允许 `unsafe` 的 crate）、`aemeath-runtime`（三个进程共用的命令行参数与日志） |
 | `engine/` | 引擎进程：音频、重采样、主时钟、USB/IP 服务端 |
 | `app/` | 主程序（Tauri 2）：`src/` 是 Vue 3 前端，`src-tauri/` 是 Rust 后端，`crates/` 是控制面的库 |
 | `guardian/` | 守护进程 |
+| `tools/` | 开发工具：`aemeath-dev-cleanup`（完全卸载开发槽位的设备实例） |
 
 ## 许可证
 

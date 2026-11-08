@@ -47,3 +47,17 @@ export const i18n = createI18n({
   fallbackLocale: SOURCE_LOCALE,
   messages,
 })
+
+/** 偏好设置里的语言（"跟随系统"时按系统语言列表挑选）对应的界面语言 */
+export function localeFor(preference: { mode: 'system' } | { mode: 'fixed'; locale: string }): string {
+  if (preference.mode === 'fixed' && availableLocales.includes(preference.locale)) {
+    return preference.locale
+  }
+  return detectLocale(navigator.languages)
+}
+
+/** 切换界面语言，立即生效（不需要重启） */
+export function setLocale(locale: string): void {
+  i18n.global.locale.value = locale
+  document.documentElement.lang = locale
+}

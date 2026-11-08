@@ -6,7 +6,16 @@ import vue from '@vitejs/plugin-vue'
 const DEV_PORT = 1420
 
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [
+    vue({
+      template: {
+        compilerOptions: {
+          // Fluent 2 的 Web Components（fluent-button 等）由浏览器渲染，Vue 不当作组件解析
+          isCustomElement: (tag) => tag.startsWith('fluent-'),
+        },
+      },
+    }),
+  ],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),

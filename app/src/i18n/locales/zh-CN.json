@@ -6,9 +6,167 @@
     "minimize": "最小化",
     "maximize": "最大化",
     "restore": "向下还原",
-    "close": "关闭"
+    "close": "关闭",
+    "statusAria": "引擎状态"
   },
-  "shell": {
-    "empty": "工作台将显示在这里。"
+  "chip": {
+    "engineRunning": "引擎运行中",
+    "engineConnecting": "正在启动引擎…",
+    "engineUnresponsive": "引擎没有响应",
+    "engineVersionMismatch": "引擎版本不匹配",
+    "offline": "离线节点：{n}",
+    "slots": "槽位 {used}/16",
+    "slotsTip": "驱动：usbip-win2 {version}。单击打开设备页。",
+    "slotsTipNoDriver": "没有找到 usbip-win2。单击打开设备页。",
+    "rate": "{rate} kHz"
+  },
+  "nav": {
+    "aria": "主导航",
+    "workbench": "工作台",
+    "devices": "设备",
+    "settings": "设置"
+  },
+  "kind": {
+    "externalInput": "外部输入",
+    "virtualInput": "虚拟输入",
+    "virtualOutput": "虚拟输出",
+    "externalOutput": "外部输出",
+    "bus": "总线"
+  },
+  "wb": {
+    "hint": "从端口拖动即可连线 · 单击连线选中后按 Del 删除 · 在连线上滚动滚轮调增益",
+    "add": "添加节点",
+    "fit": "适应窗口",
+    "undo": "撤销",
+    "zoom": "{percent}%"
+  },
+  "node": {
+    "aria": "{kind} {name}",
+    "subtitle": "{kind} · {detail}",
+    "slotName": "Aemeath {direction} {number}",
+    "directionIn": "In",
+    "directionOut": "Out",
+    "defaultInput": "默认输入",
+    "pending": "正在准备…",
+    "rename": "重命名 {name}",
+    "offline": {
+      "waitingForDevice": "离线 · 等待设备",
+      "inUseByOtherApp": "离线 · 被其他程序独占",
+      "noSignal": "离线 · 没有信号",
+      "slotRepairing": "正在重新挂载虚拟设备",
+      "slotFailing": "虚拟设备无法挂载"
+    }
+  },
+  "route": {
+    "off": "关 · {gain}",
+    "toggle": "开关从 {src} 到 {dst} 的连线",
+    "select": "选中从 {src} 到 {dst} 的连线：{state}，{gain}",
+    "stateOn": "开启",
+    "stateOff": "关闭",
+    "moveHint": "拖动可沿连线移动这个标签（Alt+← / Alt+→）"
+  },
+  "drag": {
+    "hint": "放到节点上即可连线 · Esc 取消",
+    "ok": "连接到 {dst}",
+    "selfRoute": "不能连接到自己",
+    "duplicate": "这条连线已存在",
+    "loop": "不能连接：会形成回路",
+    "noInput": "不能连接：{dst} 没有输入端",
+    "noOutput": "不能连接：{dst} 没有输出端"
+  },
+  "toast": {
+    "routeDeleted": "已删除连线：{src} → {dst}",
+    "nodeDeleted": "已删除节点：{name}",
+    "undo": "撤销",
+    "dismiss": "关闭"
+  },
+  "error": {
+    "unavailable": "控制面没有运行。",
+    "invalidName": "名称须为 1 到 64 个字符。",
+    "routeRejected": "不能建立这条连线。",
+    "noFreeSlot": "这个方向的 8 个虚拟设备都已被占用。",
+    "slotOccupied": "这个虚拟设备已被占用。",
+    "deviceInUse": "这台设备已经有节点了。",
+    "notFound": "节点或连线已不存在。",
+    "failed": "出错了：{message}"
+  },
+  "add": {
+    "title": "添加节点",
+    "kind": "节点类型",
+    "device": "设备",
+    "noDevices": "这个方向没有可用的设备。",
+    "loadingDevices": "正在查找设备…",
+    "name": "名称",
+    "cancel": "取消",
+    "confirm": "添加",
+    "kindHint": {
+      "externalInput": "这台电脑上的麦克风或其他录音设备",
+      "virtualInput": "一个虚拟播放设备，应用可以把声音播放到这里",
+      "virtualOutput": "一个虚拟录音设备，OBS 等应用可以从这里录制",
+      "externalOutput": "这台电脑上的耳机、音箱或其他播放设备"
+    }
+  },
+  "dev": {
+    "sub": "Aemeath 提供 16 个固定的虚拟设备槽位。节点占用槽位时，设备自动挂上；没有节点占用时，设备会拔出，不会留在 Windows 的设备列表里。设备名固定，只在卸载 Aemeath 时删除。",
+    "driver": "驱动",
+    "driverVal": "usbip-win2 {version}",
+    "driverMissing": "没有找到 usbip-win2",
+    "health": "挂载检查",
+    "healthOk": "所有被占用的槽位都已挂载",
+    "healthWaiting": "等待引擎",
+    "healthFix": "{n} 个槽位正在修复",
+    "usage": "已占用槽位",
+    "usageVal": "{used} / 16",
+    "check": "立即检查",
+    "inputs": "虚拟输入",
+    "inputsSub": "应用播放到这里",
+    "outputs": "虚拟输出",
+    "outputsSub": "OBS 等应用从这里录制",
+    "colSlot": "槽位",
+    "colName": "Windows 中的设备名",
+    "colOcc": "占用者",
+    "colState": "状态",
+    "colFmt": "设备格式",
+    "stOk": "已挂载",
+    "stOff": "拔出",
+    "stSettling": "正在挂上…",
+    "stEngine": "等待引擎",
+    "stFix": "重新挂载中（第 {n} 次）",
+    "stFail": "无法挂载（第 {n} 次）",
+    "free": "未占用",
+    "freeSub": "有节点使用时自动挂上",
+    "fmt": "{rate} kHz · {format}",
+    "fmtUnknown": "未知",
+    "fmtOff": "拔出时不可设置",
+    "fmtSame": "与引擎相同 · 不重采样",
+    "fmtDiff": "与引擎采样率不同 · 支持槽位重采样之前没有声音",
+    "note": "虚拟设备第一次挂上时，Aemeath 会把它设成引擎采样率。修改设备格式会让正在使用该设备的应用（例如 OBS）短暂断开。"
+  },
+  "sampleFormat": {
+    "int16": "16 位整数",
+    "int24": "24 位整数",
+    "int24In32": "24 位整数",
+    "int32": "32 位整数",
+    "float32": "32 位浮点",
+    "float64": "64 位浮点"
+  },
+  "set": {
+    "ui": "界面",
+    "lang": "语言",
+    "langSub": "立即生效。",
+    "langSys": "跟随系统",
+    "langZh": "中文（简体）",
+    "langEn": "English"
+  },
+  "reg": {
+    "title": "正在准备虚拟设备",
+    "body": "Aemeath 正在设置它的 16 个虚拟设备。第一次运行时，Windows 要为每个设备安装驱动，可能需要 1 分钟左右。",
+    "progress": "{done} / {total}",
+    "failing": "部分设备暂时无法挂载：{slots}。Aemeath 会继续重试。",
+    "waitingEngine": "正在等待引擎启动…"
+  },
+  "tray": {
+    "open": "打开 Aemeath",
+    "quit": "退出 Aemeath"
   }
 }
