@@ -2,22 +2,55 @@
 import { computed, ref, useTemplateRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { backend } from '@/api/backend'
-import { DEFAULT_DEVICE_SETTINGS, type DeviceChoice, type DeviceSettings, type NewNodeKind } from '@/api/types'
+import {
+  DEFAULT_DEVICE_SETTINGS,
+  type DeviceChoice,
+  type DeviceSettings,
+  type NewNodeKind,
+  type NodeView,
+} from '@/api/types'
 import { useAppStore } from '@/stores/app'
+import { slotName } from '@/stores/nodeLabels'
 import DeviceSettingsFields from './DeviceSettingsFields.vue'
+import { pickProgram } from './pickProgram'
 
 // "添加节点"对话框：选类型；外部设备再选设备，并在添加时就设定独占、格式、缓冲和重采样算法（ADR-0014，
 // 维护者要求避免添加后再调整）；名称默认取设备名或类型名，可以修改。
 // 虚拟节点的槽位由后端自动分配编号最小的空闲槽位（ADR-0009）。总线不对应任何设备，只有名称。
-type KindChoice = 'externalInput' | 'virtualInput' | 'bus' | 'virtualOutput' | 'externalOutput'
+// 应用源：从有音频会话的程序里选，或者"浏览…"选还没运行的 exe（M3 计划 A5）。
+type KindChoice =
+  | 'externalInput'
+  | 'virtualInput'
+  | 'appSource'
+  | 'externalInsert'
+  | 'bus'
+  | 'recorder'
+  | 'virtualOutput'
+  | 'externalOutput'
 
 interface FluentDialog extends HTMLElement {
   show(): void
   hide(): void
 }
 
-/** 两列排布：第一行是两种输入，第二行是两种输出，总线单独占最后一整行 */
-const KINDS: KindChoice[] = ['externalInput', 'virtualInput', 'virtualOutput', 'externalOutput', 'bus']
+/** 程序列表里的一项 */
+interface ProgramChoice {
+  path: string
+  label: string
+}
+
+/** 两列排布，每行两种：两种输入、两种输出、应用源和外部插入、总线和录音节点 */
+const KINDS: KindChoice[] = [
+  'externalInput',
+  'virtualInput',
+  'virtualOutput',
+  'externalOutput',
+  'appSource',
+  'externalInsert',
+  'bus',
+  'recorder',
+]
+const WIDE: KindChoice[] = []
 const NAME_MAX = 64
 
 const emit = defineEmits<{ added: [] }>()
@@ -34,10 +67,77 @@ const nameEdited = ref(false)
 const io = ref<DeviceSettings>({ ...DEFAULT_DEVICE_SETTINGS })
 let position = { x: 0, y: 0 }
 
-const isExternal = computed(() => kind.value === 'externalInput' || kind.value === 'externalOutput')
-const direction = computed(() => (kind.value === 'externalInput' ? 'input' : 'output'))
+const isInsert = computed(() => kind.value === 'externalInsert')
+const isExternal = computed(() => kind.value === 'externalInput' || kind.value === 'externalOutput' || isInsert.value)
+const direction = computed(() => (kind.value === 'externalOutput' ? 'output' : 'input'))
+/** 外部插入将使用的送出端：编号最小的空闲 Out，与后端的分配规则相同 */
+const sendSlot = computed(
+  () => store.state?.slots.find((row) => row.slot.direction === 'out' && row.occupant === null)?.slot ?? null,
+)
+
+/** 同方向上已被占用的设备不能再添加，说明被谁占用（M3 计划 X6） */
+function deviceOwner(endpointId: string): NodeView | undefined {
+  const wanted = direction.value === 'input' ? ['externalInput', 'externalInsert'] : ['externalOutput']
+  return store.nodes.find((node) => wanted.includes(node.kind) && node.device?.endpointId === endpointId)
+}
+
+function deviceLabel(choice: DeviceChoice): string {
+  const owner = deviceOwner(choice.endpointId)
+  if (owner === undefined) {
+    return choice.name
+  }
+  const key = owner.kind === 'externalInsert' ? 'add.usedAsReturn' : 'add.usedByNode'
+  return `${choice.name} (${t(key, { node: owner.name })})`
+}
 const device = computed(() => devices.value?.find((choice) => choice.endpointId === endpointId.value))
-const canConfirm = computed(() => name.value.trim() !== '' && (!isExternal.value || device.value !== undefined))
+const programs = ref<ProgramChoice[]>([])
+const program = ref('')
+const programName = ref('')
+const isAppSource = computed(() => kind.value === 'appSource')
+const canConfirm = computed(
+  () =>
+    name.value.trim() !== '' &&
+    (!isExternal.value || device.value !== undefined) &&
+    (!isInsert.value || sendSlot.value !== null) &&
+    (!isAppSource.value || program.value !== ''),
+)
+
+/** 有音频会话、还没有应用源节点的程序（同一个 exe 只列一次） */
+async function loadPrograms(): Promise<void> {
+  programs.value = []
+  program.value = ''
+  programName.value = ''
+  if (!isAppSource.value) {
+    return
+  }
+  try {
+    const { apps } = await backend.listApps()
+    const seen = new Set<string>()
+    for (const app of apps) {
+      if (!app.system && app.executable !== null && app.sourceNode === null && !seen.has(app.executable)) {
+        seen.add(app.executable)
+        programs.value.push({ path: app.executable, label: `${app.name} · ${app.executable}` })
+      }
+    }
+  } catch (error) {
+    store.showToast(store.errorText(error))
+  }
+}
+
+async function browse(): Promise<void> {
+  const path = await pickProgram()
+  if (path !== null) {
+    if (!programs.value.some((choice) => choice.path === path)) {
+      programs.value.push({ path, label: path })
+    }
+    program.value = path
+  }
+}
+
+watch(program, async (path) => {
+  programName.value = path === '' ? '' : await backend.describeProgram(path)
+  suggestName()
+})
 
 async function loadDevices(): Promise<void> {
   devices.value = null
@@ -45,11 +145,10 @@ async function loadDevices(): Promise<void> {
   if (!isExternal.value) {
     return
   }
-  const direction = kind.value === 'externalInput' ? 'input' : 'output'
   try {
-    const list = await backend.listDevices(direction)
+    const list = await backend.listDevices(direction.value)
     devices.value = list
-    endpointId.value = list[0]?.endpointId ?? ''
+    endpointId.value = list.find((choice) => deviceOwner(choice.endpointId) === undefined)?.endpointId ?? ''
   } catch (error) {
     devices.value = []
     store.showToast(store.errorText(error))
@@ -60,11 +159,24 @@ function suggestName(): void {
   if (nameEdited.value) {
     return
   }
+  if (isAppSource.value) {
+    name.value = programName.value
+    return
+  }
+  if (isInsert.value) {
+    name.value = insertName(device.value?.name ?? '')
+    return
+  }
   name.value = (isExternal.value ? device.value?.name : t(`kind.${kind.value}`)) ?? ''
 }
 
+/** 外部插入的默认名取设备名括号里的部分，没有括号时用完整设备名（M3 计划 X2） */
+function insertName(deviceName: string): string {
+  return /\(([^()]+)\)\s*$/.exec(deviceName)?.[1] ?? deviceName
+}
+
 watch(kind, async () => {
-  await loadDevices()
+  await Promise.all([loadDevices(), loadPrograms()])
   suggestName()
 })
 watch(endpointId, () => {
@@ -79,7 +191,7 @@ async function open(at: { x: number; y: number }): Promise<void> {
   nameEdited.value = false
   io.value = { ...DEFAULT_DEVICE_SETTINGS }
   dialog.value?.show()
-  await loadDevices()
+  await Promise.all([loadDevices(), loadPrograms()])
   suggestName()
 }
 
@@ -93,10 +205,14 @@ async function confirm(): Promise<void> {
   switch (kind.value) {
     case 'externalInput':
     case 'externalOutput':
+    case 'externalInsert':
       if (device.value === undefined) {
         return
       }
       newKind = { type: kind.value, endpointId: device.value.endpointId, deviceName: device.value.name }
+      break
+    case 'appSource':
+      newKind = { type: 'appSource', program: program.value }
       break
     default:
       newKind = { type: kind.value }
@@ -117,7 +233,7 @@ defineExpose({ open })
       <h2 slot="title" class="title">{{ t('add.title') }}</h2>
       <div class="form">
         <div class="kinds" role="radiogroup" :aria-label="t('add.kind')">
-          <label v-for="choice in KINDS" :key="choice" class="kind" :class="{ wide: choice === 'bus' }">
+          <label v-for="choice in KINDS" :key="choice" class="kind" :class="{ wide: WIDE.includes(choice) }">
             <input v-model="kind" type="radio" name="kind" :value="choice" />
             <span class="choice">
               <b>{{ t(`kind.${choice}`) }}</b>
@@ -127,14 +243,35 @@ defineExpose({ open })
         </div>
 
         <label v-if="isExternal" class="field">
-          <span>{{ t('add.device') }}</span>
+          <span>{{ t(isInsert ? 'add.returnDevice' : 'add.device') }}</span>
           <select v-if="devices && devices.length > 0" v-model="endpointId" class="select">
-            <option v-for="choice in devices" :key="choice.endpointId" :value="choice.endpointId">
-              {{ choice.name }}
+            <option
+              v-for="choice in devices"
+              :key="choice.endpointId"
+              :value="choice.endpointId"
+              :disabled="deviceOwner(choice.endpointId) !== undefined"
+            >
+              {{ deviceLabel(choice) }}
             </option>
           </select>
           <span v-else class="caption">{{ devices === null ? t('add.loadingDevices') : t('add.noDevices') }}</span>
         </label>
+
+        <div v-if="isAppSource" class="field">
+          <label for="add-program">{{ t('add.program') }}</label>
+          <div class="program-row">
+            <select id="add-program" v-model="program" class="select">
+              <option value="" disabled>{{ t('add.programPlaceholder') }}</option>
+              <option v-for="choice in programs" :key="choice.path" :value="choice.path">{{ choice.label }}</option>
+            </select>
+            <fluent-button @click="browse">{{ t('add.browse') }}</fluent-button>
+          </div>
+          <span class="caption">{{ t('add.appSourceNote') }}</span>
+        </div>
+
+        <p v-if="isInsert" class="caption insert-send">
+          {{ sendSlot === null ? t('error.noFreeSlot') : t('add.insertSend', { slot: slotName(sendSlot) }) }}
+        </p>
 
         <DeviceSettingsFields
           v-if="isExternal && device"
@@ -215,5 +352,19 @@ defineExpose({ open })
 
 .choice b {
   font-weight: var(--fontWeightSemibold);
+}
+
+.insert-send {
+  margin: 0;
+}
+
+.program-row {
+  display: flex;
+  gap: 8px;
+}
+
+.program-row .select {
+  flex: 1;
+  min-width: 0;
 }
 </style>

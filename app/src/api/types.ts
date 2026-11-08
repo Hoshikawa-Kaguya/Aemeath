@@ -9,7 +9,17 @@ export interface SlotRef {
   number: number
 }
 
-export type NodeKind = 'externalInput' | 'virtualInput' | 'virtualOutput' | 'externalOutput' | 'bus'
+export type NodeKind =
+  | 'externalInput'
+  | 'virtualInput'
+  | 'virtualOutput'
+  | 'externalOutput'
+  | 'bus'
+  | 'appSource'
+  | 'externalInsert'
+  | 'recorder'
+  | 'recorder'
+  | 'recorder'
 
 export type OfflineReason =
   'waitingForDevice' | 'inUseByOtherApp' | 'exclusiveNotAllowed' | 'noSignal' | 'slotRepairing' | 'slotFailing'
@@ -46,11 +56,22 @@ export const DEFAULT_DEVICE_SETTINGS: DeviceSettings = {
   resampler: null,
 }
 
-export type NodeStatus = { state: 'ok' } | { state: 'pending' } | { state: 'offline'; reason: OfflineReason }
+export type NodeStatus =
+  | { state: 'ok' }
+  | { state: 'pending' }
+  | { state: 'offline'; reason: OfflineReason }
+  | { state: 'notRunning' }
+  | { state: 'programMissing' }
 
 export interface DeviceView {
   endpointId: string
   name: string
+}
+
+/** 应用源绑定的程序 */
+export interface ProgramView {
+  path: string
+  fileName: string
 }
 
 export interface NodeView {
@@ -59,6 +80,9 @@ export interface NodeView {
   kind: NodeKind
   slot: SlotRef | null
   device: DeviceView | null
+  program: ProgramView | null
+  /** 应用源按节点覆盖的重采样算法；null 表示跟随全局默认 */
+  resampler: ResamplerKind | null
   x: number
   y: number
   gainDb: number
@@ -72,6 +96,12 @@ export interface NodeView {
   /** 设备换了端点、又有多个同名设备时，可以改用的候选 */
   candidates: DeviceView[]
   status: NodeStatus
+  /** 录音节点的设置与状态 */
+  recorder: RecorderView | null
+  muteHotkey: HotkeyBindingView | null
+  recordHotkey: HotkeyBindingView | null
+  /** 这个应用源造成了重复路由 */
+  duplicate: DuplicateView | null
 }
 
 /** 应用页（src-tauri/src/apps.rs） */
@@ -85,6 +115,8 @@ export interface AppView {
   /** Aemeath 记录的指派 */
   assigned: string | null
   system: boolean
+  /** 这个程序已有的应用源节点 */
+  sourceNode: number | null
 }
 
 export interface LandingChoice {
@@ -117,7 +149,80 @@ export interface DefaultDevicesView {
 /** 后端给出的一次性提示（src-tauri/src/view.rs 的 NoticeView） */
 export interface Notice {
   id: number
-  kind: { type: 'deviceReplaced'; node: string; device: string }
+  kind:
+    | { type: 'deviceReplaced'; node: string; device: string }
+    | { type: 'landingRestored'; app: string; landing: string }
+    | { type: 'recordingFailed'; node: string; reason: RecordingFailure }
+    | { type: 'recordingFailed'; node: string; reason: RecordingFailure }
+}
+
+export interface ModifiersView {
+  ctrl: boolean
+  alt: boolean
+  shift: boolean
+  win: boolean
+}
+
+export type KeyCodeView = { type: 'keyboard'; vk: number } | { type: 'mouseX1' } | { type: 'mouseX2' }
+
+export interface HotkeyView {
+  modifiers: ModifiersView
+  key: KeyCodeView
+}
+
+export type HotkeyModeView = 'toggle' | 'hold'
+
+export interface HotkeyBindingView {
+  key: HotkeyView
+  mode: HotkeyModeView
+}
+
+export type HotkeyTargetView =
+  | { type: 'nodeMute'; node: number }
+  | { type: 'routeToggle'; from: number; to: number }
+  | { type: 'nodeRecord'; node: number }
+  | { type: 'allRecording' }
+  | { type: 'panicMute' }
+  | { type: 'toggleWindow' }
+
+export interface HotkeyRowView {
+  target: HotkeyTargetView
+  binding: HotkeyBindingView
+  /** 被其他程序占用 */
+  occupied: boolean
+}
+
+export type CaptureView = { type: 'captured'; key: HotkeyView } | { type: 'cancelled' } | { type: 'cleared' }
+
+export type RecordFormat = 'wav' | 'flac'
+export type RecordDepth = 'int16' | 'int24' | 'float32'
+
+export interface RecorderSettingsView {
+  format: RecordFormat
+  depth: RecordDepth
+}
+
+export type RecordingFailure = 'diskFull' | 'writeFailed'
+
+export type RecorderStateView =
+  | { state: 'idle' }
+  | { state: 'recording'; file: string; frames: number; bytes: number }
+  | { state: 'failed'; reason: RecordingFailure }
+
+export interface RecorderView {
+  settings: RecorderSettingsView
+  state: RecorderStateView
+}
+
+export interface RecordingView {
+  folder: string
+  defaults: RecorderSettingsView
+}
+
+/** 一处重复路由的说明（只警告不阻止） */
+export interface DuplicateView {
+  program: string
+  destination: string
 }
 
 export interface RouteView {
@@ -127,6 +232,9 @@ export interface RouteView {
   enabled: boolean
   /** 标签在连线上的位置，0.1–0.9 */
   labelPosition: number
+  /** 这条连线在重复路径上 */
+  duplicate: DuplicateView | null
+  toggleHotkey: HotkeyBindingView | null
 }
 
 export type SlotHealth =
@@ -173,6 +281,10 @@ export interface ViewState {
   routes: RouteView[]
   /** 固定到控制台的节点 ID，从左到右 */
   console: number[]
+  recording: RecordingView
+  hotkeys: HotkeyRowView[]
+  /** 紧急静音开启中 */
+  panicMute: boolean
   slots: SlotView[]
   notices: Notice[]
 }
@@ -197,6 +309,9 @@ export type NewNodeKind =
   | { type: 'virtualInput' }
   | { type: 'virtualOutput' }
   | { type: 'bus' }
+  | { type: 'appSource'; program: string }
+  | { type: 'recorder' }
+  | { type: 'externalInsert'; endpointId: string; deviceName: string }
 
 export interface DeviceChoice {
   endpointId: string
@@ -211,6 +326,11 @@ export type CommandError =
   | { code: 'noFreeSlot' }
   | { code: 'slotOccupied' }
   | { code: 'deviceInUse' }
+  | { code: 'programInUse' }
+  | { code: 'invalidProgram' }
+  | { code: 'hotkeyModifierRequired' }
+  | { code: 'hotkeyToggleOnly' }
+  | { code: 'hotkeyConflict'; target: HotkeyTargetView }
   | { code: 'notFound' }
   | { code: 'failed'; message: string }
 
@@ -221,11 +341,14 @@ export function roleOf(kind: NodeKind): Role {
   switch (kind) {
     case 'externalInput':
     case 'virtualInput':
+    case 'appSource':
       return 'in'
     case 'bus':
+    case 'externalInsert':
       return 'proc'
     case 'virtualOutput':
     case 'externalOutput':
+    case 'recorder':
       return 'out'
   }
 }

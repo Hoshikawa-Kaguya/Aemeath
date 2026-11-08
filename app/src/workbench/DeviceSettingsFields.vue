@@ -2,8 +2,9 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { backend } from '@/api/backend'
-import type { BufferChoice, Capabilities, DeviceSettings, FormatView, ResamplerKind } from '@/api/types'
+import type { BufferChoice, Capabilities, DeviceSettings, FormatView } from '@/api/types'
 import { formatKhz } from '@/format/format'
+import ResamplerField from './ResamplerField.vue'
 
 // 外部设备节点的设备设置（ADR-0014），添加节点和节点设置两个对话框共用：
 // 独占（默认勾选）、独占时的格式与缓冲、按节点覆盖的重采样算法。可选的格式和周期由引擎探测设备得到。
@@ -16,8 +17,6 @@ const BUFFER_MIN_MS = 1
 const BUFFER_MAX_MS = 100
 const BUFFER_STEP_MS = 0.5
 const RECOMMENDED = 'recommended'
-const RESAMPLERS: ResamplerKind[] = ['sincHigh', 'sincStandard', 'polynomial', 'linear']
-const FOLLOW_GLOBAL = 'global'
 
 const capabilities = ref<Capabilities | null>(null)
 const probing = ref(false)
@@ -98,10 +97,10 @@ const customMs = computed({
   },
 })
 
-const resamplerValue = computed({
-  get: () => settings.value.resampler ?? FOLLOW_GLOBAL,
-  set: (value: string) => {
-    settings.value = { ...settings.value, resampler: value === FOLLOW_GLOBAL ? null : (value as ResamplerKind) }
+const resampler = computed({
+  get: () => settings.value.resampler,
+  set: (value) => {
+    settings.value = { ...settings.value, resampler: value }
   },
 })
 
@@ -174,16 +173,7 @@ const sharedFormat = computed(() => capabilities.value?.sharedFormat ?? null)
       }}
     </p>
 
-    <label class="field">
-      <span>{{ t('device.resampler') }}</span>
-      <select v-model="resamplerValue" class="select">
-        <option :value="FOLLOW_GLOBAL">{{ t('device.resamplerGlobal') }}</option>
-        <option v-for="kind in RESAMPLERS" :key="kind" :value="kind">{{ t(`resampler.${kind}.name`) }}</option>
-      </select>
-      <span class="caption">
-        {{ settings.resampler === null ? t('device.resamplerGlobalHint') : t(`resampler.${settings.resampler}.hint`) }}
-      </span>
-    </label>
+    <ResamplerField v-model="resampler" />
   </div>
 </template>
 

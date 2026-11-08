@@ -6,12 +6,15 @@
 //! - 连线规则与路由拓扑校验相同（[`topology::check_route`]）；拒绝时给出原因，供工作台拖线时提示。
 //! - 节点 ID 只增不减、不复用（引擎换拓扑时按 ID 接过旧状态，复用 ID 会让新节点继承旧节点的增益）。
 
-use aemeath_protocol::ids::{NodeId, SlotDirection, SlotId, SlotNumber};
-use aemeath_protocol::topology::{self, DeviceSettings, NodeRole, RouteCheckError, RouteRejection, Strip};
+use aemeath_protocol::ids::{NodeId, ProgramPath, SlotDirection, SlotId, SlotNumber};
+use aemeath_protocol::topology::{
+    self, DeviceSettings, NodeRole, RecorderSettings, Resampler, RouteCheckError, RouteRejection, Strip,
+};
 use aemeath_protocol::units::GainDb;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::hotkeys::HotkeyBinding;
 use crate::model::{DeviceRef, EngineSettings, LabelPosition, Node, NodeKind, NodeName, Position, Route};
 
 /// 第一个节点的 ID
@@ -38,6 +41,13 @@ pub enum NodeSpec {
     VirtualInput(Option<SlotNumber>),
     VirtualOutput(Option<SlotNumber>),
     Bus,
+    AppSource(ProgramPath),
+    /// 外部插入：取回端设备；送出端槽位不指定时自动分配（M3 计划 X1）
+    ExternalInsert {
+        ret: DeviceRef,
+        send: Option<SlotNumber>,
+    },
+    Recorder(RecorderSettings),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -54,6 +64,14 @@ pub enum EditError {
     NotAVirtualNode(NodeId),
     #[error("this device is already used by {by} in the same direction")]
     DeviceInUse { by: NodeId },
+    #[error("this program already has an app source: {by}")]
+    ProgramInUse { by: NodeId },
+    #[error("node {0} is not an app source")]
+    NotAnAppSource(NodeId),
+    #[error("node {0} is not a recorder")]
+    NotARecorder(NodeId),
+    #[error("FLAC cannot store floating-point samples")]
+    InvalidRecorderSettings,
     #[error("the clock master must be an external device node")]
     InvalidClockMaster,
     #[error("node {0} is not an input node and cannot have a gate")]
@@ -166,6 +184,26 @@ impl Workspace {
                 slot: self.claim_slot(SlotDirection::Out, number)?,
             },
             NodeSpec::Bus => NodeKind::Bus,
+            NodeSpec::ExternalInsert { ret, send } => {
+                self.check_device(&ret, NodeRole::Input)?;
+                NodeKind::ExternalInsert {
+                    send: self.claim_slot(SlotDirection::Out, send)?,
+                    ret,
+                }
+            }
+            NodeSpec::Recorder(settings) => {
+                if !settings.is_valid() {
+                    return Err(EditError::InvalidRecorderSettings);
+                }
+                NodeKind::Recorder { settings }
+            }
+            NodeSpec::AppSource(program) => {
+                self.check_program(&program, None)?;
+                NodeKind::AppSource {
+                    program,
+                    resampler: None,
+                }
+            }
         };
         let id = NodeId(self.next_node_id);
         self.next_node_id += 1;
@@ -177,6 +215,8 @@ impl Workspace {
             strip: Strip::default(),
             io,
             position,
+            mute_hotkey: None,
+            record_hotkey: None,
         });
         Ok(id)
     }
@@ -215,17 +255,19 @@ impl Workspace {
     /// 让外部设备节点改用另一个端点（按名称的后备匹配，或用户从同名候选中选定；选型报告 6.5 节）。
     /// 设备设置、通道条、连线都保留。
     pub fn replace_device(&mut self, id: NodeId, device: DeviceRef) -> Result<(), EditError> {
-        let role = self.node(id).ok_or(EditError::UnknownNode(id))?.kind.role();
+        let role = self.node(id).ok_or(EditError::UnknownNode(id))?.kind.endpoint_role();
         let existing = self.nodes.iter().find(|node| {
             node.id != id
-                && node.kind.role() == role
+                && node.kind.endpoint_role() == role
                 && node.kind.device().is_some_and(|own| own.endpoint == device.endpoint)
         });
         if let Some(node) = existing {
             return Err(EditError::DeviceInUse { by: node.id });
         }
         match &mut self.node_mut(id)?.kind {
-            NodeKind::ExternalInput { device: own } | NodeKind::ExternalOutput { device: own } => *own = device,
+            NodeKind::ExternalInput { device: own }
+            | NodeKind::ExternalOutput { device: own }
+            | NodeKind::ExternalInsert { ret: own, .. } => *own = device,
             _ => return Err(EditError::NotAnExternalNode(id)),
         }
         Ok(())
@@ -238,6 +280,37 @@ impl Workspace {
             return Err(EditError::NotAnExternalNode(id));
         }
         node.io = Some(settings);
+        Ok(())
+    }
+
+    /// 设定录音节点的格式和位深；对下一次录音生效。
+    pub fn set_recorder_settings(&mut self, id: NodeId, wanted: RecorderSettings) -> Result<(), EditError> {
+        if !wanted.is_valid() {
+            return Err(EditError::InvalidRecorderSettings);
+        }
+        match &mut self.node_mut(id)?.kind {
+            NodeKind::Recorder { settings } => *settings = wanted,
+            _ => return Err(EditError::NotARecorder(id)),
+        }
+        Ok(())
+    }
+
+    /// 让应用源改绑另一个程序（节点设置里"重新选择程序"）；连线和通道条保留。
+    pub fn replace_program(&mut self, id: NodeId, replacement: ProgramPath) -> Result<(), EditError> {
+        self.check_program(&replacement, Some(id))?;
+        match &mut self.node_mut(id)?.kind {
+            NodeKind::AppSource { program, .. } => *program = replacement,
+            _ => return Err(EditError::NotAnAppSource(id)),
+        }
+        Ok(())
+    }
+
+    /// 设定应用源按节点覆盖的重采样算法；None 表示跟随全局默认。
+    pub fn set_app_resampler(&mut self, id: NodeId, choice: Option<Resampler>) -> Result<(), EditError> {
+        match &mut self.node_mut(id)?.kind {
+            NodeKind::AppSource { resampler, .. } => *resampler = choice,
+            _ => return Err(EditError::NotAnAppSource(id)),
+        }
         Ok(())
     }
 
@@ -256,7 +329,9 @@ impl Workspace {
             return Err(EditError::SlotOccupied { slot, by: owner.id });
         }
         match &mut self.node_mut(id)?.kind {
-            NodeKind::VirtualInput { slot: occupied } | NodeKind::VirtualOutput { slot: occupied } => *occupied = slot,
+            NodeKind::VirtualInput { slot: occupied }
+            | NodeKind::VirtualOutput { slot: occupied }
+            | NodeKind::ExternalInsert { send: occupied, .. } => *occupied = slot,
             _ => return Err(EditError::NotAVirtualNode(id)),
         }
         Ok(())
@@ -278,6 +353,7 @@ impl Workspace {
             gain: GainDb::UNITY,
             enabled: true,
             label_position: LabelPosition::default(),
+            toggle_hotkey: None,
         });
         Ok(())
     }
@@ -318,7 +394,7 @@ impl Workspace {
     pub fn set_clock_master(&mut self, master: Option<NodeId>) -> Result<(), EditError> {
         if let Some(id) = master {
             let node = self.node(id).ok_or(EditError::UnknownNode(id))?;
-            if !node.kind.is_external() {
+            if !node.kind.can_be_clock_master() {
                 return Err(EditError::InvalidClockMaster);
             }
         }
@@ -328,10 +404,23 @@ impl Workspace {
 
     fn check_device(&self, device: &DeviceRef, role: NodeRole) -> Result<(), EditError> {
         let existing = self.nodes.iter().find(|node| {
-            node.kind.role() == role && node.kind.device().is_some_and(|own| own.endpoint == device.endpoint)
+            node.kind.endpoint_role() == Some(role)
+                && node.kind.device().is_some_and(|own| own.endpoint == device.endpoint)
         });
         match existing {
             Some(node) => Err(EditError::DeviceInUse { by: node.id }),
+            None => Ok(()),
+        }
+    }
+
+    /// 每个程序只能有一个应用源（M3 计划 A6）；`except` 是正在改绑的节点自己。
+    fn check_program(&self, program: &ProgramPath, except: Option<NodeId>) -> Result<(), EditError> {
+        let existing = self
+            .nodes
+            .iter()
+            .find(|node| Some(node.id) != except && node.kind.program().is_some_and(|own| own.same_program(program)));
+        match existing {
+            Some(node) => Err(EditError::ProgramInUse { by: node.id }),
             None => Ok(()),
         }
     }
@@ -345,6 +434,27 @@ impl Workspace {
             Some(owner) => Err(EditError::SlotOccupied { slot, by: owner.id }),
             None => Ok(slot),
         }
+    }
+
+    pub(crate) fn mute_hotkey_mut(&mut self, id: NodeId) -> Option<&mut Option<HotkeyBinding>> {
+        self.nodes
+            .iter_mut()
+            .find(|node| node.id == id)
+            .map(|node| &mut node.mute_hotkey)
+    }
+
+    pub(crate) fn record_hotkey_mut(&mut self, id: NodeId) -> Option<&mut Option<HotkeyBinding>> {
+        self.nodes
+            .iter_mut()
+            .find(|node| node.id == id && matches!(node.kind, NodeKind::Recorder { .. }))
+            .map(|node| &mut node.record_hotkey)
+    }
+
+    pub(crate) fn route_hotkey_mut(&mut self, from: NodeId, to: NodeId) -> Option<&mut Option<HotkeyBinding>> {
+        self.routes
+            .iter_mut()
+            .find(|route| route.from == from && route.to == to)
+            .map(|route| &mut route.toggle_hotkey)
     }
 
     fn index_of(&self, id: NodeId) -> Result<usize, EditError> {
@@ -507,6 +617,104 @@ mod tests {
                     Position::default()
                 )
                 .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_program_has_one_app_source_and_can_be_replaced() {
+        let program = |path: &str| ProgramPath::new(path).unwrap();
+        let mut workspace = Workspace::new(EngineSettings::default());
+        let chrome = add(
+            &mut workspace,
+            "Chrome",
+            NodeSpec::AppSource(program(r"C:\Chrome\chrome.exe")),
+        );
+        let game = add(&mut workspace, "Game", NodeSpec::AppSource(program(r"D:\game.exe")));
+        assert_eq!(
+            workspace.add_node(
+                name("Chrome 2"),
+                NodeSpec::AppSource(program(r"c:\chrome\CHROME.EXE")),
+                Position::default()
+            ),
+            Err(EditError::ProgramInUse { by: chrome })
+        );
+        assert_eq!(
+            workspace.replace_program(game, program(r"C:\Chrome\chrome.exe")),
+            Err(EditError::ProgramInUse { by: chrome })
+        );
+        workspace
+            .replace_program(chrome, program(r"C:\Chrome\CHROME.exe"))
+            .unwrap();
+        workspace.replace_program(game, program(r"D:\new.exe")).unwrap();
+        workspace.set_app_resampler(game, Some(Resampler::Linear)).unwrap();
+        assert_eq!(
+            workspace.node(game).unwrap().kind,
+            NodeKind::AppSource {
+                program: program(r"D:\new.exe"),
+                resampler: Some(Resampler::Linear),
+            }
+        );
+        let bus = add(&mut workspace, "Bus", NodeSpec::Bus);
+        assert_eq!(
+            workspace.replace_program(bus, program(r"D:\x.exe")),
+            Err(EditError::NotAnAppSource(bus))
+        );
+        assert_eq!(
+            workspace.set_clock_master(Some(game)),
+            Err(EditError::InvalidClockMaster)
+        );
+    }
+
+    #[test]
+    fn an_external_insert_claims_a_send_slot_and_its_return_device() {
+        let mut workspace = Workspace::new(EngineSettings::default());
+        let obs = add(&mut workspace, "OBS", NodeSpec::VirtualOutput(None));
+        let insert = add(
+            &mut workspace,
+            "Broadcast",
+            NodeSpec::ExternalInsert {
+                ret: device("broadcast"),
+                send: None,
+            },
+        );
+        assert_eq!(
+            workspace.node(insert).unwrap().kind.slot(),
+            Some(slot(SlotDirection::Out, 2)),
+            "takes the lowest free Out"
+        );
+        assert!(
+            workspace.node(insert).unwrap().io.is_some(),
+            "the return has device settings"
+        );
+        assert_eq!(
+            workspace.add_node(
+                name("Direct"),
+                NodeSpec::ExternalInput(device("broadcast")),
+                Position::default()
+            ),
+            Err(EditError::DeviceInUse { by: insert })
+        );
+        workspace.change_slot(insert, SlotNumber::new(5).unwrap()).unwrap();
+        assert_eq!(
+            workspace.node(insert).unwrap().kind.slot(),
+            Some(slot(SlotDirection::Out, 5))
+        );
+        assert_eq!(
+            workspace.change_slot(insert, SlotNumber::new(1).unwrap()),
+            Err(EditError::SlotOccupied {
+                slot: slot(SlotDirection::Out, 1),
+                by: obs,
+            })
+        );
+        workspace.replace_device(insert, device("broadcast-2")).unwrap();
+        assert_eq!(
+            workspace.set_clock_master(Some(insert)),
+            Err(EditError::InvalidClockMaster)
+        );
+        workspace.remove_node(insert).unwrap();
+        assert_eq!(
+            workspace.free_slot(SlotDirection::Out),
+            Some(slot(SlotDirection::Out, 2))
         );
     }
 

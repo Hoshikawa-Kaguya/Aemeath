@@ -7,12 +7,14 @@
 //! - 引擎事件随时推送；没有客户端时只更新状态缓存。
 
 use std::future::Future;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
 use aemeath_engine::meters::MeterBank;
 use aemeath_engine::{Engine, EngineEvent};
+use aemeath_io::redetect::RedetectTarget;
 use aemeath_protocol::PROTOCOL_VERSION;
 use aemeath_protocol::frame::{self, FrameDecoder};
 use aemeath_protocol::ids::{NodeId, RequestId, TopologyRevision};
@@ -61,18 +63,21 @@ impl HostState {
         Ok(())
     }
 
-    /// 立即重新检测离线的外部设备：`node` 为 None 时全部，否则只有这个节点的设备。
+    /// 立即重新检测离线的外部设备和缺失的程序：`node` 为 None 时全部，否则只有这个节点的设备或程序。
     fn redetect(&self, node: Option<NodeId>) {
-        let endpoints = self.topology.as_ref().map(|topology| {
+        let targets = self.topology.as_ref().map(|topology| {
             topology
                 .nodes
                 .iter()
                 .filter(|candidate| node.is_none_or(|id| id == candidate.id))
-                .filter_map(|candidate| candidate.kind.device().cloned())
+                .filter_map(|candidate| match candidate.kind.program() {
+                    Some(program) => Some(RedetectTarget::Program(program.clone())),
+                    None => candidate.kind.device().cloned().map(RedetectTarget::Endpoint),
+                })
                 .collect::<Vec<_>>()
         });
-        match endpoints {
-            Some(endpoints) if node.is_some() => self.engine.redetect(Some(&endpoints)),
+        match targets {
+            Some(targets) if node.is_some() => self.engine.redetect(Some(&targets)),
             _ => self.engine.redetect(None),
         }
     }
@@ -209,6 +214,8 @@ async fn handle(
         | AppToEngine::Shutdown { request }
         | AppToEngine::ProbeDevice { request, .. }
         | AppToEngine::Redetect { request, .. }
+        | AppToEngine::StartRecording { request, .. }
+        | AppToEngine::StopRecording { request, .. }
             if !session.handshaken =>
         {
             rejected(request, RejectReason::NotHandshaken, "say hello first".to_owned())
@@ -254,6 +261,12 @@ async fn handle(
             state.redetect(node);
             EngineToApp::Ack { request }
         }
+        AppToEngine::StartRecording { request, node, path } => {
+            recording_reply(request, node, state.engine.start_recording(node, PathBuf::from(path)))
+        }
+        AppToEngine::StopRecording { request, node } => {
+            recording_reply(request, node, state.engine.stop_recording(node))
+        }
         AppToEngine::Shutdown { request } => {
             tracing::info!("shutdown requested by the client");
             let _ = send(pipe, &EngineToApp::Ack { request }).await;
@@ -264,6 +277,14 @@ async fn handle(
         Flow::Disconnect
     } else {
         Flow::Continue
+    }
+}
+
+fn recording_reply(request: RequestId, node: NodeId, accepted: bool) -> EngineToApp {
+    if accepted {
+        EngineToApp::Ack { request }
+    } else {
+        rejected(request, RejectReason::NotARecorder, format!("{node} is not a recorder"))
     }
 }
 

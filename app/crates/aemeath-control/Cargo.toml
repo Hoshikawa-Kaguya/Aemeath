@@ -8,6 +8,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+aemeath-core = { workspace = true }
 aemeath-protocol = { workspace = true }
 aemeath-sys = { workspace = true }
 aemeath-usbip = { workspace = true }

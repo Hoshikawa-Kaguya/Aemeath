@@ -147,8 +147,10 @@ fn run() -> Result<bool> {
                     (EndpointStatus::Online { .. }, IoDirection::Output) => online.0 = true,
                     (EndpointStatus::Online { .. }, IoDirection::Input) => online.1 = true,
                     (EndpointStatus::Offline { .. }, _) => went_offline = true,
+                    (EndpointStatus::NotRunning | EndpointStatus::ProgramMissing, _) => {}
                 }
             }
+            EngineEvent::AppSource(_) | EngineEvent::Recorder { .. } => {}
             EngineEvent::SlotFormat { slot, format } => println!("slot {slot} format: {format:?}"),
             EngineEvent::SlotConnection { slot, connected } => println!("slot {slot} connected: {connected}"),
         }

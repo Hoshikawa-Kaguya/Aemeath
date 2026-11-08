@@ -121,7 +121,11 @@ function describe(from: NodeView, to: NodeView): string {
   const route = routeMap.value.get(key(from.id, to.id))
   const rejection = verdicts.value.get(key(from.id, to.id))
   const state = rejection !== undefined && route === undefined ? rejectionText(rejection) : stateText(route)
-  return t('mx.cell', { src: from.name, dst: to.name, state })
+  const text = t('mx.cell', { src: from.name, dst: to.name, state })
+  const duplicate = route?.duplicate
+  return duplicate == null
+    ? text
+    : `${text} · ${t('node.duplicate', { program: duplicate.program, destination: duplicate.destination })}`
 }
 
 const info = computed(() => {
@@ -326,6 +330,7 @@ function isHot(node: NodeView, axis: 'from' | 'to'): boolean {
                     on: routeMap.get(key(row.id, column.id))?.enabled === true,
                     off: routeMap.get(key(row.id, column.id))?.enabled === false,
                     sel: isSelected(row.id, column.id),
+                    duplicate: routeMap.get(key(row.id, column.id))?.duplicate != null,
                   }"
                   :data-row="rowIndex"
                   :data-column="columnIndex"
@@ -359,6 +364,7 @@ function isHot(node: NodeView, axis: 'from' | 'to'): boolean {
       <span><i class="lg-on"></i>{{ t('mx.lgOn') }}</span>
       <span><i class="lg-off"></i>{{ t('mx.lgOff') }}</span>
       <span><i></i>{{ t('mx.lgNone') }}</span>
+      <span><i class="lg-dup"></i>{{ t('mx.lgDup') }}</span>
       <span>{{ t('mx.lgKeys') }}</span>
     </div>
   </section>
@@ -734,5 +740,11 @@ table.mx {
 
 .legend i.lg-off {
   border-style: dashed;
+}
+
+/* 重复路由只警告：用警告色描边标出，不改变开关的颜色 */
+.legend i.lg-dup,
+.cell.duplicate {
+  box-shadow: inset 0 0 0 2px var(--warn);
 }
 </style>

@@ -13,6 +13,8 @@ pub mod fifo;
 pub mod meters;
 pub mod mixer;
 pub mod port;
+pub mod recorder;
+pub mod recording_file;
 pub mod scheduler;
 pub mod slot;
 pub mod timeline;
@@ -20,16 +22,19 @@ pub mod timeline;
 use std::collections::BTreeSet;
 use std::io;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use aemeath_io::IoEvent;
+use aemeath_io::app_source::AppSourceEvent;
 use aemeath_io::capabilities::DeviceProber;
-use aemeath_protocol::ids::{EndpointId, SlotId};
-use aemeath_protocol::message::DeviceFormat;
-use aemeath_protocol::topology::{NodeKind, RouteTopology, TopologyError};
+use aemeath_io::redetect::RedetectTarget;
+use aemeath_protocol::ids::{NodeId, SlotId};
+use aemeath_protocol::message::{DeviceFormat, RecorderState};
+use aemeath_protocol::topology::{RouteTopology, TopologyError};
 use aemeath_sys::clock::now_hns;
 use aemeath_usbip::identity::IdentityProfile;
 use aemeath_usbip::server::{ServerConfig, UsbipServer};
@@ -37,6 +42,7 @@ use aemeath_usbip::server::{ServerConfig, UsbipServer};
 use crate::devices::{ExternalDevices, TimelineClock};
 use crate::meters::MeterBank;
 use crate::mixer::{Mixer, MixerLayout};
+use crate::recorder::Recorders;
 use crate::scheduler::{Command, Scheduler};
 use crate::timeline::Timeline;
 
@@ -64,6 +70,10 @@ pub enum EngineEvent {
     SlotFormat { slot: SlotId, format: Option<DeviceFormat> },
     /// 外部设备的状态（在线及其格式，或离线及原因）
     Endpoint(IoEvent),
+    /// 应用源的状态（在线、未运行、程序缺失）
+    AppSource(AppSourceEvent),
+    /// 录音节点的状态
+    Recorder { node: NodeId, state: RecorderState },
 }
 
 pub struct Engine {
@@ -75,6 +85,7 @@ pub struct Engine {
     layout: Option<MixerLayout>,
     meters: Option<Arc<MeterBank>>,
     devices: ExternalDevices,
+    recorders: Recorders,
     scheduler: Option<JoinHandle<()>>,
 }
 
@@ -94,6 +105,8 @@ impl Engine {
         let (event_sender, events) = mpsc::channel();
         let (timeline, timeline_writer) = Timeline::new(now_hns());
         let device_events = event_sender.clone();
+        let app_events = event_sender.clone();
+        let recorder_events = event_sender.clone();
         let devices = ExternalDevices::new(
             TimelineClock {
                 timeline: Arc::clone(&timeline),
@@ -101,6 +114,9 @@ impl Engine {
             },
             Arc::new(move |event| {
                 let _ = device_events.send(EngineEvent::Endpoint(event));
+            }),
+            Arc::new(move |event| {
+                let _ = app_events.send(EngineEvent::AppSource(event));
             }),
         );
         let scheduler = Scheduler::new(
@@ -121,6 +137,9 @@ impl Engine {
             layout: None,
             meters: None,
             devices,
+            recorders: Recorders::new(Arc::new(move |node, state| {
+                let _ = recorder_events.send(EngineEvent::Recorder { node, state });
+            })),
             scheduler: Some(handle),
         })
     }
@@ -160,15 +179,9 @@ impl Engine {
         let (mut mixer, layout) = Mixer::build(topology, self.layout.as_ref(), Arc::clone(&meters));
         if prepare_devices {
             self.devices.prepare(topology, &mut mixer);
+            self.recorders.prepare(topology, &mut mixer);
         }
-        let slots: BTreeSet<SlotId> = topology
-            .nodes
-            .iter()
-            .filter_map(|node| match node.kind {
-                NodeKind::VirtualInput { slot } | NodeKind::VirtualOutput { slot } => Some(slot),
-                _ => None,
-            })
-            .collect();
+        let slots: BTreeSet<SlotId> = topology.nodes.iter().filter_map(|node| node.kind.slot()).collect();
         self.server.set_exported(slots);
         if self.commands.send(Command::Apply(Box::new(mixer))).is_err() {
             tracing::error!("the scheduler thread has stopped");
@@ -177,14 +190,24 @@ impl Engine {
         self.meters = Some(meters);
     }
 
+    /// 开始录音；`node` 不是录音节点时返回 false。
+    pub fn start_recording(&self, node: NodeId, path: PathBuf) -> bool {
+        self.recorders.start(node, path)
+    }
+
+    /// 停止录音；`node` 不是录音节点时返回 false。
+    pub fn stop_recording(&self, node: NodeId) -> bool {
+        self.recorders.stop(node)
+    }
+
     /// 设备能力的查询器（可以交给其他线程在阻塞线程上使用）。
     pub fn device_prober(&self) -> DeviceProber {
         self.devices.prober()
     }
 
-    /// 立即重新检测离线的外部设备：`endpoints` 为 None 时全部。
-    pub fn redetect(&self, endpoints: Option<&[EndpointId]>) {
-        self.devices.redetect(endpoints);
+    /// 立即重新检测离线的外部设备和缺失的程序：`targets` 为 None 时全部。
+    pub fn redetect(&self, targets: Option<&[RedetectTarget]>) {
+        self.devices.redetect(targets);
     }
 
     /// 等待下一个事件，最多 `timeout`。事件接收端已被 [`Self::take_events`] 取走时返回 None。
@@ -210,5 +233,6 @@ impl Drop for Engine {
             let _ = handle.join();
         }
         self.devices.shutdown();
+        self.recorders.shutdown();
     }
 }

@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n'
 import AppIcon, { type IconName } from '@/components/AppIcon.vue'
 import { useAppStore, type Page } from '@/stores/app'
 
-// 导航：工作台、设备、应用、工具；"设置"固定在最底部。录音、热键两页在 M3 实现前不显示（M2 计划 2.9）
+// 导航：工作台、设备、应用、录音、热键、工具；"设置"固定在最底部（M3 计划 1.7）。
 // 选中指示条只有一个，切换页面时滑到新的选中项（WinUI NavigationView 的效果）。
 const { t } = useI18n()
 const store = useAppStore()
@@ -14,6 +14,8 @@ const top: { page: Page; icon: IconName }[] = [
   { page: 'workbench', icon: 'graph' },
   { page: 'devices', icon: 'slots' },
   { page: 'apps', icon: 'apps' },
+  { page: 'recordings', icon: 'rec' },
+  { page: 'hotkeys', icon: 'key' },
   { page: 'tools', icon: 'tools' },
 ]
 

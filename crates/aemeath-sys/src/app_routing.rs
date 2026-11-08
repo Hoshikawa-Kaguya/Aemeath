@@ -57,6 +57,14 @@ unsafe trait IAudioPolicyConfigFactory: IUnknown {
         role: ERole,
         device_id: *mut c_void,
     ) -> HRESULT;
+    /// `device_id` 收到设备接口路径；没有指派时是空串
+    fn get_persisted_default_audio_endpoint(
+        &self,
+        process_id: u32,
+        flow: EDataFlow,
+        role: ERole,
+        device_id: *mut HSTRING,
+    ) -> HRESULT;
 }
 
 pub struct AppRouting {
@@ -95,5 +103,36 @@ impl AppRouting {
             .ok()?;
         }
         Ok(())
+    }
+
+    /// 进程当前的持久指派（端点 ID）；没有指派时为 None。目标进程必须正在运行并且已有音频会话。
+    pub fn render_endpoint(&self, process_id: u32) -> windows::core::Result<Option<String>> {
+        let mut path = HSTRING::new();
+        // SAFETY: factory 有效；path 是可写的 HSTRING 输出参数，所有权转给它，由 path 释放
+        unsafe {
+            self.factory
+                .get_persisted_default_audio_endpoint(process_id, eRender, eConsole, &raw mut path)
+        }
+        .ok()?;
+        Ok(endpoint_id_of(&path.to_string_lossy()))
+    }
+}
+
+/// 从设备接口路径里取出端点 ID；不是预期的格式时按没有指派处理。
+fn endpoint_id_of(path: &str) -> Option<String> {
+    path.strip_prefix(MMDEVAPI_PREFIX)?
+        .strip_suffix(RENDER_INTERFACE_SUFFIX)
+        .map(str::to_owned)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extracts_the_endpoint_id_from_the_device_path() {
+        let path = format!("{MMDEVAPI_PREFIX}{{0.0.0.00000000}}.{{abc}}{RENDER_INTERFACE_SUFFIX}");
+        assert_eq!(endpoint_id_of(&path).as_deref(), Some("{0.0.0.00000000}.{abc}"));
+        assert_eq!(endpoint_id_of(""), None);
     }
 }

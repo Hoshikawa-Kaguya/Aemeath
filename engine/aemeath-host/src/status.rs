@@ -6,10 +6,11 @@
 use std::collections::{BTreeMap, HashMap};
 
 use aemeath_engine::EngineEvent;
+use aemeath_io::app_source::AppSourceEvent;
 use aemeath_io::{IoDirection, IoEvent};
-use aemeath_protocol::ids::{EndpointId, NodeId, SlotId};
-use aemeath_protocol::message::{DeviceFormat, EndpointStatus, EngineToApp};
-use aemeath_protocol::topology::{NodeKind, RouteTopology};
+use aemeath_protocol::ids::{EndpointId, NodeId, ProgramPath, SlotId};
+use aemeath_protocol::message::{DeviceFormat, EndpointStatus, EngineToApp, RecorderState};
+use aemeath_protocol::topology::{NodeRole, RouteTopology};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 struct SlotState {
@@ -21,6 +22,8 @@ struct SlotState {
 pub struct StatusCache {
     slots: BTreeMap<SlotId, SlotState>,
     endpoints: HashMap<(EndpointId, IoDirection), EndpointStatus>,
+    programs: HashMap<ProgramPath, EndpointStatus>,
+    recorders: BTreeMap<NodeId, RecorderState>,
 }
 
 impl StatusCache {
@@ -37,6 +40,12 @@ impl StatusCache {
             EngineEvent::Endpoint(event) => {
                 self.endpoints
                     .insert((event.endpoint.clone(), event.direction), event.status);
+            }
+            EngineEvent::AppSource(event) => {
+                self.programs.insert(event.program.clone(), event.status);
+            }
+            EngineEvent::Recorder { node, state } => {
+                self.recorders.insert(*node, state.clone());
             }
         }
     }
@@ -61,6 +70,17 @@ impl StatusCache {
                 messages.push(EngineToApp::EndpointStatus { node, status: *status });
             }
         }
+        for (program, status) in &self.programs {
+            messages.extend(
+                node_for_program(topology, program).map(|node| EngineToApp::EndpointStatus { node, status: *status }),
+            );
+        }
+        for (node, state) in &self.recorders {
+            messages.push(EngineToApp::RecorderStatus {
+                node: *node,
+                status: state.clone(),
+            });
+        }
         messages
     }
 }
@@ -83,7 +103,23 @@ pub fn to_messages(event: &EngineEvent, topology: Option<&RouteTopology>) -> Vec
         }) => nodes_for(topology, endpoint, *direction)
             .map(|node| EngineToApp::EndpointStatus { node, status: *status })
             .collect(),
+        EngineEvent::Recorder { node, state } => vec![EngineToApp::RecorderStatus {
+            node: *node,
+            status: state.clone(),
+        }],
+        EngineEvent::AppSource(AppSourceEvent { program, status }) => node_for_program(topology, program)
+            .map(|node| EngineToApp::EndpointStatus { node, status: *status })
+            .into_iter()
+            .collect(),
     }
+}
+
+fn node_for_program(topology: Option<&RouteTopology>, program: &ProgramPath) -> Option<NodeId> {
+    topology?
+        .nodes
+        .iter()
+        .find(|node| node.kind.program() == Some(program))
+        .map(|node| node.id)
 }
 
 fn nodes_for<'a>(
@@ -94,10 +130,12 @@ fn nodes_for<'a>(
     topology
         .into_iter()
         .flat_map(|topology| &topology.nodes)
-        .filter(move |node| match (&node.kind, direction) {
-            (NodeKind::ExternalInput { device: own }, IoDirection::Input)
-            | (NodeKind::ExternalOutput { device: own }, IoDirection::Output) => own == endpoint,
-            _ => false,
+        .filter(move |node| {
+            let wanted = match direction {
+                IoDirection::Input => NodeRole::Input,
+                IoDirection::Output => NodeRole::Output,
+            };
+            node.kind.endpoint_role() == Some(wanted) && node.kind.device() == Some(endpoint)
         })
         .map(|node| node.id)
 }
@@ -107,7 +145,7 @@ mod tests {
     use super::*;
     use aemeath_protocol::ids::{SlotDirection, SlotNumber, TopologyRevision};
     use aemeath_protocol::message::OfflineReason;
-    use aemeath_protocol::topology::{Resampler, Strip, TopologyNode};
+    use aemeath_protocol::topology::{NodeKind, Resampler, Strip, TopologyNode};
     use aemeath_protocol::units::SampleRate;
 
     const MIC: NodeId = NodeId(5);

@@ -71,6 +71,8 @@ fn run() -> Result<bool> {
             EngineEvent::SlotFormat { slot, format } => println!("slot {slot} format: {format:?}"),
             EngineEvent::SlotConnection { slot, connected } => println!("slot {slot} connected: {connected}"),
             EngineEvent::Endpoint(event) => println!("endpoint: {event:?}"),
+            EngineEvent::AppSource(event) => println!("app source: {event:?}"),
+            EngineEvent::Recorder { node, state } => println!("{node}: {state:?}"),
         }
     }
     drop(_attachment);

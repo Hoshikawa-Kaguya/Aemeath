@@ -21,6 +21,7 @@ import AddNodeDialog from '@/workbench/AddNodeDialog.vue'
 import IoNode from '@/workbench/IoNode.vue'
 import ConsolePane from '@/workbench/ConsolePane.vue'
 import NodeSettingsDialog from '@/workbench/NodeSettingsDialog.vue'
+import RouteHotkeyDialog from '@/workbench/RouteHotkeyDialog.vue'
 import RouteMatrix, { type RoutePair } from '@/workbench/RouteMatrix.vue'
 import PendingRoute from '@/workbench/PendingRoute.vue'
 import RouteEdge from '@/workbench/RouteEdge.vue'
@@ -86,6 +87,7 @@ const pointer = ref({ x: 0, y: 0 })
 const pane = useTemplateRef<HTMLElement>('pane')
 const addDialog = useTemplateRef<InstanceType<typeof AddNodeDialog>>('addDialog')
 const settingsDialog = useTemplateRef<InstanceType<typeof NodeSettingsDialog>>('settingsDialog')
+const routeHotkeyDialog = useTemplateRef<InstanceType<typeof RouteHotkeyDialog>>('routeHotkeyDialog')
 /** 从菜单选了"改名"的节点 */
 const renaming = ref<number | null>(null)
 /** 路由矩阵里悬停的格子：工作台上高亮对应的连线和两端节点 */
@@ -250,7 +252,7 @@ function nodeMenu(node: NodeView): MenuItem[] {
       label: t(pinned ? 'menu.unpin' : 'menu.pin'),
       run: () => void store.run(() => backend.pinNode(node.id, !pinned)),
     },
-    ...(node.device === null
+    ...(node.device === null && node.program === null
       ? []
       : [
           {
@@ -267,6 +269,7 @@ function nodeMenu(node: NodeView): MenuItem[] {
 
 function routeMenu(route: RouteView): MenuItem[] {
   return [
+    { kind: 'action', label: t('menu.hotkey'), run: () => routeHotkeyDialog.value?.open(route) },
     {
       kind: 'action',
       label: t(route.enabled ? 'menu.routeOff' : 'menu.routeOn'),
@@ -596,6 +599,7 @@ onBeforeUnmount(() => {
     <ConsolePane class="console" :node-menu="nodeMenu" />
     <AddNodeDialog ref="addDialog" />
     <NodeSettingsDialog ref="settingsDialog" />
+    <RouteHotkeyDialog ref="routeHotkeyDialog" />
   </section>
 </template>
 

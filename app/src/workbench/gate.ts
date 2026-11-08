@@ -1,4 +1,4 @@
-// 门限滑块（节点设置与控制台共用）：滑块最左端一格是"关"，其余对应 −80 到 0 dBFS（GLOSSARY：门限）。
+// 门限滑块（节点设置与控制台共用）：滑块最低一格是"关"，其余对应 −80 到 0 dBFS（GLOSSARY：门限）。
 
 /** 后端允许的阈值范围（aemeath_protocol::units::GateThreshold） */
 export const GATE_MIN_DB = -80

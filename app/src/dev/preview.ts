@@ -13,10 +13,13 @@ const METER_INTERVAL_MS = 33
 const INT32_48K: FormatView = { sampleRate: 48000, sampleFormat: 'int32', channels: 2 }
 
 function node(partial: Partial<NodeView> & Pick<NodeView, 'id' | 'name' | 'kind' | 'x' | 'y'>): NodeView {
-  const external = partial.kind === 'externalInput' || partial.kind === 'externalOutput'
+  const external =
+    partial.kind === 'externalInput' || partial.kind === 'externalOutput' || partial.kind === 'externalInsert'
   return {
     slot: null,
     device: null,
+    program: null,
+    resampler: null,
     gainDb: 0,
     muted: false,
     gateDb: null,
@@ -24,6 +27,10 @@ function node(partial: Partial<NodeView> & Pick<NodeView, 'id' | 'name' | 'kind'
     format: external ? INT32_48K : null,
     candidates: [],
     status: { state: 'ok' },
+    duplicate: null,
+    recorder: null,
+    muteHotkey: null,
+    recordHotkey: null,
     ...partial,
   }
 }
@@ -70,6 +77,65 @@ const nodes: NodeView[] = [
     x: 40,
     y: 420,
   }),
+  node({
+    id: 10,
+    name: 'NVIDIA Broadcast 降噪',
+    kind: 'externalInsert',
+    slot: { direction: 'out', number: 3 },
+    device: { endpointId: 'nvb', name: 'Microphone (NVIDIA Broadcast)' },
+    x: 260,
+    y: 320,
+  }),
+  node({
+    id: 11,
+    name: '直播录音',
+    kind: 'recorder',
+    recorder: {
+      settings: { format: 'flac', depth: 'int24' },
+      state: {
+        state: 'recording',
+        file: 'C:\\Users\\me\\Music\\Aemeath\\直播录音_2026-11-08_20-00-00.flac',
+        frames: 3_456_000,
+        bytes: 18_874_368,
+      },
+    },
+    x: 480,
+    y: 420,
+  }),
+  node({
+    id: 12,
+    name: '备份录音',
+    kind: 'recorder',
+    recorder: { settings: { format: 'wav', depth: 'float32' }, state: { state: 'failed', reason: 'diskFull' } },
+    x: 480,
+    y: 540,
+  }),
+  node({
+    id: 7,
+    name: 'Google Chrome',
+    kind: 'appSource',
+    program: { path: 'C:\\Program Files\\Google\\Chrome\\chrome.exe', fileName: 'chrome.exe' },
+    x: 40,
+    y: 560,
+  }),
+  node({
+    id: 8,
+    name: 'cloudmusic',
+    kind: 'appSource',
+    program: { path: 'G:\\CloudMusic\\cloudmusic.exe', fileName: 'cloudmusic.exe' },
+    status: { state: 'notRunning' },
+    x: 40,
+    y: 660,
+  }),
+  node({
+    id: 9,
+    name: '已卸载的播放器',
+    kind: 'appSource',
+    program: { path: 'D:\\Old\\player.exe', fileName: 'player.exe' },
+    status: { state: 'programMissing' },
+    x: 40,
+    y: 760,
+  }),
 ]
 
 let state: ViewState = {
@@ -81,11 +147,39 @@ let state: ViewState = {
   lastPage: null,
   nodes,
   routes: [
-    { from: 1, to: 3, gainDb: -3, enabled: true, labelPosition: 0.5 },
-    { from: 2, to: 4, gainDb: 0, enabled: true, labelPosition: 0.5 },
-    { from: 1, to: 4, gainDb: -6, enabled: false, labelPosition: 0.35 },
+    { from: 1, to: 3, gainDb: -3, enabled: true, labelPosition: 0.5, duplicate: null, toggleHotkey: null },
+    { from: 2, to: 4, gainDb: 0, enabled: true, labelPosition: 0.5, duplicate: null, toggleHotkey: null },
+    { from: 1, to: 4, gainDb: -6, enabled: false, labelPosition: 0.35, duplicate: null, toggleHotkey: null },
   ],
-  console: [1, 2, 6, 3],
+  console: [1, 2, 7, 6, 10, 3, 11],
+  hotkeys: [
+    {
+      target: { type: 'panicMute' },
+      binding: {
+        key: { modifiers: { ctrl: true, alt: true, shift: false, win: false }, key: { type: 'keyboard', vk: 0x4d } },
+        mode: 'toggle',
+      },
+      occupied: false,
+    },
+    {
+      target: { type: 'nodeMute', node: 1 },
+      binding: {
+        key: { modifiers: { ctrl: false, alt: false, shift: false, win: false }, key: { type: 'mouseX1' } },
+        mode: 'hold',
+      },
+      occupied: false,
+    },
+    {
+      target: { type: 'routeToggle', from: 1, to: 3 },
+      binding: {
+        key: { modifiers: { ctrl: true, alt: false, shift: false, win: false }, key: { type: 'keyboard', vk: 0x7c } },
+        mode: 'toggle',
+      },
+      occupied: true,
+    },
+  ],
+  panicMute: true,
+  recording: { folder: 'C:\\Users\\me\\Music\\Aemeath', defaults: { format: 'flac', depth: 'int24' } },
   notices: [],
   slots: [],
 }
@@ -189,7 +283,15 @@ mockIPC(
             ...state,
             routes: [
               ...state.routes,
-              { from: args.from as number, to: args.to as number, gainDb: 0, enabled: true, labelPosition: 0.5 },
+              {
+                from: args.from as number,
+                to: args.to as number,
+                gainDb: 0,
+                enabled: true,
+                labelPosition: 0.5,
+                duplicate: null,
+                toggleHotkey: null,
+              },
             ],
           },
           true,
@@ -225,6 +327,7 @@ mockIPC(
               landing: 'in1',
               assigned: 'in1',
               system: false,
+              sourceNode: null,
             },
             {
               processId: 102,
@@ -233,6 +336,7 @@ mockIPC(
               landing: 'lg',
               assigned: 'in1',
               system: false,
+              sourceNode: null,
             },
             {
               processId: 103,
@@ -241,8 +345,9 @@ mockIPC(
               landing: 'vm',
               assigned: null,
               system: false,
+              sourceNode: null,
             },
-            { processId: 0, name: '', executable: null, landing: 'lg', assigned: null, system: true },
+            { processId: 0, name: '', executable: null, landing: 'lg', assigned: null, system: true, sourceNode: null },
           ],
           choices: [
             {
@@ -277,6 +382,37 @@ mockIPC(
         }
       case 'set_landing':
         return null
+      case 'landing_count':
+        return 0
+      case 'set_hotkey':
+        return state
+      case 'capture_hotkey':
+        return { type: 'cancelled' }
+      case 'set_panic_mute':
+        return commit({ ...state, panicMute: args.active as boolean }, false)
+      case 'start_recording':
+      case 'stop_recording':
+      case 'open_recording_folder':
+        return null
+      case 'set_recording_folder':
+        return commit({ ...state, recording: { ...state.recording, folder: args.folder as string } }, false)
+      case 'set_recording_defaults':
+        return commit(
+          {
+            ...state,
+            recording: { ...state.recording, defaults: args.settings as ViewState['recording']['defaults'] },
+          },
+          false,
+        )
+      case 'describe_program':
+        return (
+          (args.path as string)
+            .split('\\')
+            .pop()
+            ?.replace(/\.exe$/i, '') ?? ''
+        )
+      case 'plugin:dialog|open':
+        return 'D:\\Games\\new-game.exe'
       case 'list_default_devices':
         return {
           render: [

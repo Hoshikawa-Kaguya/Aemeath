@@ -56,6 +56,10 @@ tracing-appender = "0.2.5"
 # 固定在 Tauri 2：crates.io 上的最新版已是 3.0 alpha（ADR-0013）
 tauri = "2.12.5"
 tauri-build = "2.7.4"
+tauri-plugin-dialog = "2.8"
+flacenc = { version = "0.5.1", default-features = false }
+hound = "3.5.1"
+claxon = "0.4.3"
 embed-resource = "3.0.12"
 
 # 除 aemeath-sys 外一律禁止 unsafe：Windows 调用都集中在 aemeath-sys，由它提供安全的封装（ADR-0008）

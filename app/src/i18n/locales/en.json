@@ -18,7 +18,12 @@
     "slots": "Slots {used}/16",
     "slotsTip": "Driver: usbip-win2 {version}. Click to open Devices.",
     "slotsTipNoDriver": "usbip-win2 was not found. Click to open Devices.",
-    "rate": "{rate} kHz"
+    "rate": "{rate} kHz",
+    "notRunning": "Not running: {n}",
+    "notRunningTip": "These app sources connect by themselves when their program starts.",
+    "recording": "Recording: {n}",
+    "panicMute": "All outputs muted",
+    "panicMuteTip": "Click to turn the panic mute off."
   },
   "nav": {
     "aria": "Main navigation",
@@ -26,7 +31,9 @@
     "devices": "Devices",
     "apps": "Apps",
     "tools": "Tools",
-    "settings": "Settings"
+    "settings": "Settings",
+    "recordings": "Recordings",
+    "hotkeys": "Hotkeys"
   },
   "apps": {
     "sub": "An app's landing is the device its sound actually plays to. Only apps that are playing sound right now are listed.",
@@ -41,7 +48,9 @@
     "unknownDevice": "Another device",
     "empty": "No app is playing sound right now.",
     "unavailable": "Can't read the apps' audio sessions.",
-    "note": "The choice is saved per app: from now on the app plays to the chosen device every time it starts. Some apps (such as Discord and some games) choose their own device and ignore this; set the device inside those apps."
+    "note": "The choice is saved per app: from now on the app plays to the chosen device every time it starts. Some apps (such as Discord and some games) choose their own device and ignore this; set the device inside those apps.",
+    "addSource": "Add as app source",
+    "showSource": "Show on the workbench"
   },
   "tools": {
     "sub": "Small helpers. They only change Windows settings, not the workbench.",
@@ -60,7 +69,10 @@
     "virtualInput": "Virtual input",
     "virtualOutput": "Virtual output",
     "externalOutput": "External output",
-    "bus": "Bus"
+    "bus": "Bus",
+    "appSource": "App source",
+    "externalInsert": "External insert",
+    "recorder": "Recorder"
   },
   "wb": {
     "hint": "Drag from a port to connect · Click a route, then press Del to delete · Scroll over a route label to change its gain · Drag a label to slide it along its route",
@@ -90,7 +102,14 @@
       "noSignal": "Offline · No signal",
       "slotRepairing": "Re-attaching the virtual device",
       "slotFailing": "The virtual device can't be attached"
-    }
+    },
+    "notRunning": "Not running",
+    "notRunningHint": "{program} isn't running. It connects by itself when it starts.",
+    "programMissing": "The program file doesn't exist",
+    "chooseProgram": "Choose program…",
+    "duplicate": "{program}'s sound appears twice at {destination}",
+    "record": "Record",
+    "stopRecording": "Stop"
   },
   "route": {
     "off": "Off · {gain}",
@@ -114,7 +133,9 @@
     "nodeDeleted": "Node deleted: {name}",
     "deviceReplaced": "{node} now uses the newly connected device with the same name: {device}",
     "undo": "Undo",
-    "dismiss": "Dismiss"
+    "dismiss": "Dismiss",
+    "landingRestored": "{app} was moved back to {landing}",
+    "recordingFailed": "{node} stopped recording: {reason}"
   },
   "error": {
     "unavailable": "The control plane is not running.",
@@ -124,7 +145,12 @@
     "slotOccupied": "That virtual device is already in use.",
     "deviceInUse": "This device already has a node.",
     "notFound": "The node or route no longer exists.",
-    "failed": "Something went wrong: {message}"
+    "failed": "Something went wrong: {message}",
+    "programInUse": "This program already has an app source.",
+    "invalidProgram": "Choose an .exe file with a full path.",
+    "hotkeyModifierRequired": "A toggle hotkey on the keyboard needs Ctrl, Alt, Shift or Win. Use Hold for a single key.",
+    "hotkeyToggleOnly": "This action can only be a toggle.",
+    "hotkeyConflict": "That key is already used for {object}."
   },
   "add": {
     "title": "Add node",
@@ -140,8 +166,20 @@
       "virtualInput": "A virtual playback device that apps can play into",
       "bus": "Sums what is sent into it and sends it on, without a device",
       "virtualOutput": "A virtual recording device that apps such as OBS can record from",
-      "externalOutput": "Headphones, speakers or another playback device on this PC"
-    }
+      "externalOutput": "Headphones, speakers or another playback device on this PC",
+      "appSource": "The sound of one program, wherever it's playing",
+      "externalInsert": "Sends sound through an external program, such as NVIDIA Broadcast, and takes it back",
+      "recorder": "Writes the sound routed into it to a file"
+    },
+    "program": "Program",
+    "programPlaceholder": "Choose a program",
+    "browse": "Browse…",
+    "programFilter": "Programs",
+    "appSourceNote": "App sources add 30–60 ms of latency compared with landing the app directly on a virtual input, so they suit streaming better than live monitoring. Programs that play in exclusive mode can't be captured.",
+    "returnDevice": "Return device",
+    "insertSend": "Sound goes to the external program through {slot}. Set that device as the program's input.",
+    "usedAsReturn": "used as the return of {node}",
+    "usedByNode": "used by {node}"
   },
   "dev": {
     "sub": "Aemeath provides 16 fixed virtual device slots. A slot is plugged in automatically while a node occupies it and unplugged when no node does, so unused slots stay out of the Windows device list. Device names are fixed; the devices are removed only when Aemeath is uninstalled.",
@@ -280,7 +318,8 @@
     "lgOff": "Connected but off",
     "lgNone": "Not connected",
     "lgKeys": "Click: create or toggle · Del: delete · Scroll over a cell: ±1 dB",
-    "newRoute": "Create route"
+    "newRoute": "Create route",
+    "lgDup": "The same sound arrives twice"
   },
   "grp": {
     "in": "Inputs",
@@ -303,7 +342,10 @@
     "candidates": "Choose the device to use",
     "candidatesHint": "The original device is gone, and several devices have the same name ({device}). Choose which one this node should use.",
     "useCandidate": "Use this device",
-    "confirm": "OK"
+    "confirm": "OK",
+    "insertHint": "In the external program, set the input to {device}.",
+    "copy": "Copy device name",
+    "copyFailed": "Can't copy to the clipboard."
   },
   "menu": {
     "aria": "Menu for {name}",
@@ -323,11 +365,67 @@
     "cut": "Cut",
     "copy": "Copy",
     "paste": "Paste",
-    "selectAll": "Select all"
+    "selectAll": "Select all",
+    "hotkey": "Hotkey…"
   },
   "tray": {
     "open": "Open Aemeath",
     "redetect": "Re-detect all devices",
     "quit": "Quit Aemeath"
+  },
+  "confirm": {
+    "deleteLanding": "{n} app(s) land on this node. After it's deleted, they'll follow the system default."
+  },
+  "rec": {
+    "sub": "Each recorder node writes what is routed into it to a file in this folder. Recording continues when the main window restarts. WAV files are split automatically before they reach 4 GB.",
+    "folder": "Recording folder",
+    "chooseFolder": "Change…",
+    "openFolder": "Open folder",
+    "defaultFormat": "File format",
+    "defaultDepth": "Bit depth",
+    "settingsHint": "Applies to the next recording.",
+    "format": {
+      "flac": "FLAC (lossless, smaller)",
+      "wav": "WAV (uncompressed)"
+    },
+    "depth": {
+      "int16": "16-bit integer",
+      "int24": "24-bit integer",
+      "float32": "32-bit float"
+    },
+    "empty": "No recorder nodes yet. Add one on the workbench.",
+    "recording": "Recording",
+    "stopped": "Stopped",
+    "failed": {
+      "diskFull": "Error: the disk is full",
+      "writeFailed": "Error: can't write the file"
+    },
+    "startAria": "Start recording {name}",
+    "stopAria": "Stop recording {name}"
+  },
+  "hotkey": {
+    "sub": "Global hotkeys work everywhere. Dedicated hotkeys belong to a node or route and are deleted with it. Hotkeys are unavailable briefly while the main program restarts.",
+    "global": "Global",
+    "dedicated": "Dedicated",
+    "dedicatedEmpty": "No dedicated hotkeys yet. Set them in node settings or from a route's menu.",
+    "note": "Hold inverts while the key is down and restores when it's released; it isn't saved. Toggle changes the saved state. Mouse side buttons work in both modes.",
+    "hint": "Click the field, then press the key. Esc cancels, Backspace clears.",
+    "none": "Not set",
+    "pressKey": "Press a key…",
+    "mode": "Mode",
+    "toggle": "Toggle",
+    "hold": "Hold",
+    "clear": "Clear",
+    "occupied": "In use by another program",
+    "mouseX1": "Mouse button 4",
+    "mouseX2": "Mouse button 5",
+    "targetMute": "{node} · Mute",
+    "targetRecord": "{node} · Record",
+    "targetRoute": "{from} → {to} · On/Off",
+    "allRecording": "Start/stop all recorders",
+    "panicMute": "Mute all outputs (panic)",
+    "toggleWindow": "Show/hide the main window",
+    "muteLabel": "Mute hotkey",
+    "recordLabel": "Record hotkey"
   }
 }

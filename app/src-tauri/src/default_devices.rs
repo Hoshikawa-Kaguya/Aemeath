@@ -51,7 +51,9 @@ impl DefaultDevicesView {
 fn held_exclusively(workspace: &Workspace, endpoint_id: &str, output: bool) -> bool {
     workspace.nodes().iter().any(|node| {
         let device = match (&node.kind, output) {
-            (NodeKind::ExternalOutput { device }, true) | (NodeKind::ExternalInput { device }, false) => device,
+            (NodeKind::ExternalOutput { device }, true)
+            | (NodeKind::ExternalInput { device }, false)
+            | (NodeKind::ExternalInsert { ret: device, .. }, false) => device,
             _ => return false,
         };
         device.endpoint.0 == endpoint_id

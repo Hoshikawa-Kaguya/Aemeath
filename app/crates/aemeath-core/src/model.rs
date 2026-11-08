@@ -9,6 +9,8 @@ use aemeath_protocol::units::{GainDb, SampleRate};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::hotkeys::HotkeyBinding;
+
 /// 节点名：用户可以随时修改，不影响设备名（GLOSSARY：节点名）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
@@ -84,6 +86,12 @@ pub struct Node {
     pub io: Option<DeviceSettings>,
     #[serde(default)]
     pub position: Position,
+    /// 节点静音的专属热键
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mute_hotkey: Option<HotkeyBinding>,
+    /// 录音节点开始/停止录音的专属热键
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record_hotkey: Option<HotkeyBinding>,
 }
 
 impl Node {
@@ -145,6 +153,9 @@ pub struct Route {
     pub enabled: bool,
     #[serde(default)]
     pub label_position: LabelPosition,
+    /// 连线开关的专属热键
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub toggle_hotkey: Option<HotkeyBinding>,
 }
 
 /// 引擎设置。

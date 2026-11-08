@@ -8,8 +8,10 @@
 //! 环形缓冲在引擎一侧的那一端被丢弃时（拓扑不再使用这台设备），IO 线程自行关闭设备并退出。
 //! IO 线程每秒把设备时钟的读数写进 [`clock::ClockTap`]，主时钟跟随线程从那里读取。
 
+pub mod app_source;
 pub mod bridge;
 pub mod capabilities;
+pub mod capture;
 pub mod clock;
 pub mod device;
 pub mod follow;
@@ -55,6 +57,8 @@ pub struct IoEvent {
 
 /// IO 线程报告状态的回调（由引擎转成自己的事件）。
 pub type StatusSink = Arc<dyn Fn(IoEvent) + Send + Sync>;
+/// 应用源寻找线程报告状态的回调。
+pub type AppStatusSink = Arc<dyn Fn(app_source::AppSourceEvent) + Send + Sync>;
 
 /// 一个 IO 线程的配置。任何一项改变，引擎都会重建这个 IO 线程（切换前后淡出淡入）。
 #[derive(Debug, Clone, PartialEq)]

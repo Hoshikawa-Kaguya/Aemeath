@@ -21,8 +21,8 @@ use wasapi::{AudioClient, DeviceEnumerator, Handle, SampleType, StreamMode, Wasa
 use crate::bridge::BridgeError;
 use crate::capabilities::{CapabilityCache, microseconds, quick_recommended};
 use crate::format::{to_device_format, to_wave_format};
-use crate::redetect::{Redetect, retry_interval};
-use crate::{IoDirection, IoEvent, STEREO, StatusSink};
+use crate::redetect::{Redetect, RedetectTarget, retry_interval};
+use crate::{AppStatusSink, IoDirection, IoEvent, STEREO, StatusSink};
 
 /// 其他程序占着设备（S5 实测：Voicemeeter 的独占输出；独占打开时，其他程序共享使用也会这样）
 const AUDCLNT_E_DEVICE_IN_USE: u32 = 0x8889_000A;
@@ -373,6 +373,7 @@ impl SessionEnd {
 #[derive(Clone)]
 pub struct IoContext {
     pub status: StatusSink,
+    pub app_status: AppStatusSink,
     pub capabilities: CapabilityCache,
     pub redetect: Redetect,
 }
@@ -445,7 +446,9 @@ pub fn run_with_retry(
         };
         // "设备不允许独占"重试无用：只等端点变化通知或用户的"重新检测"
         let timeout = (reason != OfflineReason::ExclusiveNotAllowed).then(|| retry_interval(offline_since.elapsed()));
-        context.redetect.wait(endpoint, timeout, stop);
+        context
+            .redetect
+            .wait(&RedetectTarget::Endpoint(endpoint.clone()), timeout, stop);
     }
 }
 

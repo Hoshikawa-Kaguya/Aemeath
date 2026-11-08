@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::graph;
-use crate::ids::{EndpointId, NodeId, SlotDirection, SlotId, TopologyRevision};
+use crate::ids::{EndpointId, NodeId, ProgramPath, SlotDirection, SlotId, TopologyRevision};
 use crate::message::DeviceFormat;
 use crate::units::{BufferMs, GainDb, GateThreshold, SampleRate};
 
@@ -133,7 +133,7 @@ pub enum BufferChoice {
     Milliseconds { ms: BufferMs },
 }
 
-/// 节点类型。M1 只有 IO 节点和总线；应用源、外部插入、录音节点以后加入并提升协议版本。
+/// 节点类型。
 ///
 /// `D` 是外部设备的表示：路由拓扑里只是端点 ID；主程序的工作台里还带上设备名，用于后备匹配。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -141,6 +141,13 @@ pub enum BufferChoice {
 pub enum NodeKind<D = EndpointId> {
     /// 外部输入（A）：不专属于 Aemeath 的录音端点
     ExternalInput { device: D },
+    /// 应用源：按路径认定的程序，进程回环采集（GLOSSARY：应用源）
+    AppSource {
+        program: ProgramPath,
+        /// 按节点覆盖的重采样算法；None 表示使用全局默认
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resampler: Option<Resampler>,
+    },
     /// 虚拟输入（B）：占用一个输入方向的槽位
     VirtualInput { slot: SlotId },
     /// 虚拟输出（C）：占用一个输出方向的槽位
@@ -149,6 +156,11 @@ pub enum NodeKind<D = EndpointId> {
     ExternalOutput { device: D },
     /// 总线：只求和再分发
     Bus,
+    /// 外部插入（GLOSSARY：外部插入）：入边的求和从送出端（输出方向的槽位）交给外部程序，
+    /// 节点发出的信号从取回端（一个外部输入）读回来
+    ExternalInsert { send: SlotId, ret: D },
+    /// 录音节点：把收到的信号写进文件（M3 计划 2.5）
+    Recorder { settings: RecorderSettings },
 }
 
 /// 节点在信号流中的角色。
@@ -162,9 +174,9 @@ pub enum NodeRole {
 impl<D> NodeKind<D> {
     pub fn role(&self) -> NodeRole {
         match self {
-            Self::ExternalInput { .. } | Self::VirtualInput { .. } => NodeRole::Input,
-            Self::Bus => NodeRole::Processing,
-            Self::VirtualOutput { .. } | Self::ExternalOutput { .. } => NodeRole::Output,
+            Self::ExternalInput { .. } | Self::VirtualInput { .. } | Self::AppSource { .. } => NodeRole::Input,
+            Self::Bus | Self::ExternalInsert { .. } => NodeRole::Processing,
+            Self::VirtualOutput { .. } | Self::ExternalOutput { .. } | Self::Recorder { .. } => NodeRole::Output,
         }
     }
 
@@ -182,6 +194,7 @@ impl<D> NodeKind<D> {
     pub fn slot(&self) -> Option<SlotId> {
         match self {
             Self::VirtualInput { slot } | Self::VirtualOutput { slot } => Some(*slot),
+            Self::ExternalInsert { send, .. } => Some(*send),
             _ => None,
         }
     }
@@ -190,32 +203,98 @@ impl<D> NodeKind<D> {
     pub fn slot_direction(&self) -> Option<SlotDirection> {
         match self {
             Self::VirtualInput { .. } => Some(SlotDirection::In),
-            Self::VirtualOutput { .. } => Some(SlotDirection::Out),
+            Self::VirtualOutput { .. } | Self::ExternalInsert { .. } => Some(SlotDirection::Out),
             _ => None,
         }
     }
 
-    /// 外部设备节点的设备
+    /// 节点使用的外部设备（外部插入是它的取回端）
     pub fn device(&self) -> Option<&D> {
         match self {
             Self::ExternalInput { device } | Self::ExternalOutput { device } => Some(device),
+            Self::ExternalInsert { ret, .. } => Some(ret),
             _ => None,
         }
+    }
+
+    /// 外部设备在 Aemeath 看来的方向：录音端点是 [`NodeRole::Input`]，播放端点是 [`NodeRole::Output`]。
+    /// 外部插入的角色是处理节点，它的取回端却是录音端点，所以不能用 [`Self::role`] 判断设备方向。
+    pub fn endpoint_role(&self) -> Option<NodeRole> {
+        match self {
+            Self::ExternalInput { .. } | Self::ExternalInsert { .. } => Some(NodeRole::Input),
+            Self::ExternalOutput { .. } => Some(NodeRole::Output),
+            _ => None,
+        }
+    }
+
+    /// 能否作为主时钟。外部插入的取回端总是经过 ASRC（M3 计划 X8）。
+    pub fn can_be_clock_master(&self) -> bool {
+        matches!(self, Self::ExternalInput { .. } | Self::ExternalOutput { .. })
     }
 
     pub fn is_external(&self) -> bool {
         self.device().is_some()
     }
 
+    /// 应用源节点的程序
+    pub fn program(&self) -> Option<&ProgramPath> {
+        match self {
+            Self::AppSource { program, .. } => Some(program),
+            _ => None,
+        }
+    }
+
     /// 换一种外部设备的表示（例如从工作台的设备记录取出端点 ID），其余不变。
     pub fn map_device<E>(&self, map: impl FnOnce(&D) -> E) -> NodeKind<E> {
         match self {
             Self::ExternalInput { device } => NodeKind::ExternalInput { device: map(device) },
+            Self::AppSource { program, resampler } => NodeKind::AppSource {
+                program: program.clone(),
+                resampler: *resampler,
+            },
             Self::VirtualInput { slot } => NodeKind::VirtualInput { slot: *slot },
             Self::VirtualOutput { slot } => NodeKind::VirtualOutput { slot: *slot },
             Self::ExternalOutput { device } => NodeKind::ExternalOutput { device: map(device) },
             Self::Bus => NodeKind::Bus,
+            Self::ExternalInsert { send, ret } => NodeKind::ExternalInsert {
+                send: *send,
+                ret: map(ret),
+            },
+            Self::Recorder { settings } => NodeKind::Recorder { settings: *settings },
         }
+    }
+}
+
+/// 录音文件的容器格式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecordFormat {
+    Wav,
+    #[default]
+    Flac,
+}
+
+/// 录音文件的位深。FLAC 不支持浮点。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecordDepth {
+    Int16,
+    #[default]
+    Int24,
+    Float32,
+}
+
+/// 录音节点的格式设置，默认 FLAC 24 位（M3 计划 R2）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecorderSettings {
+    pub format: RecordFormat,
+    pub depth: RecordDepth,
+}
+
+impl RecorderSettings {
+    pub fn is_valid(self) -> bool {
+        !(self.format == RecordFormat::Flac && self.depth == RecordDepth::Float32)
     }
 }
 
@@ -316,6 +395,8 @@ pub enum TopologyError {
     InvalidEndpoint { node: NodeId },
     #[error("{second} uses the same external endpoint in the same direction as {first}")]
     DuplicateEndpoint { first: NodeId, second: NodeId },
+    #[error("{second} captures the same program as {first}")]
+    DuplicateProgram { first: NodeId, second: NodeId },
     #[error("{node} uses slot {slot}, which is in the wrong direction for its kind")]
     SlotDirectionMismatch { node: NodeId, slot: SlotId },
     #[error("slot {slot} is occupied by both {first} and {second}")]
@@ -326,6 +407,8 @@ pub enum TopologyError {
     },
     #[error("the clock master {0} is not an external device node")]
     InvalidClockMaster(NodeId),
+    #[error("{0} records FLAC with floating-point samples, which FLAC does not support")]
+    InvalidRecorderSettings(NodeId),
     #[error("{0} has a gate, but only input nodes have one")]
     GateOnNonInput(NodeId),
     #[error("{0} has device settings, but only external device nodes have them")]
@@ -354,7 +437,7 @@ impl RouteTopology {
 
         let nodes = self.validate_nodes()?;
         if let Some(master) = self.clock_master
-            && !nodes.get(&master).is_some_and(|kind| kind.is_external())
+            && !nodes.get(&master).is_some_and(|kind| kind.can_be_clock_master())
         {
             return Err(TopologyError::InvalidClockMaster(master));
         }
@@ -366,9 +449,21 @@ impl RouteTopology {
         let mut slots: HashMap<SlotId, NodeId> = HashMap::new();
         // 同一个外部端点在同一方向上只能对应一个节点，否则两个 IO 线程会争用同一台设备
         let mut endpoints: HashMap<(&EndpointId, NodeRole), NodeId> = HashMap::new();
+        // 同一个程序只能有一个应用源，否则同一份声音会叠加（M3 计划 A6）
+        let mut programs: HashMap<String, NodeId> = HashMap::new();
         for node in &self.nodes {
             if nodes.insert(node.id, &node.kind).is_some() {
                 return Err(TopologyError::DuplicateNode(node.id));
+            }
+            if let NodeKind::Recorder { settings } = node.kind
+                && !settings.is_valid()
+            {
+                return Err(TopologyError::InvalidRecorderSettings(node.id));
+            }
+            if let Some(program) = node.kind.program()
+                && let Some(first) = programs.insert(program.as_str().to_lowercase(), node.id)
+            {
+                return Err(TopologyError::DuplicateProgram { first, second: node.id });
             }
             if node.strip.gate.is_some() && node.kind.role() != NodeRole::Input {
                 return Err(TopologyError::GateOnNonInput(node.id));
@@ -386,11 +481,11 @@ impl RouteTopology {
                     return Err(TopologyError::InvalidDeviceFormat(node.id));
                 }
             }
-            if let Some(endpoint) = node.kind.device() {
+            if let (Some(endpoint), Some(role)) = (node.kind.device(), node.kind.endpoint_role()) {
                 if !endpoint.is_well_formed() {
                     return Err(TopologyError::InvalidEndpoint { node: node.id });
                 }
-                if let Some(first) = endpoints.insert((endpoint, node.kind.role()), node.id) {
+                if let Some(first) = endpoints.insert((endpoint, role), node.id) {
                     return Err(TopologyError::DuplicateEndpoint { first, second: node.id });
                 }
             }
@@ -591,6 +686,105 @@ mod tests {
         assert_eq!(topology.validate(), Ok(()));
         topology.nodes[2].strip.gate = threshold;
         assert_eq!(topology.validate(), Err(TopologyError::GateOnNonInput(BUS)));
+    }
+
+    #[test]
+    fn a_program_has_at_most_one_app_source_and_cannot_be_the_clock_master() {
+        let source = |path: &str| NodeKind::AppSource {
+            program: ProgramPath::new(path).unwrap(),
+            resampler: None,
+        };
+        let (first, second) = (NodeId(20), NodeId(21));
+        let mut topology = sample_topology();
+        topology.nodes.push(node(first, source(r"C:\Apps\Player.exe")));
+        assert_eq!(topology.validate(), Ok(()));
+        topology.clock_master = Some(first);
+        assert_eq!(topology.validate(), Err(TopologyError::InvalidClockMaster(first)));
+        topology.clock_master = None;
+        topology.nodes.push(node(second, source(r"c:\apps\player.EXE")));
+        assert_eq!(
+            topology.validate(),
+            Err(TopologyError::DuplicateProgram { first, second })
+        );
+    }
+
+    #[test]
+    fn an_external_insert_shares_slot_and_device_rules_but_is_not_a_clock_master() {
+        let insert_id = NodeId(30);
+        let insert = |send, ret: &str| NodeKind::ExternalInsert {
+            send,
+            ret: EndpointId(ret.to_owned()),
+        };
+        let mut topology = sample_topology();
+        topology
+            .nodes
+            .push(node(insert_id, insert(slot(SlotDirection::Out, 2), "{broadcast}")));
+        topology.routes.push(route(MIC, insert_id));
+        topology.routes.push(route(insert_id, HEADPHONES));
+        assert_eq!(topology.validate(), Ok(()));
+
+        let mut clock = topology.clone();
+        clock.clock_master = Some(insert_id);
+        assert_eq!(clock.validate(), Err(TopologyError::InvalidClockMaster(insert_id)));
+
+        let mut taken = topology.clone();
+        taken.nodes.last_mut().unwrap().kind = insert(slot(SlotDirection::Out, 1), "{broadcast}");
+        assert!(matches!(taken.validate(), Err(TopologyError::SlotOccupiedTwice { .. })));
+
+        let mut wrong_direction = topology.clone();
+        wrong_direction.nodes.last_mut().unwrap().kind = insert(slot(SlotDirection::In, 2), "{broadcast}");
+        assert!(matches!(
+            wrong_direction.validate(),
+            Err(TopologyError::SlotDirectionMismatch { .. })
+        ));
+
+        let mut same_device = topology.clone();
+        same_device.nodes.last_mut().unwrap().kind = insert(slot(SlotDirection::Out, 2), "{0.0.1.00000000}.{mic}");
+        assert_eq!(
+            same_device.validate(),
+            Err(TopologyError::DuplicateEndpoint {
+                first: MIC,
+                second: insert_id,
+            })
+        );
+
+        let mut looped = topology;
+        looped.routes.push(route(insert_id, BUS));
+        looped.routes.push(route(BUS, insert_id));
+        assert!(matches!(
+            looped.validate(),
+            Err(TopologyError::InvalidRoute {
+                rejection: RouteRejection::Loop,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn flac_cannot_use_floating_point_samples() {
+        let id = NodeId(40);
+        let recorder = |format, depth| NodeKind::Recorder {
+            settings: RecorderSettings { format, depth },
+        };
+        let mut topology = sample_topology();
+        topology
+            .nodes
+            .push(node(id, recorder(RecordFormat::Wav, RecordDepth::Float32)));
+        assert_eq!(topology.validate(), Ok(()));
+        topology.nodes.last_mut().unwrap().kind = recorder(RecordFormat::Flac, RecordDepth::Float32);
+        assert_eq!(topology.validate(), Err(TopologyError::InvalidRecorderSettings(id)));
+    }
+
+    #[test]
+    fn app_sources_have_a_stable_wire_format() {
+        let kind: NodeKind = NodeKind::AppSource {
+            program: ProgramPath::new(r"C:\a.exe").unwrap(),
+            resampler: None,
+        };
+        assert_eq!(
+            serde_json::to_string(&kind).unwrap(),
+            r#"{"type":"app_source","program":"C:\\a.exe"}"#
+        );
     }
 
     #[test]

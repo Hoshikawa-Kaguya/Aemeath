@@ -55,6 +55,9 @@ pub enum Port {
         was_active: bool,
         onset: Onset,
     },
+    /// 应用源：程序的每个根进程一条输入，求和（M3 计划 A1）。
+    /// 进程退出或还没启动时对应的输入是空的，不算欠载。
+    Summed { inputs: Vec<Port>, scratch: Vec<f32> },
 }
 
 /// 一次读写中发生的问题，由调度线程计数并记录。
@@ -88,8 +91,28 @@ impl Port {
         }
     }
 
+    /// `scratch_samples`：一块最多的样本数，一次分配好，调度线程里不再分配。
+    pub fn summed(inputs: Vec<Port>, scratch_samples: usize) -> Self {
+        Self::Summed {
+            inputs,
+            scratch: vec![0.0; scratch_samples],
+        }
+    }
+
     /// 输入端口：读满 `buffer`（交错立体声）；还没攒够或读空时不足的部分是 0。
     pub fn pull(&mut self, buffer: &mut [f32], issues: &mut PortIssues) {
+        if let Self::Summed { inputs, scratch } = self {
+            let scratch = &mut scratch[..buffer.len()];
+            buffer.fill(0.0);
+            for input in inputs {
+                scratch.fill(0.0);
+                input.pull(scratch, &mut PortIssues::default());
+                for (out, sample) in buffer.iter_mut().zip(scratch.iter()) {
+                    *out += sample;
+                }
+            }
+            return;
+        }
         let Self::Input {
             consumer,
             prime_samples,
@@ -242,6 +265,34 @@ mod tests {
         active.store(true, Ordering::Release);
         port.push(&[1.0; 2], &mut issues);
         assert_eq!(consumer.pop(), Ok(0.5));
+    }
+
+    #[test]
+    fn summed_inputs_add_up_and_an_empty_input_is_silent() {
+        let (mut first_producer, first) = RingBuffer::new(16);
+        let (mut second_producer, second) = RingBuffer::new(16);
+        let (_idle_producer, idle) = RingBuffer::<f32>::new(16);
+        let inputs = vec![
+            Port::input(first, 2, 0),
+            Port::input(second, 2, 0),
+            Port::input(idle, 2, 0),
+        ];
+        let mut port = Port::summed(inputs, 8);
+        for _ in 0..4 {
+            first_producer.push(0.25).unwrap();
+            second_producer.push(0.5).unwrap();
+        }
+        let mut issues = PortIssues::default();
+        let mut buffer = [9.0f32; 4];
+        port.pull(&mut buffer, &mut issues);
+        assert_eq!(buffer, [0.75; 4]);
+        port.pull(&mut buffer, &mut issues);
+        assert_eq!(buffer, [0.0; 4]);
+        assert_eq!(
+            issues,
+            PortIssues::default(),
+            "a process that exited is not an underflow"
+        );
     }
 
     #[test]

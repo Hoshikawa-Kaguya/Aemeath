@@ -22,4 +22,5 @@ pub mod units;
 ///
 /// 引擎和主程序总是一起发布，所以握手时要求版本完全相同（见 [`message::AppToEngine::Hello`]）。
 /// 2：M2 起通道条带门限，外部设备节点带设备设置。
-pub const PROTOCOL_VERSION: ids::ProtocolVersion = ids::ProtocolVersion(2);
+/// 3：M3 新增应用源、外部插入、录音节点及其状态和命令。
+pub const PROTOCOL_VERSION: ids::ProtocolVersion = ids::ProtocolVersion(3);

@@ -18,7 +18,12 @@
     "slots": "槽位 {used}/16",
     "slotsTip": "驱动：usbip-win2 {version}。单击打开设备页。",
     "slotsTipNoDriver": "没有找到 usbip-win2。单击打开设备页。",
-    "rate": "{rate} kHz"
+    "rate": "{rate} kHz",
+    "notRunning": "未运行 {n}",
+    "notRunningTip": "程序启动后，这些应用源会自动接入。",
+    "recording": "录音中 {n}",
+    "panicMute": "已全部静音",
+    "panicMuteTip": "点击解除紧急静音。"
   },
   "nav": {
     "aria": "主导航",
@@ -26,7 +31,9 @@
     "devices": "设备",
     "apps": "应用",
     "tools": "工具",
-    "settings": "设置"
+    "settings": "设置",
+    "recordings": "录音",
+    "hotkeys": "热键"
   },
   "apps": {
     "sub": "落点决定一个应用的声音实际播放到哪个端点。这里只列出正在出声的程序。",
@@ -41,7 +48,9 @@
     "unknownDevice": "其他设备",
     "empty": "现在没有程序在出声。",
     "unavailable": "无法读取应用的音频会话。",
-    "note": "指派按程序保存，这个程序以后每次启动都会直接播放到指派的设备。有的程序（例如 Discord、部分游戏）会自己选择设备，对它们指派无效，需要在程序内部设置。"
+    "note": "指派按程序保存，这个程序以后每次启动都会直接播放到指派的设备。有的程序（例如 Discord、部分游戏）会自己选择设备，对它们指派无效，需要在程序内部设置。",
+    "addSource": "添加为应用源",
+    "showSource": "在工作台中显示"
   },
   "tools": {
     "sub": "辅助小功能。这里只改 Windows 的设置，不改工作台。",
@@ -60,7 +69,10 @@
     "virtualInput": "虚拟输入",
     "virtualOutput": "虚拟输出",
     "externalOutput": "外部输出",
-    "bus": "总线"
+    "bus": "总线",
+    "appSource": "应用源",
+    "externalInsert": "外部插入",
+    "recorder": "录音节点"
   },
   "wb": {
     "hint": "从端口拖动即可连线 · 单击连线选中后按 Del 删除 · 鼠标停在连线标签上滚动滚轮调增益 · 拖动标签可沿连线移动",
@@ -90,7 +102,14 @@
       "noSignal": "离线 · 没有信号",
       "slotRepairing": "正在重新挂载虚拟设备",
       "slotFailing": "虚拟设备无法挂载"
-    }
+    },
+    "notRunning": "未运行",
+    "notRunningHint": "{program} 没有在运行，启动后自动接入。",
+    "programMissing": "程序不存在",
+    "chooseProgram": "重新选择程序…",
+    "duplicate": "{program} 的声音会在 {destination} 出现两份",
+    "record": "录音",
+    "stopRecording": "停止"
   },
   "route": {
     "off": "关 · {gain}",
@@ -114,7 +133,9 @@
     "nodeDeleted": "已删除节点：{name}",
     "deviceReplaced": "{node} 已改用新接入的同名设备：{device}",
     "undo": "撤销",
-    "dismiss": "关闭"
+    "dismiss": "关闭",
+    "landingRestored": "已把 {app} 放回 {landing}",
+    "recordingFailed": "{node} 的录音已停止：{reason}"
   },
   "error": {
     "unavailable": "控制面没有运行。",
@@ -124,7 +145,12 @@
     "slotOccupied": "这个虚拟设备已被占用。",
     "deviceInUse": "这台设备已经有节点了。",
     "notFound": "节点或连线已不存在。",
-    "failed": "出错了：{message}"
+    "failed": "出错了：{message}",
+    "programInUse": "这个程序已经有应用源节点了。",
+    "invalidProgram": "请选择一个带完整路径的 .exe 文件。",
+    "hotkeyModifierRequired": "键盘的切换型热键必须带 Ctrl、Alt、Shift 或 Win。单键请用按住生效。",
+    "hotkeyToggleOnly": "这个操作只能用切换。",
+    "hotkeyConflict": "这个按键已用于 {object}。"
   },
   "add": {
     "title": "添加节点",
@@ -140,8 +166,20 @@
       "virtualInput": "一个虚拟播放设备，应用可以把声音播放到这里",
       "bus": "把送进来的声音求和后再分发出去，不对应任何设备",
       "virtualOutput": "一个虚拟录音设备，OBS 等应用可以从这里录制",
-      "externalOutput": "这台电脑上的耳机、音箱或其他播放设备"
-    }
+      "externalOutput": "这台电脑上的耳机、音箱或其他播放设备",
+      "appSource": "某个程序的声音，无论它在哪个设备上播放",
+      "externalInsert": "把声音送进外部程序（例如 NVIDIA Broadcast）处理后再取回",
+      "recorder": "把送进来的声音写成文件"
+    },
+    "program": "程序",
+    "programPlaceholder": "选择程序",
+    "browse": "浏览…",
+    "programFilter": "程序",
+    "appSourceNote": "应用源比直接落点多 30–60 ms 延迟，适合送往直播，不适合实时监听。独占播放的程序抓不到。",
+    "returnDevice": "取回端设备",
+    "insertSend": "声音经 {slot} 送给外部程序，请在外部程序中把输入设为这个设备。",
+    "usedAsReturn": "已用作 {node} 的取回端",
+    "usedByNode": "已被 {node} 使用"
   },
   "dev": {
     "sub": "Aemeath 提供 16 个固定的虚拟设备槽位。节点占用槽位时，设备自动挂上；没有节点占用时，设备会拔出，不会留在 Windows 的设备列表里。设备名固定，只在卸载 Aemeath 时删除。",
@@ -285,7 +323,8 @@
     "lgOff": "已连接但关闭",
     "lgNone": "未连接",
     "lgKeys": "单击：新建或开关 · Del：删除 · 停在格子上滚动滚轮：±1 dB",
-    "newRoute": "新建连线"
+    "newRoute": "新建连线",
+    "lgDup": "同一份声音重复到达"
   },
   "grp": {
     "in": "输入",
@@ -308,7 +347,10 @@
     "candidates": "选择要改用的设备",
     "candidatesHint": "原来的设备不见了，找到了多台同名的设备（{device}），请选择这个节点要改用哪一台。",
     "useCandidate": "改用这台设备",
-    "confirm": "确定"
+    "confirm": "确定",
+    "insertHint": "请在外部程序中把输入设为 {device}。",
+    "copy": "复制设备名",
+    "copyFailed": "无法复制到剪贴板。"
   },
   "menu": {
     "aria": "{name} 的菜单",
@@ -328,6 +370,62 @@
     "cut": "剪切",
     "copy": "复制",
     "paste": "粘贴",
-    "selectAll": "全选"
+    "selectAll": "全选",
+    "hotkey": "热键…"
+  },
+  "confirm": {
+    "deleteLanding": "有 {n} 个应用落在这里，删除后它们改为跟随系统默认。"
+  },
+  "rec": {
+    "sub": "每个录音节点把送进来的声音写成这个文件夹里的文件。主程序重启时录音不会中断。WAV 文件在接近 4 GB 时自动分段。",
+    "folder": "录音文件夹",
+    "chooseFolder": "更改…",
+    "openFolder": "打开文件夹",
+    "defaultFormat": "文件格式",
+    "defaultDepth": "位深",
+    "settingsHint": "对下一次录音生效。",
+    "format": {
+      "flac": "FLAC（无损，体积小）",
+      "wav": "WAV（不压缩）"
+    },
+    "depth": {
+      "int16": "16 位整数",
+      "int24": "24 位整数",
+      "float32": "32 位浮点"
+    },
+    "empty": "还没有录音节点，请在工作台上添加。",
+    "recording": "录音中",
+    "stopped": "已停止",
+    "failed": {
+      "diskFull": "出错：磁盘已满",
+      "writeFailed": "出错：写入失败"
+    },
+    "startAria": "开始录制 {name}",
+    "stopAria": "停止录制 {name}"
+  },
+  "hotkey": {
+    "sub": "全局热键随时可用。专属热键属于某个节点或连线，随它一起删除。主程序重启时热键会短暂失效。",
+    "global": "全局",
+    "dedicated": "专属",
+    "dedicatedEmpty": "还没有专属热键，可以在节点设置或连线菜单里设置。",
+    "note": "按住生效在按住期间取反，松开后恢复，不写入配置。切换会修改保存的状态。鼠标侧键两种方式都可以用。",
+    "hint": "点击后按下按键。Esc 取消，Backspace 清除。",
+    "none": "未设置",
+    "pressKey": "请按下按键…",
+    "mode": "方式",
+    "toggle": "切换",
+    "hold": "按住生效",
+    "clear": "清除",
+    "occupied": "被其他程序占用",
+    "mouseX1": "鼠标侧键 4",
+    "mouseX2": "鼠标侧键 5",
+    "targetMute": "{node} · 静音",
+    "targetRecord": "{node} · 录音",
+    "targetRoute": "{from} → {to} · 开关",
+    "allRecording": "全部录音节点开始/停止",
+    "panicMute": "全部输出节点静音（紧急静音）",
+    "toggleWindow": "显示/隐藏主窗口",
+    "muteLabel": "静音热键",
+    "recordLabel": "录音热键"
   }
 }

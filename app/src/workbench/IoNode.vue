@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { backend } from '@/api/backend'
 import { roleOf } from '@/api/types'
 import AppIcon, { type IconName } from '@/components/AppIcon.vue'
-import { formatKhz } from '@/format/format'
+import { formatDuration, formatKhz } from '@/format/format'
 import { isMenuKey } from '@/menu/contextMenu'
 import NodeMeter from '@/meters/NodeMeter.vue'
 import { useAppStore } from '@/stores/app'
@@ -30,6 +30,12 @@ const icon = computed<IconName>(() => {
       return 'spk'
     case 'bus':
       return 'bus'
+    case 'appSource':
+      return 'apps'
+    case 'externalInsert':
+      return 'fx'
+    case 'recorder':
+      return 'rec'
     default:
       return 'virt'
   }
@@ -37,8 +43,22 @@ const icon = computed<IconName>(() => {
 const store = useAppStore()
 const offlineText = computed(() => {
   const status = node.value.status
-  return status.state === 'offline' ? t(`node.offline.${status.reason}`) : null
+  switch (status.state) {
+    case 'offline':
+      return t(`node.offline.${status.reason}`)
+    case 'programMissing':
+      return t('node.programMissing')
+    default:
+      return null
+  }
 })
+const isRecording = computed(() => node.value.recorder?.state.state === 'recording')
+const recordedTime = computed(() => {
+  const state = node.value.recorder?.state
+  return state?.state === 'recording' ? formatDuration(state.frames / (store.state?.engine.sampleRate ?? 1)) : ''
+})
+const programMissing = computed(() => node.value.status.state === 'programMissing')
+const notRunning = computed(() => node.value.status.state === 'notRunning')
 const isExternal = computed(() => node.value.device !== null)
 /**
  * 独占用不了时提供"改用共享模式"：被占用、不允许独占，以及无信号——有的设备独占时根本不交付数据
@@ -131,7 +151,8 @@ function onKeyDown(event: KeyboardEvent): void {
     :class="{
       sel: data.selected,
       hl: data.highlighted,
-      offline: node.status.state === 'offline',
+      offline: offlineText !== null,
+      idle: notRunning,
       'drop-ok': data.drop === 'ok',
       'drop-bad': data.drop === 'bad',
     }"
@@ -159,6 +180,14 @@ function onKeyDown(event: KeyboardEvent): void {
         }}</b>
         <span :title="data.subtitle">{{ data.subtitle }}</span>
       </div>
+      <span
+        v-if="node.duplicate"
+        class="dup"
+        role="img"
+        :title="t('node.duplicate', { program: node.duplicate.program, destination: node.duplicate.destination })"
+        :aria-label="t('node.duplicate', { program: node.duplicate.program, destination: node.duplicate.destination })"
+        ><AppIcon name="warn"
+      /></span>
       <span class="code">{{ data.code }}</span>
       <button
         type="button"
@@ -174,7 +203,16 @@ function onKeyDown(event: KeyboardEvent): void {
       <div class="node-status" role="status">
         <AppIcon name="warn" /><span class="ellipsis" :title="offlineText">{{ offlineText }}</span>
       </div>
-      <div v-if="isExternal" class="node-actions nodrag">
+      <div v-if="isExternal || programMissing" class="node-actions nodrag">
+        <button
+          v-if="programMissing"
+          type="button"
+          class="link"
+          @pointerdown.stop
+          @click.stop="actions?.openSettings(node)"
+        >
+          {{ t('node.chooseProgram') }}
+        </button>
         <button
           v-if="node.candidates.length > 0"
           type="button"
@@ -193,9 +231,30 @@ function onKeyDown(event: KeyboardEvent): void {
     <div v-else-if="node.status.state === 'pending'" class="node-status pending" role="status">
       <AppIcon name="sync" /><span class="ellipsis">{{ t('node.pending') }}</span>
     </div>
+    <div
+      v-else-if="notRunning"
+      class="node-status pending"
+      role="status"
+      :title="t('node.notRunningHint', { program: node.program?.fileName ?? '' })"
+    >
+      <AppIcon name="unplug" /><span class="ellipsis">{{ t('node.notRunning') }}</span>
+    </div>
     <template v-else>
       <div class="node-body">
         <NodeMeter :node="node.id" :muted="node.muted" />
+      </div>
+      <div v-if="node.recorder" class="rec-row nodrag">
+        <button
+          type="button"
+          class="link"
+          :class="{ active: isRecording }"
+          :aria-pressed="isRecording"
+          @pointerdown.stop
+          @click.stop="store.toggleRecording(node)"
+        >
+          <AppIcon :name="isRecording ? 'stop' : 'rec'" />{{ t(isRecording ? 'node.stopRecording' : 'node.record') }}
+        </button>
+        <span class="rec-time">{{ recordedTime }}</span>
       </div>
       <div v-if="formatLine" class="node-format ellipsis" :title="formatLine">{{ formatLine }}</div>
     </template>
@@ -241,6 +300,11 @@ function onKeyDown(event: KeyboardEvent): void {
   border: 1px dashed var(--warn);
 }
 
+/* 应用源的程序没有运行：整体变灰，它不是错误 */
+.node.idle {
+  opacity: 0.6;
+}
+
 /* 路由矩阵里悬停的格子以这个节点为一端 */
 .node.hl:not(.sel) {
   outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
@@ -267,6 +331,17 @@ function onKeyDown(event: KeyboardEvent): void {
 .node-title {
   min-width: 0;
   flex: 1;
+}
+
+.dup {
+  display: grid;
+  flex: none;
+  color: var(--warn);
+}
+
+.dup svg {
+  width: 16px;
+  height: 16px;
 }
 
 .more {
@@ -328,6 +403,32 @@ function onKeyDown(event: KeyboardEvent): void {
   display: flex;
   align-items: center;
   padding: 2px 10px 9px;
+}
+
+.rec-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: -6px 6px 6px;
+}
+
+.rec-row .link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--crit);
+}
+
+.rec-row svg {
+  width: 12px;
+  height: 12px;
+}
+
+.rec-time {
+  padding-right: 4px;
+  font-size: var(--fontSizeBase100);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
 }
 
 .node-format {

@@ -55,6 +55,10 @@ enum Request {
         endpoint_id: Option<String>,
         reply: Reply<()>,
     },
+    Landing {
+        process_id: u32,
+        reply: Reply<Option<String>>,
+    },
     Endpoints {
         flow: AudioFlow,
         reply: Reply<Vec<EndpointEntry>>,
@@ -97,6 +101,11 @@ impl AudioPolicy {
             reply,
         })
         .await
+    }
+
+    /// 进程当前的持久指派；没有指派时为 None。进程须正在运行并有音频会话（S7）。
+    pub async fn landing(&self, process_id: u32) -> Result<Option<String>, PolicyError> {
+        self.ask(|reply| Request::Landing { process_id, reply }).await
     }
 
     /// 某个方向的全部活动端点（包括 Aemeath 的槽位），标出当前的默认设备和默认通信设备。
@@ -163,6 +172,9 @@ fn worker(requests: std_mpsc::Receiver<Request>, ready: std_mpsc::Sender<Result<
             } => {
                 let _ = reply.send(worker.set_landing(process_id, endpoint_id.as_deref()));
             }
+            Request::Landing { process_id, reply } => {
+                let _ = reply.send(worker.landing(process_id));
+            }
             Request::Endpoints { flow, reply } => {
                 let _ = reply.send(worker.list(flow));
             }
@@ -199,14 +211,21 @@ impl Worker {
             .collect())
     }
 
-    fn set_landing(&mut self, process_id: u32, endpoint_id: Option<&str>) -> Result<(), PolicyError> {
-        let routing = match &self.routing {
+    fn routing(&mut self) -> Result<&AppRouting, PolicyError> {
+        Ok(match &mut self.routing {
             Some(routing) => routing,
-            None => self.routing.insert(AppRouting::new()?),
-        };
-        routing.set_render_endpoint(process_id, endpoint_id)?;
+            slot => slot.insert(AppRouting::new()?),
+        })
+    }
+
+    fn set_landing(&mut self, process_id: u32, endpoint_id: Option<&str>) -> Result<(), PolicyError> {
+        self.routing()?.set_render_endpoint(process_id, endpoint_id)?;
         info!(process_id, endpoint_id, "app landing set");
         Ok(())
+    }
+
+    fn landing(&mut self, process_id: u32) -> Result<Option<String>, PolicyError> {
+        Ok(self.routing()?.render_endpoint(process_id)?)
     }
 
     fn list(&self, flow: AudioFlow) -> Result<Vec<EndpointEntry>, PolicyError> {

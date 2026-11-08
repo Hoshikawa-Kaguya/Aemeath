@@ -5,18 +5,16 @@
 
 use std::path::PathBuf;
 
-use windows::Win32::Foundation::{CloseHandle, MAX_PATH, S_OK};
+use windows::Win32::Foundation::S_OK;
 use windows::Win32::Media::Audio::{
     AudioSessionStateExpired, DEVICE_STATE_ACTIVE, IAudioSessionControl2, IAudioSessionManager2, IMMDeviceEnumerator,
     MMDeviceEnumerator, eRender,
 };
 use windows::Win32::System::Com::{CLSCTX_ALL, CoCreateInstance};
-use windows::Win32::System::Threading::{
-    OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
-};
-use windows::core::{Interface, PWSTR};
+use windows::core::Interface;
 
 use crate::audio_endpoints::take_co_string;
+use crate::process::process_path;
 
 /// 一个音频会话。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,7 +74,7 @@ pub fn render_sessions() -> windows::core::Result<Vec<AudioSession>> {
                 .unwrap_or_default();
             sessions.push(AudioSession {
                 process_id,
-                executable: executable_of(process_id),
+                executable: process_path(process_id),
                 display_name,
                 endpoint_id: endpoint_id.clone(),
                 system_sounds,
@@ -84,23 +82,4 @@ pub fn render_sessions() -> windows::core::Result<Vec<AudioSession>> {
         }
     }
     Ok(sessions)
-}
-
-/// 进程的完整路径。
-fn executable_of(process_id: u32) -> Option<PathBuf> {
-    if process_id == 0 {
-        return None;
-    }
-    // SAFETY: 只请求查询信息的最小权限；句柄在下面关闭
-    let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process_id) }.ok()?;
-    let mut buffer = vec![0u16; MAX_PATH as usize * 4];
-    let mut length = buffer.len() as u32;
-    // SAFETY: buffer 与 length 描述同一块可写缓冲；成功时 length 是写入的字符数
-    let result =
-        unsafe { QueryFullProcessImageNameW(process, PROCESS_NAME_WIN32, PWSTR(buffer.as_mut_ptr()), &mut length) };
-    // SAFETY: process 是上面打开的有效句柄，此后不再使用
-    let _ = unsafe { CloseHandle(process) };
-    result.ok()?;
-    let path = String::from_utf16(&buffer[..length as usize]).ok()?;
-    Some(PathBuf::from(path))
 }

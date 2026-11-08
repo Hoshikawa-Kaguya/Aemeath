@@ -2,16 +2,26 @@
 import { computed, ref, useTemplateRef } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { backend } from '@/api/backend'
-import { DEFAULT_DEVICE_SETTINGS, roleOf, type DeviceSettings, type NodeView } from '@/api/types'
+import {
+  DEFAULT_DEVICE_SETTINGS,
+  roleOf,
+  type DeviceSettings,
+  type NodeView,
+  type RecorderSettingsView,
+  type ResamplerKind,
+} from '@/api/types'
 import { formatThreshold } from '@/format/format'
 import { useAppStore } from '@/stores/app'
 import { slotName } from '@/stores/nodeLabels'
 import DeviceSettingsFields from './DeviceSettingsFields.vue'
 import { GATE_MAX_DB, GATE_OFF_POSITION, gateToPosition, positionToGate } from './gate'
+import HotkeyField from './HotkeyField.vue'
+import { pickProgram } from './pickProgram'
+import ResamplerField from './ResamplerField.vue'
 
 // 节点设置（M2 计划 2.2）：从节点的"⋯"按钮或右键菜单打开，尺寸固定，点"确定"才生效。
 // 内容随节点类型而定：名称；虚拟节点改选槽位；输入节点的门限；外部设备的独占、格式、缓冲与重采样算法（ADR-0014）；
-// 是否固定到控制台。改了设备设置时，该设备的流淡出、重新打开、再淡入。
+// 应用源的程序与重采样算法（M3 计划 A8）；是否固定到控制台。改了设备设置时，该设备的流淡出、重新打开、再淡入。
 interface FluentDialog extends HTMLElement {
   show(): void
   hide(): void
@@ -31,9 +41,34 @@ const pinned = ref(false)
 const io = ref<DeviceSettings>({ ...DEFAULT_DEVICE_SETTINGS })
 /** 多个同名候选中选中的端点 ID */
 const candidate = ref('')
+const appResampler = ref<ResamplerKind | null>(null)
+const recorder = ref<RecorderSettingsView>({ format: 'flac', depth: 'int24' })
 
 const node = computed(() => (nodeId.value === null ? undefined : store.nodeById.get(nodeId.value)))
-const deviceDirection = computed(() => (node.value?.kind === 'externalInput' ? 'input' : 'output'))
+const deviceDirection = computed(() => (node.value?.kind === 'externalOutput' ? 'output' : 'input'))
+/** 外部插入的送出端在 Windows 里的设备名，用户要在外部程序里选它（M3 计划 X3） */
+const sendDevice = computed(() => {
+  const current = node.value
+  if (current?.kind !== 'externalInsert' || current.slot === null) {
+    return null
+  }
+  const { direction, number } = current.slot
+  const row = store.state?.slots.find((slot) => slot.slot.direction === direction && slot.slot.number === number)
+  return row?.deviceName ?? slotName(current.slot)
+})
+
+/** FLAC 不支持浮点（M3 计划 R2） */
+function fixDepth(): void {
+  if (recorder.value.format === 'flac' && recorder.value.depth === 'float32') {
+    recorder.value.depth = 'int24'
+  }
+}
+
+function copySend(): void {
+  if (sendDevice.value !== null) {
+    navigator.clipboard.writeText(sendDevice.value).catch(() => store.showToast(t('nodeSettings.copyFailed')))
+  }
+}
 const isInput = computed(() => node.value !== undefined && roleOf(node.value.kind) === 'in')
 /** 同方向、没有被其他节点占用的槽位，加上节点自己现在的槽位 */
 const slotChoices = computed(() => {
@@ -59,7 +94,20 @@ function open(target: NodeView): void {
   pinned.value = store.state?.console.includes(target.id) === true
   io.value = { ...(target.io ?? DEFAULT_DEVICE_SETTINGS) }
   candidate.value = target.candidates[0]?.endpointId ?? ''
+  appResampler.value = target.resampler
+  if (target.recorder !== null) {
+    recorder.value = { ...target.recorder.settings }
+  }
   dialog.value?.show()
+}
+
+/** 立即改绑（与"改用同名设备"一样，是对程序缺失的处理，不等"确定"） */
+async function chooseProgram(): Promise<void> {
+  const current = node.value
+  const path = await pickProgram()
+  if (current !== undefined && path !== null) {
+    await store.run(() => backend.replaceProgram(current.id, path))
+  }
 }
 
 async function confirm(): Promise<void> {
@@ -83,6 +131,18 @@ async function confirm(): Promise<void> {
   if (current.io !== null && JSON.stringify(io.value) !== JSON.stringify(current.io)) {
     const settings = io.value
     steps.push(() => store.run(() => backend.setDeviceSettings(current.id, settings)))
+  }
+  if (current.program !== null && appResampler.value !== current.resampler) {
+    const resampler = appResampler.value
+    steps.push(() => store.run(() => backend.setAppResampler(current.id, resampler)))
+  }
+  if (
+    current.recorder !== null &&
+    (recorder.value.format !== current.recorder.settings.format ||
+      recorder.value.depth !== current.recorder.settings.depth)
+  ) {
+    const settings = { ...recorder.value }
+    steps.push(() => store.run(() => backend.setRecorderSettings(current.id, settings)))
   }
   const wasPinned = store.state?.console.includes(current.id) === true
   if (pinned.value !== wasPinned) {
@@ -141,6 +201,23 @@ defineExpose({ open })
           <input v-model="name" class="text-input" :maxlength="NAME_MAX" />
         </label>
 
+        <div v-if="node.program" class="field">
+          <span>{{ t('add.program') }}</span>
+          <span class="caption ellipsis" :title="node.program.path">{{ node.program.path }}</span>
+          <span v-if="node.status.state === 'programMissing'" class="caption missing">
+            {{ t('node.programMissing') }}
+          </span>
+          <div>
+            <fluent-button
+              :appearance="node.status.state === 'programMissing' ? 'primary' : undefined"
+              @click="chooseProgram"
+            >
+              {{ t('node.chooseProgram') }}
+            </fluent-button>
+          </div>
+          <span class="caption">{{ t('add.appSourceNote') }}</span>
+        </div>
+
         <label v-if="slotChoices.length > 0" class="field">
           <span>{{ t('nodeSettings.slot') }}</span>
           <select v-model.number="slotNumber" class="select">
@@ -148,6 +225,13 @@ defineExpose({ open })
           </select>
           <span class="caption">{{ t('nodeSettings.slotHint') }}</span>
         </label>
+
+        <div v-if="sendDevice" class="field">
+          <span class="caption">{{ t('nodeSettings.insertHint', { device: sendDevice }) }}</span>
+          <div>
+            <fluent-button @click="copySend">{{ t('nodeSettings.copy') }}</fluent-button>
+          </div>
+        </div>
 
         <div v-if="isInput" class="field">
           <span class="row">
@@ -173,6 +257,37 @@ defineExpose({ open })
           :endpoint-id="node.device.endpointId"
           :direction="deviceDirection"
         />
+
+        <ResamplerField v-if="node.program" v-model="appResampler" />
+
+        <template v-if="node.recorder">
+          <label class="field">
+            <span>{{ t('rec.defaultFormat') }}</span>
+            <select v-model="recorder.format" class="select" @change="fixDepth">
+              <option value="flac">{{ t('rec.format.flac') }}</option>
+              <option value="wav">{{ t('rec.format.wav') }}</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>{{ t('rec.defaultDepth') }}</span>
+            <select v-model="recorder.depth" class="select">
+              <option value="int16">{{ t('rec.depth.int16') }}</option>
+              <option value="int24">{{ t('rec.depth.int24') }}</option>
+              <option value="float32" :disabled="recorder.format === 'flac'">{{ t('rec.depth.float32') }}</option>
+            </select>
+            <span class="caption">{{ t('rec.settingsHint') }}</span>
+          </label>
+        </template>
+
+        <div class="field">
+          <span>{{ t('hotkey.muteLabel') }}</span>
+          <HotkeyField :target="{ type: 'nodeMute', node: node.id }" :binding="node.muteHotkey" />
+        </div>
+
+        <div v-if="node.recorder" class="field">
+          <span>{{ t('hotkey.recordLabel') }}</span>
+          <HotkeyField :target="{ type: 'nodeRecord', node: node.id }" :binding="node.recordHotkey" toggle-only />
+        </div>
 
         <label class="check">
           <input v-model="pinned" type="checkbox" />
@@ -232,6 +347,10 @@ defineExpose({ open })
 
 .field-title {
   font-weight: var(--fontWeightSemibold);
+}
+
+.missing {
+  color: var(--warn);
 }
 
 .row {

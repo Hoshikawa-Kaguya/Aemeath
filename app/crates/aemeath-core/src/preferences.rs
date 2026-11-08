@@ -2,7 +2,11 @@
 
 use std::collections::BTreeMap;
 
+use aemeath_protocol::ids::EndpointId;
+use aemeath_protocol::topology::RecorderSettings;
 use serde::{Deserialize, Serialize};
+
+use crate::hotkeys::GlobalHotkeys;
 
 /// 界面语言。
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -23,16 +27,35 @@ pub struct Preferences {
     /// 16 个槽位是否已完成首次注册（ADR-0009）。完成前每次启动都会重新注册。
     #[serde(default)]
     pub slots_registered: bool,
-    /// Aemeath 做过的按应用指派：可执行文件的完整路径 → 播放端点 ID（选型报告 5.5 节）。
-    /// Windows 按可执行文件持久保存指派，撤销时要求该程序正有音频会话，所以记下来，以便日后撤销。
+    /// Aemeath 做过的按应用指派：可执行文件的完整路径 → 记录（选型报告 5.5 节）。
+    /// Windows 按可执行文件持久保存指派，读写都要求该程序正有音频会话，所以记下来，等它下次出现时纠正或撤销。
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub app_landings: BTreeMap<String, String>,
+    pub app_landings: BTreeMap<String, LandingRecord>,
     /// 主窗口上次的位置和大小
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub window: Option<WindowPlacement>,
     /// 上次停留的页面，由界面解释，后端只保存
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_page: Option<String>,
+    /// 录音文件夹；None 表示默认的 `%USERPROFILE%\\Music\\Aemeath`（M3 计划 R6）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recording_folder: Option<String>,
+    /// 新录音节点的默认格式和位深
+    #[serde(default)]
+    pub recording_defaults: RecorderSettings,
+    /// 全局热键（GLOSSARY：全局热键）
+    #[serde(default)]
+    pub global_hotkeys: GlobalHotkeys,
+}
+
+/// 一条按应用指派的记录。untagged：指派写成端点 ID 字符串（与 M2 的配置相同，不需要迁移），待清除写成 null。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum LandingRecord {
+    /// 这个程序应当落在这个端点上
+    Endpoint(EndpointId),
+    /// 落点节点已被删除，等这个程序下次有音频会话时清除它的指派（M3 计划 L3）
+    PendingClear,
 }
 
 /// 主窗口的位置和大小（物理像素）。`maximized` 时其余字段是还原后的位置和大小。
@@ -63,6 +86,21 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&LanguagePreference::System).unwrap(),
             r#"{"mode":"system"}"#
+        );
+    }
+
+    #[test]
+    fn landing_records_read_the_m2_format() {
+        let landings: BTreeMap<String, LandingRecord> =
+            serde_json::from_str(r#"{"a.exe":"{id}","b.exe":null}"#).unwrap();
+        assert_eq!(
+            landings["a.exe"],
+            LandingRecord::Endpoint(EndpointId("{id}".to_owned()))
+        );
+        assert_eq!(landings["b.exe"], LandingRecord::PendingClear);
+        assert_eq!(
+            serde_json::to_string(&landings).unwrap(),
+            r#"{"a.exe":"{id}","b.exe":null}"#
         );
     }
 

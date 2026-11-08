@@ -22,6 +22,10 @@ export type IconName =
   | 'grip'
   | 'more'
   | 'apps'
+  | 'fx'
+  | 'key'
+  | 'rec'
+  | 'stop'
   | 'tools'
 
 defineProps<{ name: IconName }>()

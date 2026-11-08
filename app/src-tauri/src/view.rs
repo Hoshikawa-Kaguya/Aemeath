@@ -13,7 +13,9 @@ use aemeath_protocol::topology::RouteRejection;
 use aemeath_protocol::units::{SampleRate, SampleRateError};
 use serde::{Deserialize, Serialize};
 
-use crate::device_settings::DeviceSettingsView;
+use crate::device_settings::{DeviceSettingsView, ResamplerView};
+use crate::hotkey_views::{HotkeyBindingView, HotkeyRowView};
+use crate::recording::{RecorderView, RecordingFailureView, RecordingView};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -29,6 +31,10 @@ pub struct ViewState {
     pub routes: Vec<RouteView>,
     /// 固定到控制台的节点 ID，从左到右
     pub console: Vec<u32>,
+    pub recording: RecordingView,
+    pub hotkeys: Vec<HotkeyRowView>,
+    /// 紧急静音开启中
+    pub panic_mute: bool,
     pub slots: Vec<SlotView>,
     /// 最近的一次性提示（按编号递增），界面只显示没见过的
     pub notices: Vec<NoticeView>,
@@ -45,8 +51,22 @@ pub struct NoticeView {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum NoticeKind {
+    /// 录音出错，这一路已停止（M3 计划 R10）
+    RecordingFailed { node: String, reason: RecordingFailureView },
     /// 外部设备换了端点 ID（例如换了 USB 口），已按名称自动改用（选型报告 6.5 节）
     DeviceReplaced { node: String, device: String },
+    /// 程序的持久指派被别处改过，已放回 Aemeath 记录的落点（M3 计划 L1）
+    LandingRestored { app: String, landing: String },
+}
+
+/// 一处重复路由（M3 计划 L4）的说明。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DuplicateView {
+    /// 应用源的节点名
+    pub program: String,
+    /// 声音出现两份的目的地的节点名
+    pub destination: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -123,6 +143,9 @@ pub enum NodeKindView {
     VirtualOutput,
     ExternalOutput,
     Bus,
+    AppSource,
+    ExternalInsert,
+    Recorder,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -130,6 +153,14 @@ pub enum NodeKindView {
 pub struct DeviceView {
     pub endpoint_id: String,
     pub name: String,
+}
+
+/// 应用源绑定的程序。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProgramView {
+    pub path: String,
+    pub file_name: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -140,6 +171,10 @@ pub struct NodeView {
     pub kind: NodeKindView,
     pub slot: Option<SlotRef>,
     pub device: Option<DeviceView>,
+    /// 应用源绑定的程序
+    pub program: Option<ProgramView>,
+    /// 应用源按节点覆盖的重采样算法；None 表示跟随全局默认
+    pub resampler: Option<ResamplerView>,
     pub x: f64,
     pub y: f64,
     pub gain_db: f32,
@@ -153,6 +188,12 @@ pub struct NodeView {
     /// 设备换了端点、又有多个同名设备时，可以改用的候选（由用户在节点设置里选）
     pub candidates: Vec<DeviceView>,
     pub status: NodeStatus,
+    /// 录音节点的设置与状态
+    pub recorder: Option<RecorderView>,
+    pub mute_hotkey: Option<HotkeyBindingView>,
+    pub record_hotkey: Option<HotkeyBindingView>,
+    /// 这个应用源造成了重复路由
+    pub duplicate: Option<DuplicateView>,
 }
 
 /// 节点的运行状态（工作台上的离线提示、标题栏的离线节点数）。
@@ -166,6 +207,10 @@ pub enum NodeStatus {
     Offline {
         reason: OfflineReasonView,
     },
+    /// 应用源的程序没有在运行：不算离线（GLOSSARY：未运行）
+    NotRunning,
+    /// 应用源的程序文件不存在（GLOSSARY：程序缺失），计入离线警告
+    ProgramMissing,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -185,6 +230,8 @@ impl NodeStatus {
     pub fn of_endpoint(status: Option<&EndpointStatus>) -> Self {
         match status {
             Some(EndpointStatus::Online { .. }) => Self::Ok,
+            Some(EndpointStatus::NotRunning) => Self::NotRunning,
+            Some(EndpointStatus::ProgramMissing) => Self::ProgramMissing,
             Some(EndpointStatus::Offline { reason }) => Self::Offline {
                 reason: match reason {
                     OfflineReason::WaitingForDevice => OfflineReasonView::WaitingForDevice,
@@ -219,16 +266,21 @@ pub struct RouteView {
     pub gain_db: f32,
     pub enabled: bool,
     pub label_position: f32,
+    /// 这条连线在重复路径上
+    pub duplicate: Option<DuplicateView>,
+    pub toggle_hotkey: Option<HotkeyBindingView>,
 }
 
-impl From<&Route> for RouteView {
-    fn from(route: &Route) -> Self {
+impl RouteView {
+    pub fn new(route: &Route, duplicate: Option<DuplicateView>) -> Self {
         Self {
             from: route.from.0,
             to: route.to.0,
             gain_db: route.gain.db(),
             enabled: route.enabled,
             label_position: route.label_position.get(),
+            duplicate,
+            toggle_hotkey: route.toggle_hotkey.map(HotkeyBindingView::from),
         }
     }
 }
@@ -345,6 +397,9 @@ pub fn kind_view(kind: &NodeKind) -> NodeKindView {
         NodeKind::VirtualOutput { .. } => NodeKindView::VirtualOutput,
         NodeKind::ExternalOutput { .. } => NodeKindView::ExternalOutput,
         NodeKind::Bus => NodeKindView::Bus,
+        NodeKind::AppSource { .. } => NodeKindView::AppSource,
+        NodeKind::ExternalInsert { .. } => NodeKindView::ExternalInsert,
+        NodeKind::Recorder { .. } => NodeKindView::Recorder,
     }
 }
 

@@ -59,7 +59,11 @@ onBeforeUnmount(() => unregister?.())
 
 .vertical .db {
   width: auto;
+  height: 16px;
+  line-height: 16px;
   text-align: center;
+  color: var(--text-2);
+  white-space: nowrap;
 }
 
 .bars {

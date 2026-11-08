@@ -13,7 +13,9 @@ mod commands;
 mod controller;
 mod default_devices;
 mod device_settings;
+mod hotkey_views;
 mod meters;
+mod recording;
 mod tray;
 mod view;
 mod window;
@@ -49,9 +51,17 @@ fn main() -> ExitCode {
     tracing::info!(version = env!("CARGO_PKG_VERSION"), data_dir = %config.data_dir.display(), "app starting");
 
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(move |app| {
             let handle = app.handle().clone();
-            let controller = ControllerHandle::start(config.clone(), move |state| {
+            let toggle_handle = app.handle().clone();
+            let toggle_window = move || {
+                let app = toggle_handle.clone();
+                // 窗口操作要在主线程上执行
+                let target = app.clone();
+                let _ = app.run_on_main_thread(move || tray::toggle_main_window(&target));
+            };
+            let controller = ControllerHandle::start(config.clone(), Box::new(toggle_window), move |state| {
                 if let Err(error) = handle.emit(STATE_EVENT, state) {
                     tracing::debug!(%error, "cannot push the state to the window");
                 }
@@ -82,10 +92,23 @@ fn main() -> ExitCode {
             commands::change_slot,
             commands::set_device_settings,
             commands::replace_device,
+            commands::describe_program,
+            commands::replace_program,
+            commands::set_app_resampler,
             commands::probe_device,
             commands::redetect,
             commands::list_apps,
             commands::set_landing,
+            commands::landing_count,
+            commands::set_hotkey,
+            commands::capture_hotkey,
+            commands::set_panic_mute,
+            commands::start_recording,
+            commands::stop_recording,
+            commands::set_recorder_settings,
+            commands::set_recording_folder,
+            commands::set_recording_defaults,
+            commands::open_recording_folder,
             commands::list_default_devices,
             commands::set_default_device,
             commands::route_verdicts,

@@ -12,7 +12,8 @@ use aemeath_protocol::PROTOCOL_VERSION;
 use aemeath_protocol::frame::{self, FrameDecoder};
 use aemeath_protocol::ids::{EndpointId, NodeId, ProtocolVersion, RequestId, SlotId, TopologyRevision};
 use aemeath_protocol::message::{
-    AppToEngine, DeviceCapabilities, DeviceFormat, EndpointDirection, EndpointStatus, EngineToApp, RejectReason,
+    AppToEngine, DeviceCapabilities, DeviceFormat, EndpointDirection, EndpointStatus, EngineToApp, RecorderState,
+    RejectReason,
 };
 use aemeath_protocol::topology::RouteTopology;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -94,6 +95,10 @@ pub enum ClientEvent {
         node: NodeId,
         status: EndpointStatus,
     },
+    RecorderStatus {
+        node: NodeId,
+        status: RecorderState,
+    },
     /// USB/IP 服务端上槽位的连接状态（挂载成功以此为准，ADR-0007）
     SlotConnection {
         slot: SlotId,
@@ -107,7 +112,9 @@ pub enum ClientEvent {
 
 enum Command {
     /// 请引擎退出；应答或断开后通知 `done`
-    ShutdownEngine { done: oneshot::Sender<bool> },
+    ShutdownEngine {
+        done: oneshot::Sender<bool>,
+    },
     /// 查询外部设备的能力；断开或探测失败时答复 None
     ProbeDevice {
         endpoint: EndpointId,
@@ -115,7 +122,16 @@ enum Command {
         reply: oneshot::Sender<Option<DeviceCapabilities>>,
     },
     /// 立即重新检测离线设备；没有连接时直接丢弃
-    Redetect { node: Option<NodeId> },
+    Redetect {
+        node: Option<NodeId>,
+    },
+    StartRecording {
+        node: NodeId,
+        path: String,
+    },
+    StopRecording {
+        node: NodeId,
+    },
 }
 
 type ProbeWaiters = Vec<(RequestId, oneshot::Sender<Option<DeviceCapabilities>>)>;
@@ -172,6 +188,15 @@ impl EngineClient {
     /// 请引擎立即重新检测离线设备；`node` 为 None 表示全部（选型报告 6.5 节的手动检测）。
     pub fn redetect(&self, node: Option<NodeId>) {
         let _ = self.commands.send(Command::Redetect { node });
+    }
+
+    /// 开始录音；`path` 是完整的文件路径。
+    pub fn start_recording(&self, node: NodeId, path: String) {
+        let _ = self.commands.send(Command::StartRecording { node, path });
+    }
+
+    pub fn stop_recording(&self, node: NodeId) {
+        let _ = self.commands.send(Command::StopRecording { node });
     }
 }
 
@@ -251,7 +276,7 @@ async fn run(
                     Command::ProbeDevice { reply, .. } => {
                         let _ = reply.send(None);
                     }
-                    Command::Redetect { .. } => {}
+                    Command::Redetect { .. } | Command::StartRecording { .. } | Command::StopRecording { .. } => {}
                 }
             }
             tokio::time::sleep(config.timing.reconnect_interval).await;
@@ -369,6 +394,10 @@ async fn session(
                         send(pipe, &AppToEngine::ProbeDevice { request, endpoint, direction }).await
                     }
                     Command::Redetect { node } => send(pipe, &AppToEngine::Redetect { request, node }).await,
+                    Command::StartRecording { node, path } => {
+                        send(pipe, &AppToEngine::StartRecording { request, node, path }).await
+                    }
+                    Command::StopRecording { node } => send(pipe, &AppToEngine::StopRecording { request, node }).await,
                 };
                 if sent.is_err() {
                     break DisconnectReason::Closed;
@@ -442,6 +471,7 @@ fn handle(
         EngineToApp::EndpointStatus { node, status } => ClientEvent::EndpointStatus { node, status },
         EngineToApp::SlotConnection { slot, connected } => ClientEvent::SlotConnection { slot, connected },
         EngineToApp::SlotFormat { slot, format } => ClientEvent::SlotFormat { slot, format },
+        EngineToApp::RecorderStatus { node, status } => ClientEvent::RecorderStatus { node, status },
         EngineToApp::Pong { .. } | EngineToApp::Welcome { .. } | EngineToApp::HelloRejected { .. } => return,
     };
     let _ = events.send(event);

@@ -8,6 +8,7 @@
 
 pub mod audio_policy;
 pub mod engine_client;
+pub mod hotkeys;
 pub mod meters;
 pub mod slots;
 pub mod usbip_cli;

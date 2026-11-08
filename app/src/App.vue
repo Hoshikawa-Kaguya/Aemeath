@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted } from 'vue'
+import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import IconSprite from '@/components/IconSprite.vue'
 import NavRail from '@/components/NavRail.vue'
 import RegistrationPanel from '@/components/RegistrationPanel.vue'
@@ -10,6 +11,8 @@ import AppsPage from '@/pages/AppsPage.vue'
 import DevicesPage from '@/pages/DevicesPage.vue'
 import ToolsPage from '@/pages/ToolsPage.vue'
 import SettingsPage from '@/pages/SettingsPage.vue'
+import RecordingsPage from '@/pages/RecordingsPage.vue'
+import HotkeysPage from '@/pages/HotkeysPage.vue'
 import WorkbenchPage from '@/pages/WorkbenchPage.vue'
 import { useAppStore } from '@/stores/app'
 
@@ -34,6 +37,8 @@ onMounted(() => {
           <WorkbenchPage v-if="store.page === 'workbench'" />
           <DevicesPage v-else-if="store.page === 'devices'" />
           <AppsPage v-else-if="store.page === 'apps'" />
+          <RecordingsPage v-else-if="store.page === 'recordings'" />
+          <HotkeysPage v-else-if="store.page === 'hotkeys'" />
           <ToolsPage v-else-if="store.page === 'tools'" />
           <SettingsPage v-else />
         </Transition>
@@ -43,6 +48,7 @@ onMounted(() => {
     </div>
   </div>
   <ContextMenu />
+  <ConfirmDialog />
 </template>
 
 <style scoped>

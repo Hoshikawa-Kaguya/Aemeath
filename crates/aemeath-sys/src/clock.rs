@@ -5,6 +5,31 @@
 use std::sync::OnceLock;
 
 use windows::Win32::System::Performance::{QueryPerformanceCounter, QueryPerformanceFrequency};
+use windows::Win32::System::SystemInformation::GetLocalTime;
+
+/// 本地时间（用于录音文件名）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LocalDateTime {
+    pub year: u16,
+    pub month: u16,
+    pub day: u16,
+    pub hour: u16,
+    pub minute: u16,
+    pub second: u16,
+}
+
+pub fn local_date_time() -> LocalDateTime {
+    // SAFETY: GetLocalTime 没有前置条件，总是成功
+    let now = unsafe { GetLocalTime() };
+    LocalDateTime {
+        year: now.wYear,
+        month: now.wMonth,
+        day: now.wDay,
+        hour: now.wHour,
+        minute: now.wMinute,
+        second: now.wSecond,
+    }
+}
 
 /// 每秒的 100 ns 单位数
 pub const HNS_PER_SECOND: i64 = 10_000_000;

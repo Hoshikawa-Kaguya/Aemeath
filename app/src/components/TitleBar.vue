@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useI18n } from 'vue-i18n'
+import { backend } from '@/api/backend'
 import AppIcon from '@/components/AppIcon.vue'
 import { useAppStore } from '@/stores/app'
 import { formatKhz } from '@/format/format'
@@ -33,7 +34,12 @@ const engineText = computed(() => {
   }
   return ''
 })
-const offline = computed(() => store.nodes.filter((node) => node.status.state === 'offline').length)
+/** 程序缺失需要用户处理，计入离线警告；未运行是常态，单独计数（M3 计划 A2、A10） */
+const offline = computed(
+  () => store.nodes.filter((node) => node.status.state === 'offline' || node.status.state === 'programMissing').length,
+)
+const notRunning = computed(() => store.nodes.filter((node) => node.status.state === 'notRunning').length)
+const recording = computed(() => store.nodes.filter((node) => node.recorder?.state.state === 'recording').length)
 const slotsUsed = computed(() => store.nodes.filter((node) => node.slot !== null).length)
 const slotsTip = computed(() => {
   const version = store.state?.usbipVersion
@@ -65,7 +71,22 @@ onUnmounted(() => {
       <span class="chip" :class="{ warn: engine !== 'running' }">
         <span class="dot" :class="engine" aria-hidden="true"></span>{{ engineText }}
       </span>
+      <button
+        v-if="store.state?.panicMute"
+        type="button"
+        class="chip chip-btn panic"
+        :title="t('chip.panicMuteTip')"
+        @click="store.run(() => backend.setPanicMute(false))"
+      >
+        <AppIcon name="warn" />{{ t('chip.panicMute') }}
+      </button>
+      <button v-if="recording > 0" type="button" class="chip chip-btn" @click="store.page = 'recordings'">
+        <span class="dot recording" aria-hidden="true"></span>{{ t('chip.recording', { n: recording }) }}
+      </button>
       <span v-if="offline > 0" class="chip warn"><AppIcon name="warn" />{{ t('chip.offline', { n: offline }) }}</span>
+      <span v-if="notRunning > 0" class="chip" :title="t('chip.notRunningTip')">
+        <AppIcon name="unplug" />{{ t('chip.notRunning', { n: notRunning }) }}
+      </span>
       <button type="button" class="chip chip-btn" :title="slotsTip" @click="store.page = 'devices'">
         <span class="dot" :class="store.state?.usbipVersion ? 'running' : 'unresponsive'" aria-hidden="true"></span>
         <AppIcon name="slots" />{{ t('chip.slots', { used: slotsUsed }) }}

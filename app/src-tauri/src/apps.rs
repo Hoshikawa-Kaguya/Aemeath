@@ -9,8 +9,9 @@ use std::path::Path;
 use aemeath_control::audio_policy::{AppSession, EndpointEntry};
 use aemeath_control::slots::endpoints::{ExternalDevice, SlotEndpoint};
 use aemeath_core::model::NodeKind;
+use aemeath_core::preferences::LandingRecord;
 use aemeath_core::workspace::Workspace;
-use aemeath_protocol::ids::SlotId;
+use aemeath_protocol::ids::{ProgramPath, SlotId};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
@@ -32,6 +33,8 @@ pub struct AppView {
     /// Aemeath 记录的指派；与 `landing` 不同时，提示"重启该应用后生效"
     pub assigned: Option<String>,
     pub system: bool,
+    /// 这个程序已有的应用源节点
+    pub source_node: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -63,7 +66,7 @@ pub fn build(
     outputs: Vec<ExternalDevice>,
     all_render: &[EndpointEntry],
     workspace: &Workspace,
-    assignments: &BTreeMap<String, String>,
+    assignments: &BTreeMap<String, LandingRecord>,
 ) -> AppsView {
     let mut choices: Vec<LandingChoice> = workspace
         .nodes()
@@ -108,7 +111,11 @@ pub fn build(
             continue;
         }
         let executable = session.executable.as_deref().map(|path| path.display().to_string());
-        let assigned = executable.as_ref().and_then(|path| assignments.get(path).cloned());
+        let assigned = executable.as_ref().and_then(|path| match assignments.get(path) {
+            Some(LandingRecord::Endpoint(endpoint)) => Some(endpoint.0.clone()),
+            _ => None,
+        });
+        let source_node = executable.as_deref().and_then(|path| source_node_of(workspace, path));
         apps.push(AppView {
             process_id: session.process_id,
             name: app_name(&session),
@@ -116,6 +123,7 @@ pub fn build(
             landing: session.endpoint_id,
             assigned,
             system: session.system_sounds,
+            source_node,
         });
     }
     // 系统声音不能指派（没有自己的进程），放在最后
@@ -143,6 +151,23 @@ pub fn build(
     AppsView { apps, choices }
 }
 
+fn source_node_of(workspace: &Workspace, executable: &str) -> Option<u32> {
+    let program = ProgramPath::new(executable).ok()?;
+    workspace
+        .nodes()
+        .iter()
+        .find(|node| node.kind.program().is_some_and(|own| own.same_program(&program)))
+        .map(|node| node.id.0)
+}
+
+/// 应用源的默认节点名（M3 计划 A7）：文件说明，取不到时用不带扩展名的文件名。
+pub fn default_program_name(path: &str) -> String {
+    let path = Path::new(path);
+    aemeath_sys::process::file_description(path)
+        .or_else(|| path.file_stem().map(|stem| stem.to_string_lossy().into_owned()))
+        .unwrap_or_default()
+}
+
 /// 会话显示名（不是资源引用 `@...` 时）优先，否则用可执行文件名（不带扩展名）。
 fn app_name(session: &AppSession) -> String {
     if !session.display_name.is_empty() && !session.display_name.starts_with('@') {
@@ -159,6 +184,7 @@ fn app_name(session: &AppSession) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aemeath_protocol::ids::EndpointId;
     use std::path::PathBuf;
 
     fn session(pid: u32, exe: &str, endpoint: &str) -> AppSession {
@@ -186,7 +212,10 @@ mod tests {
             session(10, r"C:\Music\music.exe", "speakers"),
             session(10, r"C:\Music\music.exe", "headphones"),
         ];
-        let assignments = BTreeMap::from([(r"C:\Music\music.exe".to_owned(), "in1".to_owned())]);
+        let assignments = BTreeMap::from([(
+            r"C:\Music\music.exe".to_owned(),
+            LandingRecord::Endpoint(EndpointId("in1".to_owned())),
+        )]);
         let workspace = Workspace::new(aemeath_core::model::EngineSettings::default());
         let view = build(sessions, &BTreeMap::new(), Vec::new(), &[], &workspace, &assignments);
         let names: Vec<&str> = view.apps.iter().map(|app| app.name.as_str()).collect();

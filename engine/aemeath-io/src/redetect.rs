@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use aemeath_protocol::ids::EndpointId;
+use aemeath_protocol::ids::{EndpointId, ProgramPath};
 
 pub const FAST_RETRY: Duration = Duration::from_secs(2);
 pub const FAST_RETRY_FOR: Duration = Duration::from_secs(120);
@@ -17,11 +17,18 @@ pub const SLOW_RETRY: Duration = Duration::from_secs(10);
 /// 等待期间检查停止信号的间隔
 const STOP_POLL: Duration = Duration::from_millis(100);
 
+/// 被检测的对象：外部设备的端点，或者应用源的程序。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RedetectTarget {
+    Endpoint(EndpointId),
+    Program(ProgramPath),
+}
+
 /// 唤醒的范围
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Scope {
     All,
-    Endpoints(Vec<EndpointId>),
+    Targets(Vec<RedetectTarget>),
 }
 
 #[derive(Debug, Default)]
@@ -43,9 +50,9 @@ impl Redetect {
         self.wake(Scope::All);
     }
 
-    /// 只唤醒这些端点（节点上的"重新检测"）。
-    pub fn wake_endpoints(&self, endpoints: Vec<EndpointId>) {
-        self.wake(Scope::Endpoints(endpoints));
+    /// 只唤醒这些对象（节点上的"重新检测"）。
+    pub fn wake_targets(&self, targets: Vec<RedetectTarget>) {
+        self.wake(Scope::Targets(targets));
     }
 
     fn wake(&self, scope: Scope) {
@@ -57,7 +64,7 @@ impl Redetect {
     }
 
     /// 等待 `timeout`（None 表示只等唤醒），被唤醒、超时或收到停止信号时返回。
-    pub fn wait(&self, endpoint: &EndpointId, timeout: Option<Duration>, stop: &AtomicBool) {
+    pub fn wait(&self, target: &RedetectTarget, timeout: Option<Duration>, stop: &AtomicBool) {
         let deadline = timeout.map(|timeout| Instant::now() + timeout);
         let (lock, condvar) = &*self.shared;
         let mut state = lock.lock().unwrap_or_else(PoisonError::into_inner);
@@ -66,7 +73,7 @@ impl Redetect {
             if stop.load(Ordering::Relaxed) {
                 return;
             }
-            if state.generation != started && applies(state.scope.as_ref(), endpoint) {
+            if state.generation != started && applies(state.scope.as_ref(), target) {
                 return;
             }
             let step = match deadline {
@@ -87,10 +94,10 @@ impl Redetect {
     }
 }
 
-fn applies(scope: Option<&Scope>, endpoint: &EndpointId) -> bool {
+fn applies(scope: Option<&Scope>, target: &RedetectTarget) -> bool {
     match scope {
         None | Some(Scope::All) => true,
-        Some(Scope::Endpoints(endpoints)) => endpoints.contains(endpoint),
+        Some(Scope::Targets(targets)) => targets.contains(target),
     }
 }
 
@@ -108,8 +115,8 @@ mod tests {
     use super::*;
     use std::thread;
 
-    fn endpoint(id: &str) -> EndpointId {
-        EndpointId(id.to_owned())
+    fn endpoint(id: &str) -> RedetectTarget {
+        RedetectTarget::Endpoint(EndpointId(id.to_owned()))
     }
 
     #[test]
@@ -140,7 +147,7 @@ mod tests {
         let waker = redetect.clone();
         let handle = thread::spawn(move || {
             thread::sleep(Duration::from_millis(20));
-            waker.wake_endpoints(vec![endpoint("speaker")]);
+            waker.wake_targets(vec![endpoint("speaker")]);
         });
         let started = Instant::now();
         redetect.wait(&endpoint("mic"), Some(Duration::from_millis(300)), &stop);

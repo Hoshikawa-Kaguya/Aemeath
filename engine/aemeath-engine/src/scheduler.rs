@@ -285,7 +285,7 @@ impl Scheduler {
                     .slots
                     .get(&slot)
                     .and_then(|connection| self.streams.get_mut(connection));
-                if let (Some(stream), Some(buffer)) = (stream, mixer.output(node, frames)) {
+                if let (Some(stream), Some(buffer)) = (stream, mixer.slot_output(node, frames)) {
                     stream.push_capture(buffer);
                 }
             }

@@ -1,6 +1,7 @@
 //! 标识类型。用 newtype 而不是裸数字或字符串，避免把一种 ID 误当成另一种。
 
 use std::fmt;
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -125,9 +126,82 @@ impl EndpointId {
     }
 }
 
+/// 应用源绑定的程序：可执行文件的绝对路径（M3 计划 A1、A3）。反序列化时就校验。
+///
+/// Windows 的路径不区分大小写，比较"是不是同一个程序"用 [`Self::same_program`]，派生的 `Eq` 只比较原文。
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct ProgramPath(String);
+
+impl ProgramPath {
+    /// Windows 路径的长度上限（字符数），只用来拒绝异常输入
+    pub const MAX_CHARS: usize = 32_767;
+    const EXTENSION: &str = "exe";
+
+    pub fn new(path: &str) -> Result<Self, InvalidProgramPath> {
+        let typed = Path::new(path);
+        let is_exe = typed
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case(Self::EXTENSION));
+        if typed.is_absolute() && is_exe && path.chars().count() <= Self::MAX_CHARS {
+            Ok(Self(path.to_owned()))
+        } else {
+            Err(InvalidProgramPath)
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn as_path(&self) -> &Path {
+        Path::new(&self.0)
+    }
+
+    /// 文件名，例如 `chrome.exe`
+    pub fn file_name(&self) -> &str {
+        self.as_path()
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(&self.0)
+    }
+
+    pub fn same_program(&self, other: &Self) -> bool {
+        self.0.to_lowercase() == other.0.to_lowercase()
+    }
+}
+
+impl TryFrom<String> for ProgramPath {
+    type Error = InvalidProgramPath;
+
+    fn try_from(path: String) -> Result<Self, Self::Error> {
+        Self::new(&path)
+    }
+}
+
+impl From<ProgramPath> for String {
+    fn from(path: ProgramPath) -> Self {
+        path.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+#[error("a program path must be an absolute path to an .exe file")]
+pub struct InvalidProgramPath;
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn program_paths_are_absolute_exe_paths() {
+        let chrome = ProgramPath::new(r"C:\Program Files\Google\Chrome.EXE").unwrap();
+        assert_eq!(chrome.file_name(), "Chrome.EXE");
+        assert!(chrome.same_program(&ProgramPath::new(r"c:\program files\google\chrome.exe").unwrap()));
+        assert_eq!(ProgramPath::new("chrome.exe"), Err(InvalidProgramPath));
+        assert_eq!(ProgramPath::new(r"C:\Windows\notepad.txt"), Err(InvalidProgramPath));
+        assert!(serde_json::from_str::<ProgramPath>(r#""relative\\app.exe""#).is_err());
+    }
 
     #[test]
     fn slot_number_accepts_only_one_to_eight() {

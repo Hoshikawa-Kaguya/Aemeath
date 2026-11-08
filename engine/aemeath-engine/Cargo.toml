@@ -13,10 +13,13 @@ aemeath-io = { workspace = true }
 aemeath-protocol = { workspace = true }
 aemeath-sys = { workspace = true }
 aemeath-usbip = { workspace = true }
+flacenc = { workspace = true }
+hound = { workspace = true }
 rtrb = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+claxon = { workspace = true }
 tracing-subscriber = { workspace = true }
 wasapi = { workspace = true }
 

@@ -106,6 +106,16 @@ pub fn show_main_window(app: &AppHandle) {
     }
 }
 
+/// 显示/隐藏主窗口（全局热键）：开着就关（与点关闭按钮相同，销毁窗口留托盘），没开就打开。
+pub fn toggle_main_window(app: &AppHandle) {
+    match app.get_webview_window(MAIN_WINDOW) {
+        Some(window) => {
+            let _ = window.close();
+        }
+        None => show_main_window(app),
+    }
+}
+
 /// 用户从托盘退出：请引擎停止，然后退出主程序（守护进程见到正常退出就整体停止）。
 fn quit_app(app: &AppHandle) {
     let app = app.clone();

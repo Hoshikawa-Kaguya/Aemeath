@@ -10,7 +10,10 @@
 //! 不含运行时状态（设备在线与否、槽位挂载与否），也不做 IO 以外的系统调用；这些属于 `aemeath-control`。
 
 pub mod compile;
+pub mod duplicates;
+pub mod hotkeys;
 pub mod model;
+pub mod naming;
 pub mod preferences;
 pub mod store;
 pub mod workspace;

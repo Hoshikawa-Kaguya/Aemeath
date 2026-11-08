@@ -5,12 +5,17 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type {
   AppsView,
   Capabilities,
+  CaptureView,
   DefaultDevicesView,
   DeviceChoice,
   DeviceSettings,
+  HotkeyBindingView,
+  HotkeyTargetView,
   LanguagePreference,
   NewNodeKind,
   PairVerdict,
+  RecorderSettingsView,
+  ResamplerKind,
   RouteVerdict,
   ViewState,
 } from './types'
@@ -28,6 +33,12 @@ export const backend = {
     invoke<ViewState>('set_device_settings', { node, settings }),
   replaceDevice: (node: number, endpointId: string, deviceName: string) =>
     invoke<ViewState>('replace_device', { node, endpointId, deviceName }),
+  /** 应用源的默认节点名（文件说明，或不带扩展名的文件名） */
+  describeProgram: (path: string) => invoke<string>('describe_program', { path }),
+  replaceProgram: (node: number, program: string) => invoke<ViewState>('replace_program', { node, program }),
+  /** `resampler` 为 null 表示跟随全局默认 */
+  setAppResampler: (node: number, resampler: ResamplerKind | null) =>
+    invoke<ViewState>('set_app_resampler', { node, resampler }),
   /** 设备打不开时为 null */
   probeDevice: (endpointId: string, direction: 'input' | 'output') =>
     invoke<Capabilities | null>('probe_device', { endpointId, direction }),
@@ -35,6 +46,19 @@ export const backend = {
   /** `endpointId` 为 null 表示跟随系统默认 */
   setLanding: (processId: number, executable: string | null, endpointId: string | null) =>
     invoke<void>('set_landing', { processId, executable, endpointId }),
+  landingCount: (node: number) => invoke<number>('landing_count', { node }),
+  /** `binding` 为 null 表示清除 */
+  setHotkey: (target: HotkeyTargetView, binding: HotkeyBindingView | null) =>
+    invoke<ViewState>('set_hotkey', { target, binding }),
+  captureHotkey: () => invoke<CaptureView>('capture_hotkey'),
+  setPanicMute: (active: boolean) => invoke<ViewState>('set_panic_mute', { active }),
+  startRecording: (node: number) => invoke<void>('start_recording', { node }),
+  stopRecording: (node: number) => invoke<void>('stop_recording', { node }),
+  setRecorderSettings: (node: number, settings: RecorderSettingsView) =>
+    invoke<ViewState>('set_recorder_settings', { node, settings }),
+  setRecordingFolder: (folder: string) => invoke<ViewState>('set_recording_folder', { folder }),
+  setRecordingDefaults: (settings: RecorderSettingsView) => invoke<ViewState>('set_recording_defaults', { settings }),
+  openRecordingFolder: () => invoke<void>('open_recording_folder'),
   listDefaultDevices: () => invoke<DefaultDevicesView>('list_default_devices'),
   setDefaultDevice: (endpointId: string, communications: boolean) =>
     invoke<void>('set_default_device', { endpointId, communications }),

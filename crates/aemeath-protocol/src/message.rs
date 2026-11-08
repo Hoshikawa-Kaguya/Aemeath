@@ -26,9 +26,13 @@ pub enum AppToEngine {
         topology: RouteTopology,
     },
     /// 心跳。主程序据此判断引擎是否假死（ADR-0008）。
-    Ping { request: RequestId },
+    Ping {
+        request: RequestId,
+    },
     /// 用户从托盘退出时，请引擎停止所有流、关闭 USB/IP 服务端后退出。
-    Shutdown { request: RequestId },
+    Shutdown {
+        request: RequestId,
+    },
     /// 查询外部设备的能力（独占时支持的格式、共享格式、周期），引擎用 [`EngineToApp::DeviceCapabilities`] 应答。
     /// 设备正被 Aemeath 打开时返回打开前探测的结果。
     ProbeDevice {
@@ -37,7 +41,20 @@ pub enum AppToEngine {
         direction: EndpointDirection,
     },
     /// 立即重新检测离线的外部设备（选型报告 6.5 节的手动检测）；`node` 为 None 表示全部。
-    Redetect { request: RequestId, node: Option<NodeId> },
+    Redetect {
+        request: RequestId,
+        node: Option<NodeId>,
+    },
+    /// 开始录音。`path` 是主程序算好的完整文件路径，自动分段时引擎在文件名后加 `_partN`。
+    StartRecording {
+        request: RequestId,
+        node: NodeId,
+        path: String,
+    },
+    StopRecording {
+        request: RequestId,
+        node: NodeId,
+    },
 }
 
 /// 外部设备的方向，从 Aemeath 的视角命名：输入是录音端点，输出是播放端点。
@@ -79,6 +96,8 @@ pub enum EngineToApp {
     SlotConnection { slot: SlotId, connected: bool },
     /// 主机为槽位选定的流格式（设备页显示）；为 None 表示流已停止。
     SlotFormat { slot: SlotId, format: Option<DeviceFormat> },
+    /// 录音节点的状态：改变时立即报告，录音期间每秒报告一次。
+    RecorderStatus { node: NodeId, status: RecorderState },
     /// [`AppToEngine::ProbeDevice`] 的应答；设备不存在或探测失败时为 None。
     DeviceCapabilities {
         request: RequestId,
@@ -131,6 +150,32 @@ pub enum RejectReason {
     InvalidTopology,
     /// 拓扑的修订号不比当前的新
     StaleTopology,
+    /// 这个节点不是录音节点
+    NotARecorder,
+}
+
+/// 录音节点的状态。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RecorderState {
+    Idle,
+    Recording {
+        /// 当前正在写的文件（分段后是最新一段）
+        file: String,
+        frames: u64,
+        bytes: u64,
+    },
+    Failed {
+        reason: RecordingFailure,
+    },
+}
+
+/// 录音出错的原因（M3 计划 R10）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecordingFailure {
+    DiskFull,
+    WriteFailed,
 }
 
 /// 端点的状态（GLOSSARY：离线；选型报告 6.5 节）。
@@ -141,6 +186,10 @@ pub enum EndpointStatus {
     Online { format: DeviceFormat },
     /// 离线，保留全部配置，原因见 [`OfflineReason`]
     Offline { reason: OfflineReason },
+    /// 应用源的程序没有在运行（GLOSSARY：未运行）。不算离线，程序启动后自动接入
+    NotRunning,
+    /// 应用源的程序文件不存在（GLOSSARY：程序缺失）。引擎不再寻找进程，等用户重新选择或重新检测
+    ProgramMissing,
 }
 
 /// 离线的原因（GLOSSARY：离线）。

@@ -6,22 +6,28 @@
 //! 首次启动（配置里还没有"已注册"）：先下发注册用拓扑、占用全部 16 个槽位，等全部完成后再换回工作台
 //! （ADR-0009）。工作台一开始是空的；工作台为空时界面提供预设（GLOSSARY：预设），节点名由界面按当前语言提供。
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
+use std::path::Path;
 use std::time::{Duration, SystemTime};
 
-use aemeath_control::audio_policy::AudioPolicy;
+use aemeath_control::audio_policy::{AppSession, AudioPolicy};
 use aemeath_control::engine_client::{ClientConfig, ClientEvent, EngineClient, EngineProber, Timing};
+use aemeath_control::hotkeys::{CaptureResult, HotkeyEvent, HotkeyService};
 use aemeath_control::slots::endpoints::{EndpointProbe, ExternalDevice};
 use aemeath_control::slots::registration::{RegistrationProgress, all_slots, registration_topology};
 use aemeath_control::slots::{MaintainerConfig, MaintainerTiming, SlotMaintainer, SlotStatus};
 use aemeath_control::usbip_cli::UsbipCli;
+use aemeath_core::duplicates::{DuplicateRoute, duplicate_routes};
+use aemeath_core::hotkeys::{self, HotkeyBinding, HotkeyError, HotkeyOverlay, HotkeyTarget};
 use aemeath_core::model::{DeviceRef, LabelPosition, Node, NodeKind, NodeName, Position};
-use aemeath_core::preferences::{LanguagePreference, WindowPlacement};
+use aemeath_core::preferences::{LandingRecord, LanguagePreference, WindowPlacement};
 use aemeath_core::store::{Config, ConfigStore, Loaded};
 use aemeath_core::workspace::{EditError, NodeSpec, Workspace};
-use aemeath_protocol::ids::{EndpointId, NodeId, SlotId, SlotNumber, TopologyRevision};
-use aemeath_protocol::message::{EndpointDirection, EndpointStatus, OfflineReason};
-use aemeath_protocol::topology::{DeviceSettings, NodeRole, RouteRejection, RouteTopology, Strip};
+use aemeath_protocol::ids::{EndpointId, NodeId, ProgramPath, SlotId, SlotNumber, TopologyRevision};
+use aemeath_protocol::message::{EndpointDirection, EndpointStatus, OfflineReason, RecorderState};
+use aemeath_protocol::topology::{
+    DeviceSettings, NodeRole, RecorderSettings, Resampler, RouteRejection, RouteTopology, Strip,
+};
 use aemeath_protocol::units::{GainDb, GateThreshold, SampleRate};
 use aemeath_runtime::config::RuntimeConfig;
 use aemeath_sys::audio_endpoints::AudioFlow;
@@ -34,10 +40,12 @@ use tracing::{error, info, warn};
 
 use crate::apps::{self, AppsView};
 use crate::default_devices::DefaultDevicesView;
-use crate::device_settings::{CapabilitiesView, DeviceSettingsView};
+use crate::device_settings::{CapabilitiesView, DeviceSettingsView, ResamplerView};
+use crate::hotkey_views::{CaptureView, HotkeyBindingView, HotkeyRowView, HotkeyTargetView};
+use crate::recording::{RecorderStateView, RecorderView, RecordingView, prepare_recording_path, recording_folder};
 use crate::view::{
-    DeviceView, EngineState, EngineView, FormatView, NodeStatus, NodeView, NoticeKind, NoticeView, PairVerdict,
-    RegistrationView, RouteVerdict, RouteView, SlotRef, SlotView, ViewState, kind_view,
+    DeviceView, DuplicateView, EngineState, EngineView, FormatView, NodeStatus, NodeView, NoticeKind, NoticeView,
+    PairVerdict, ProgramView, RegistrationView, RouteVerdict, RouteView, SlotRef, SlotView, ViewState, kind_view,
 };
 
 /// 撤销最多保留的步数
@@ -48,6 +56,8 @@ const REMATCH_SETTLE: Duration = Duration::from_millis(300);
 const EMIT_COALESCE: Duration = Duration::from_millis(50);
 /// 检查系统是否刚从睡眠唤醒的间隔
 const RESUME_PROBE_INTERVAL: Duration = Duration::from_secs(2);
+/// 读取音频会话的间隔：发现新会话（纠正落点）、刷新重复路由的判断
+const SESSION_POLL_INTERVAL: Duration = Duration::from_secs(2);
 /// 墙上时钟比预期多走这么多，就认为系统刚睡眠过（ADR-0007：唤醒后立即检查挂载）
 const RESUME_GAP: Duration = Duration::from_secs(10);
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -68,10 +78,31 @@ pub enum CommandError {
     SlotOccupied,
     #[error("this device already has a node")]
     DeviceInUse,
+    #[error("this program already has an app source")]
+    ProgramInUse,
+    #[error("the program path is not valid")]
+    InvalidProgram,
+    #[error("a toggle hotkey on the keyboard needs a modifier")]
+    HotkeyModifierRequired,
+    #[error("this action can only be a toggle")]
+    HotkeyToggleOnly,
+    #[error("this key is already bound")]
+    HotkeyConflict { target: HotkeyTargetView },
     #[error("the node or route no longer exists")]
     NotFound,
     #[error("{message}")]
     Failed { message: String },
+}
+
+impl From<HotkeyError> for CommandError {
+    fn from(error: HotkeyError) -> Self {
+        match error {
+            HotkeyError::UnknownTarget => Self::NotFound,
+            HotkeyError::ModifierRequired => Self::HotkeyModifierRequired,
+            HotkeyError::ToggleOnly => Self::HotkeyToggleOnly,
+            HotkeyError::Conflict(target) => Self::HotkeyConflict { target: target.into() },
+        }
+    }
 }
 
 impl From<EditError> for CommandError {
@@ -83,14 +114,18 @@ impl From<EditError> for CommandError {
             EditError::NoFreeSlot(_) => Self::NoFreeSlot,
             EditError::SlotOccupied { .. } => Self::SlotOccupied,
             EditError::DeviceInUse { .. } => Self::DeviceInUse,
+            EditError::ProgramInUse { .. } => Self::ProgramInUse,
             EditError::Route(rejection) => Self::RouteRejected {
                 rejection: rejection.into(),
             },
-            EditError::InvalidClockMaster | EditError::GateNotAllowed(_) | EditError::NotAnExternalNode(_) => {
-                Self::Failed {
-                    message: error.to_string(),
-                }
-            }
+            EditError::InvalidClockMaster
+            | EditError::GateNotAllowed(_)
+            | EditError::NotAnExternalNode(_)
+            | EditError::NotAnAppSource(_)
+            | EditError::NotARecorder(_)
+            | EditError::InvalidRecorderSettings => Self::Failed {
+                message: error.to_string(),
+            },
         }
     }
 }
@@ -112,6 +147,15 @@ pub enum NewNodeKind {
     VirtualInput,
     VirtualOutput,
     Bus,
+    AppSource {
+        program: String,
+    },
+    Recorder,
+    #[serde(rename_all = "camelCase")]
+    ExternalInsert {
+        endpoint_id: String,
+        device_name: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -148,6 +192,26 @@ pub enum Edit {
         endpoint_id: String,
         device_name: String,
     },
+    /// 应用源改绑另一个程序（节点设置里"重新选择程序"）
+    ReplaceProgram {
+        node: NodeId,
+        program: String,
+    },
+    SetAppResampler {
+        node: NodeId,
+        resampler: Option<Resampler>,
+    },
+    SetRecorderSettings {
+        node: NodeId,
+        settings: RecorderSettings,
+    },
+    SetHotkey {
+        target: HotkeyTarget,
+        binding: Option<HotkeyBinding>,
+    },
+    SetPanicMute(bool),
+    SetRecordingFolder(String),
+    SetRecordingDefaults(RecorderSettings),
     RemoveNode(NodeId),
     RenameNode {
         node: NodeId,
@@ -225,6 +289,9 @@ impl Edit {
                 | Self::ChangeSlot { .. }
                 | Self::SetDeviceSettings { .. }
                 | Self::ReplaceDevice { .. }
+                | Self::ReplaceProgram { .. }
+                | Self::SetAppResampler { .. }
+                | Self::SetRecorderSettings { .. }
                 | Self::Connect { .. }
                 | Self::Disconnect { .. }
                 | Self::SetRouteEnabled { .. }
@@ -245,6 +312,16 @@ enum Request {
         reply: oneshot::Sender<Vec<RouteVerdict>>,
     },
     MatrixVerdicts(oneshot::Sender<Vec<PairVerdict>>),
+    CaptureHotkey(oneshot::Sender<Result<oneshot::Receiver<CaptureResult>, CommandError>>),
+    LandingCount {
+        node: NodeId,
+        reply: oneshot::Sender<usize>,
+    },
+    Recording {
+        node: NodeId,
+        start: bool,
+        reply: oneshot::Sender<Result<(), CommandError>>,
+    },
     Apps(oneshot::Sender<Result<AppsView, CommandError>>),
     SetLanding {
         process_id: u32,
@@ -277,10 +354,14 @@ pub struct ControllerHandle {
 
 impl ControllerHandle {
     /// 启动控制面。`emit` 在状态变化时调用（推给界面）；在 Tauri 的异步运行时上运行。
-    pub fn start(config: RuntimeConfig, emit: impl Fn(&ViewState) + Send + 'static) -> Self {
+    pub fn start(
+        config: RuntimeConfig,
+        toggle_window: Box<dyn Fn() + Send>,
+        emit: impl Fn(&ViewState) + Send + 'static,
+    ) -> Self {
         let (requests, receiver) = mpsc::unbounded_channel();
         tauri::async_runtime::spawn(async move {
-            match Controller::new(config, Box::new(emit)).await {
+            match Controller::new(config, toggle_window, Box::new(emit)).await {
                 Ok(controller) => controller.run(receiver).await,
                 Err(error) => error!(%error, "the control plane cannot start"),
             }
@@ -370,6 +451,40 @@ impl ControllerHandle {
         let _ = self.requests.send(Request::Redetect(node));
     }
 
+    pub async fn start_recording(&self, node: NodeId) -> Result<(), CommandError> {
+        self.ask(|reply| Request::Recording {
+            node,
+            start: true,
+            reply,
+        })
+        .await?
+    }
+
+    pub async fn stop_recording(&self, node: NodeId) -> Result<(), CommandError> {
+        self.ask(|reply| Request::Recording {
+            node,
+            start: false,
+            reply,
+        })
+        .await?
+    }
+
+    /// 录入下一个按键组合。
+    pub async fn capture_hotkey(&self) -> Result<CaptureView, CommandError> {
+        let wait = self.ask(Request::CaptureHotkey).await??;
+        let result = wait.await.map_err(|_| CommandError::Unavailable)?;
+        Ok(match result {
+            CaptureResult::Captured(key) => CaptureView::Captured { key: key.into() },
+            CaptureResult::Cancelled => CaptureView::Cancelled,
+            CaptureResult::Cleared => CaptureView::Cleared,
+        })
+    }
+
+    /// 落在这个节点上的应用数（Aemeath 做过的指派），删除节点前提示用。
+    pub async fn landing_count(&self, node: NodeId) -> Result<usize, CommandError> {
+        self.ask(|reply| Request::LandingCount { node, reply }).await
+    }
+
     /// 路由矩阵里不能新建连线的格子（连到自己、会形成回路），以及原因。已有连线的格子不在其中。
     pub async fn matrix_verdicts(&self) -> Result<Vec<PairVerdict>, CommandError> {
         self.ask(Request::MatrixVerdicts).await
@@ -413,6 +528,7 @@ struct Controller {
     usbip_version: Option<String>,
     engine_state: EngineState,
     endpoint_status: HashMap<NodeId, EndpointStatus>,
+    recorder_status: HashMap<NodeId, RecorderState>,
     slot_status: BTreeMap<SlotId, SlotStatus>,
     registration: Option<RegistrationProgress>,
     last_topology: Option<RouteTopology>,
@@ -421,6 +537,20 @@ struct Controller {
     rematch_events: mpsc::UnboundedReceiver<()>,
     /// 找到多个同名候选、等用户选择的节点
     candidates: HashMap<NodeId, Vec<ExternalDevice>>,
+    /// 最近一次轮询到的音频会话
+    sessions: Vec<AppSession>,
+    /// 已经处理过的会话（进程 ID）：只在会话出现时纠正一次落点（M3 计划 L1）
+    known_sessions: HashSet<u32>,
+    /// 槽位当前的端点 ID（判断重复路由时把会话的落点对应到节点）
+    slot_endpoints: BTreeMap<SlotId, String>,
+    hotkeys: Option<HotkeyService>,
+    hotkey_events: mpsc::UnboundedReceiver<HotkeyEvent>,
+    /// `RegisterHotKey` 失败的绑定
+    occupied_hotkeys: Vec<HotkeyTarget>,
+    /// 已注册的绑定，内容不变时不重新注册
+    registered_hotkeys: Vec<(HotkeyTarget, HotkeyBinding)>,
+    overlay: HotkeyOverlay,
+    toggle_window: Box<dyn Fn() + Send>,
     /// 给界面的一次性提示，界面按编号只显示新的
     notices: VecDeque<NoticeView>,
     next_notice: u64,
@@ -435,7 +565,11 @@ const PRESET_INPUT_AT: Position = Position { x: 40.0, y: 60.0 };
 const PRESET_OUTPUT_AT: Position = Position { x: 440.0, y: 60.0 };
 
 impl Controller {
-    async fn new(runtime: RuntimeConfig, emit: Box<dyn Fn(&ViewState) + Send>) -> Result<Self, StartError> {
+    async fn new(
+        runtime: RuntimeConfig,
+        toggle_window: Box<dyn Fn() + Send>,
+        emit: Box<dyn Fn(&ViewState) + Send>,
+    ) -> Result<Self, StartError> {
         let store = ConfigStore::new(&runtime.data_dir);
         let (config, read_only) = match store.load() {
             Ok(Loaded::Existing(config)) => (config, false),
@@ -513,6 +647,10 @@ impl Controller {
             info!("the slots are not registered yet, registering all 16");
             RegistrationProgress::new(rate)
         });
+        let (hotkey_tx, hotkey_events) = mpsc::unbounded_channel();
+        let hotkeys = HotkeyService::start(hotkey_tx)
+            .inspect_err(|error| warn!(%error, "the hotkey service cannot start"))
+            .ok();
         let mut controller = Self {
             config,
             store,
@@ -529,12 +667,22 @@ impl Controller {
             usbip_version,
             engine_state: EngineState::Connecting,
             endpoint_status: HashMap::new(),
+            recorder_status: HashMap::new(),
             slot_status: BTreeMap::new(),
             registration,
             last_topology: None,
             rematch_trigger,
             rematch_events,
             candidates: HashMap::new(),
+            sessions: Vec::new(),
+            known_sessions: HashSet::new(),
+            slot_endpoints: BTreeMap::new(),
+            hotkeys,
+            hotkey_events,
+            occupied_hotkeys: Vec::new(),
+            registered_hotkeys: Vec::new(),
+            overlay: HotkeyOverlay::default(),
+            toggle_window,
             notices: VecDeque::new(),
             next_notice: 1,
             emit,
@@ -547,6 +695,7 @@ impl Controller {
     async fn run(mut self, mut requests: mpsc::UnboundedReceiver<Request>) {
         let mut resume_probe = tokio::time::interval(RESUME_PROBE_INTERVAL);
         let mut last_probe = SystemTime::now();
+        let mut session_poll = tokio::time::interval(SESSION_POLL_INTERVAL);
         loop {
             let emit_at = self.emit_at;
             tokio::select! {
@@ -564,6 +713,8 @@ impl Controller {
                     while self.rematch_events.try_recv().is_ok() {}
                     self.rematch().await;
                 }
+                _ = session_poll.tick() => self.poll_sessions().await,
+                Some(event) = self.hotkey_events.recv() => self.on_hotkey(event),
                 () = sleep_until(emit_at), if emit_at.is_some() => {
                     self.emit_at = None;
                     (self.emit)(&self.view());
@@ -589,8 +740,34 @@ impl Controller {
                 let _ = reply.send(self.view());
             }
             Request::Edit { edit, reply } => {
+                let released = match &edit {
+                    Edit::RemoveNode(node) => self.landing_endpoint(*node).await,
+                    _ => None,
+                };
                 let result = self.apply(edit).map(|()| self.view());
+                let succeeded = result.is_ok();
                 let _ = reply.send(result);
+                if let Some(endpoint) = released.filter(|_| succeeded) {
+                    self.release_landings(&endpoint).await;
+                }
+            }
+            Request::Recording { node, start, reply } => {
+                let _ = reply.send(if start {
+                    self.start_recording(node)
+                } else {
+                    self.stop_recording(node)
+                });
+            }
+            Request::CaptureHotkey(reply) => {
+                let result = match &self.hotkeys {
+                    Some(service) => Ok(service.capture()),
+                    None => Err(CommandError::Unavailable),
+                };
+                let _ = reply.send(result);
+            }
+            Request::LandingCount { node, reply } => {
+                let endpoint = self.landing_endpoint(node).await;
+                let _ = reply.send(endpoint.map_or(0, |endpoint| self.landings_on(&endpoint).count()));
             }
             Request::Verdicts {
                 node,
@@ -713,11 +890,34 @@ impl Controller {
                     NewNodeKind::VirtualInput => NodeSpec::VirtualInput(None),
                     NewNodeKind::VirtualOutput => NodeSpec::VirtualOutput(None),
                     NewNodeKind::Bus => NodeSpec::Bus,
+                    NewNodeKind::AppSource { program } => NodeSpec::AppSource(parse_program(&program)?),
+                    NewNodeKind::Recorder => NodeSpec::Recorder(self.config.preferences.recording_defaults),
+                    NewNodeKind::ExternalInsert {
+                        endpoint_id,
+                        device_name,
+                    } => NodeSpec::ExternalInsert {
+                        ret: device(endpoint_id, device_name),
+                        send: None,
+                    },
                 };
                 let node = workspace.add_node(name, spec, position)?;
                 if let Some(settings) = io {
                     workspace.set_device_settings(node, settings)?;
                 }
+            }
+            Edit::ReplaceProgram { node, program } => workspace.replace_program(node, parse_program(&program)?)?,
+            Edit::SetAppResampler { node, resampler } => workspace.set_app_resampler(node, resampler)?,
+            Edit::SetRecorderSettings { node, settings } => workspace.set_recorder_settings(node, settings)?,
+            Edit::SetHotkey { target, binding } => {
+                hotkeys::set_hotkey(workspace, &mut self.config.preferences, target, binding)?;
+            }
+            Edit::SetPanicMute(active) => self.overlay.panic_mute = active,
+            Edit::SetRecordingFolder(folder) => self.config.preferences.recording_folder = Some(folder),
+            Edit::SetRecordingDefaults(settings) => {
+                if !settings.is_valid() {
+                    return Err(EditError::InvalidRecorderSettings.into());
+                }
+                self.config.preferences.recording_defaults = settings;
             }
             Edit::RemoveNode(node) => {
                 workspace.remove_node(node)?;
@@ -823,10 +1023,9 @@ impl Controller {
             (registration_topology(rate), all_slots())
         } else {
             let workspace = &self.config.workspace;
-            (
-                workspace.compile(TopologyRevision(0)),
-                workspace.occupied_slots().collect(),
-            )
+            let mut topology = workspace.compile(TopologyRevision(0));
+            self.overlay.apply(&mut topology);
+            (topology, workspace.occupied_slots().collect())
         };
         if self.last_topology.as_ref() != Some(&topology) {
             self.client.apply(topology.clone());
@@ -835,6 +1034,108 @@ impl Controller {
         if let Some(maintainer) = &self.maintainer {
             maintainer.set_engine_rate(rate);
             maintainer.set_occupied(occupied);
+        }
+        self.sync_hotkeys();
+    }
+
+    /// 绑定列表变了才重新注册，避免每次编辑都注销再注册全局热键。
+    fn sync_hotkeys(&mut self) {
+        let bindings = hotkeys::all_hotkeys(&self.config.workspace, &self.config.preferences);
+        if bindings == self.registered_hotkeys {
+            return;
+        }
+        // 被删除的对象不再有松开事件，清掉它们的临时叠加
+        self.overlay
+            .held
+            .retain(|target| bindings.iter().any(|(own, _)| own == target));
+        if let Some(service) = &self.hotkeys {
+            self.occupied_hotkeys = service.set_bindings(bindings.clone());
+        }
+        self.registered_hotkeys = bindings;
+    }
+
+    fn on_hotkey(&mut self, event: HotkeyEvent) {
+        match event {
+            HotkeyEvent::Fired(target) => self.fire_hotkey(target),
+            HotkeyEvent::Pressed(target) => {
+                self.overlay.held.insert(target);
+                self.sync_engine();
+            }
+            HotkeyEvent::Released(target) => {
+                self.overlay.held.remove(&target);
+                self.sync_engine();
+            }
+        }
+        self.schedule_emit();
+    }
+
+    /// 切换型热键（M3 计划 H10）：静音和连线开关是正式修改，写进配置，但不进撤销记录。
+    fn fire_hotkey(&mut self, target: HotkeyTarget) {
+        match target {
+            HotkeyTarget::NodeMute(node) => {
+                let Some(strip) = self.config.workspace.node(node).map(|own| own.strip) else {
+                    return;
+                };
+                let changed = Strip {
+                    muted: !strip.muted,
+                    ..strip
+                };
+                if self.config.workspace.set_strip(node, changed).is_ok() {
+                    self.save();
+                    self.sync_engine();
+                }
+            }
+            HotkeyTarget::RouteToggle(from, to) => {
+                let Some(enabled) = self.config.workspace.route(from, to).map(|route| route.enabled) else {
+                    return;
+                };
+                if self.config.workspace.set_route_enabled(from, to, !enabled).is_ok() {
+                    self.save();
+                    self.sync_engine();
+                }
+            }
+            HotkeyTarget::NodeRecord(node) => {
+                let recording = matches!(self.recorder_status.get(&node), Some(RecorderState::Recording { .. }));
+                let result = if recording {
+                    self.stop_recording(node)
+                } else {
+                    self.start_recording(node)
+                };
+                if let Err(error) = result {
+                    warn!(%error, "cannot toggle the recording");
+                }
+            }
+            HotkeyTarget::AllRecording => self.toggle_all_recording(),
+            HotkeyTarget::PanicMute => {
+                self.overlay.panic_mute = !self.overlay.panic_mute;
+                self.sync_engine();
+            }
+            HotkeyTarget::ToggleWindow => (self.toggle_window)(),
+        }
+    }
+
+    /// 只要有一个录音节点在录音就全部停止，否则全部开始（M3 计划 H3）。
+    fn toggle_all_recording(&mut self) {
+        let recorders: Vec<NodeId> = self
+            .config
+            .workspace
+            .nodes()
+            .iter()
+            .filter(|node| matches!(node.kind, NodeKind::Recorder { .. }))
+            .map(|node| node.id)
+            .collect();
+        let any_recording = recorders
+            .iter()
+            .any(|node| matches!(self.recorder_status.get(node), Some(RecorderState::Recording { .. })));
+        for node in recorders {
+            let result = if any_recording {
+                self.stop_recording(node)
+            } else {
+                self.start_recording(node)
+            };
+            if let Err(error) = result {
+                warn!(%error, node = node.0, "cannot toggle the recording");
+            }
         }
     }
 
@@ -847,6 +1148,7 @@ impl Controller {
             ClientEvent::Disconnected(reason) => {
                 self.engine_state = EngineState::after_disconnect(&reason);
                 self.endpoint_status.clear();
+                self.recorder_status.clear();
             }
             ClientEvent::EndpointStatus { node, status } => {
                 if let EndpointStatus::Offline {
@@ -856,6 +1158,21 @@ impl Controller {
                     let _ = self.rematch_trigger.send(());
                 }
                 self.endpoint_status.insert(node, status);
+            }
+            ClientEvent::RecorderStatus { node, status } => {
+                if let RecorderState::Failed { reason } = status {
+                    let name = self
+                        .config
+                        .workspace
+                        .node(node)
+                        .map(|own| own.name.as_str().to_owned())
+                        .unwrap_or_default();
+                    self.notify(NoticeKind::RecordingFailed {
+                        node: name,
+                        reason: reason.into(),
+                    });
+                }
+                self.recorder_status.insert(node, status);
             }
             ClientEvent::TopologyRejected {
                 revision,
@@ -909,7 +1226,7 @@ impl Controller {
             })
             .filter_map(|node| {
                 let flow = match node.kind {
-                    NodeKind::ExternalInput { .. } => AudioFlow::Capture,
+                    NodeKind::ExternalInput { .. } | NodeKind::ExternalInsert { .. } => AudioFlow::Capture,
                     NodeKind::ExternalOutput { .. } => AudioFlow::Render,
                     _ => return None,
                 };
@@ -946,7 +1263,7 @@ impl Controller {
             let in_use = |endpoint: &str| {
                 workspace.nodes().iter().any(|other| {
                     other.id != node
-                        && other.kind.role() == role
+                        && other.kind.endpoint_role() == Some(role)
                         && other.kind.device().is_some_and(|own| own.endpoint.0 == endpoint)
                 })
             };
@@ -1036,7 +1353,7 @@ impl Controller {
             let landings = &mut self.config.preferences.app_landings;
             match endpoint_id {
                 Some(endpoint) => {
-                    landings.insert(executable, endpoint);
+                    landings.insert(executable, LandingRecord::Endpoint(EndpointId(endpoint)));
                 }
                 None => {
                     landings.remove(&executable);
@@ -1045,6 +1362,219 @@ impl Controller {
             self.save();
         }
         Ok(())
+    }
+
+    /// 拼出文件路径、确保文件夹存在，然后让引擎开始录音（M3 计划 R6）。
+    fn start_recording(&self, id: NodeId) -> Result<(), CommandError> {
+        let node = self.config.workspace.node(id).ok_or(CommandError::NotFound)?;
+        let NodeKind::Recorder { settings } = node.kind else {
+            return Err(CommandError::NotFound);
+        };
+        let folder = recording_folder(&self.config.preferences);
+        let path = prepare_recording_path(&folder, node.name.as_str(), settings).map_err(failed)?;
+        self.client.start_recording(id, path.display().to_string());
+        Ok(())
+    }
+
+    fn stop_recording(&self, id: NodeId) -> Result<(), CommandError> {
+        match self.config.workspace.node(id).map(|node| &node.kind) {
+            Some(NodeKind::Recorder { .. }) => {
+                self.client.stop_recording(id);
+                Ok(())
+            }
+            _ => Err(CommandError::NotFound),
+        }
+    }
+
+    /// 节点作为落点时的端点 ID：只有虚拟输入和外部输出会被当作落点。
+    async fn landing_endpoint(&mut self, node: NodeId) -> Option<EndpointId> {
+        match &self.config.workspace.node(node)?.kind {
+            NodeKind::VirtualInput { slot } => {
+                let slot = *slot;
+                self.probe
+                    .as_ref()?
+                    .snapshot()
+                    .await
+                    .ok()?
+                    .get(&slot)
+                    .map(|endpoint| EndpointId(endpoint.id.clone()))
+            }
+            NodeKind::ExternalOutput { device } => Some(device.endpoint.clone()),
+            _ => None,
+        }
+    }
+
+    fn landings_on<'a>(&'a self, endpoint: &'a EndpointId) -> impl Iterator<Item = &'a str> + 'a {
+        self.config
+            .preferences
+            .app_landings
+            .iter()
+            .filter(move |(_, record)| matches!(record, LandingRecord::Endpoint(own) if own == endpoint))
+            .map(|(executable, _)| executable.as_str())
+    }
+
+    /// 落点节点被删除后（M3 计划 L3）：正有会话的程序立即清除指派，其余的记为"待清除"，
+    /// 免得这个槽位以后被别的节点占用时，这些程序意外落进去。
+    // shortcut: 撤销删除节点时不恢复这些指派，用户要在应用页重新指派；需要时把记录放进撤销快照
+    async fn release_landings(&mut self, endpoint: &EndpointId) {
+        let affected: Vec<String> = self.landings_on(endpoint).map(str::to_owned).collect();
+        if affected.is_empty() {
+            return;
+        }
+        let Some(policy) = self.policy.clone() else {
+            return;
+        };
+        let sessions = policy.sessions().await.unwrap_or_default();
+        for executable in affected {
+            let session = sessions
+                .iter()
+                .find(|session| session_executable(session).as_deref() == Some(executable.as_str()));
+            let cleared = match session {
+                Some(session) => policy.set_landing(session.process_id, None).await.is_ok(),
+                None => false,
+            };
+            let landings = &mut self.config.preferences.app_landings;
+            if cleared {
+                landings.remove(&executable);
+            } else {
+                landings.insert(executable, LandingRecord::PendingClear);
+            }
+        }
+        self.save();
+    }
+
+    /// 定时读取音频会话：新出现的程序按记录纠正落点（M3 计划 L1、L3），并刷新判断重复路由所需的数据。
+    async fn poll_sessions(&mut self) {
+        let Some(policy) = self.policy.clone() else {
+            return;
+        };
+        let Ok(sessions) = policy.sessions().await else {
+            return;
+        };
+        let mut changed = false;
+        for session in &sessions {
+            if !self.known_sessions.contains(&session.process_id) {
+                changed |= self.on_new_session(&policy, session).await;
+            }
+        }
+        self.known_sessions = sessions.iter().map(|session| session.process_id).collect();
+        let has_sources = self
+            .config
+            .workspace
+            .nodes()
+            .iter()
+            .any(|node| node.kind.program().is_some());
+        let mut slot_endpoints = BTreeMap::new();
+        if has_sources && let Some(probe) = &self.probe {
+            slot_endpoints = probe
+                .snapshot()
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(slot, endpoint)| (slot, endpoint.id))
+                .collect();
+        }
+        let refreshed = slot_endpoints != self.slot_endpoints || sessions != self.sessions;
+        self.slot_endpoints = slot_endpoints;
+        self.sessions = sessions;
+        if changed || refreshed {
+            self.schedule_emit();
+        }
+    }
+
+    /// 返回是否改动了配置或提示。
+    async fn on_new_session(&mut self, policy: &AudioPolicy, session: &AppSession) -> bool {
+        let Some(executable) = session_executable(session) else {
+            return false;
+        };
+        match self.config.preferences.app_landings.get(&executable).cloned() {
+            Some(LandingRecord::PendingClear) => {
+                if policy.set_landing(session.process_id, None).await.is_ok() {
+                    self.config.preferences.app_landings.remove(&executable);
+                    self.save();
+                    return true;
+                }
+                false
+            }
+            Some(LandingRecord::Endpoint(endpoint)) => {
+                let Ok(current) = policy.landing(session.process_id).await else {
+                    return false;
+                };
+                if current.as_deref() == Some(endpoint.0.as_str()) {
+                    return false;
+                }
+                if let Err(error) = policy.set_landing(session.process_id, Some(endpoint.0.clone())).await {
+                    warn!(%error, %executable, "cannot restore the app landing");
+                    return false;
+                }
+                info!(%executable, endpoint = %endpoint.0, ?current, "restored the app landing");
+                let landing = self.landing_name(&endpoint);
+                self.notify(NoticeKind::LandingRestored {
+                    app: program_stem(&executable),
+                    landing,
+                });
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// 落点的显示名：工作台上的节点名，不在工作台上时用端点 ID（极少见：节点被删除时记录已经改掉了）。
+    fn landing_name(&self, endpoint: &EndpointId) -> String {
+        self.config
+            .workspace
+            .nodes()
+            .iter()
+            .find(|node| self.is_landing_endpoint(node, &endpoint.0))
+            .map_or_else(|| endpoint.0.clone(), |node| node.name.as_str().to_owned())
+    }
+
+    fn is_landing_endpoint(&self, node: &Node, endpoint: &str) -> bool {
+        match &node.kind {
+            NodeKind::VirtualInput { slot } => self.slot_endpoints.get(slot).is_some_and(|own| own == endpoint),
+            NodeKind::ExternalOutput { device } => device.endpoint.0 == endpoint,
+            _ => false,
+        }
+    }
+
+    /// 当前的重复路由（M3 计划 L5）：落点按会话当前所在的端点实时判断。
+    fn duplicates(&self) -> Vec<DuplicateRoute> {
+        let workspace = &self.config.workspace;
+        let landings: Vec<(NodeId, NodeId)> = workspace
+            .nodes()
+            .iter()
+            .filter_map(|node| Some((node.id, node.kind.program()?)))
+            .flat_map(|(source, program)| {
+                self.sessions
+                    .iter()
+                    .filter(move |session| {
+                        session_executable(session)
+                            .and_then(|path| ProgramPath::new(&path).ok())
+                            .is_some_and(|path| path.same_program(program))
+                    })
+                    .filter_map(move |session| {
+                        let landing = workspace
+                            .nodes()
+                            .iter()
+                            .find(|node| self.is_landing_endpoint(node, &session.endpoint_id))?;
+                        Some((source, landing.id))
+                    })
+            })
+            .collect();
+        duplicate_routes(workspace, &landings)
+    }
+
+    fn duplicate_view(&self, duplicate: &DuplicateRoute) -> DuplicateView {
+        let name = |id: NodeId| {
+            self.config
+                .workspace
+                .node(id)
+                .map_or_else(String::new, |node| node.name.as_str().to_owned())
+        };
+        DuplicateView {
+            program: name(duplicate.source),
+            destination: name(duplicate.destination),
+        }
     }
 
     async fn default_devices(&mut self) -> Result<DefaultDevicesView, CommandError> {
@@ -1121,10 +1651,28 @@ impl Controller {
     fn view(&self) -> ViewState {
         let workspace = &self.config.workspace;
         let engine_up = self.engine_state == EngineState::Running;
+        let duplicates = self.duplicates();
         let nodes = workspace
             .nodes()
             .iter()
-            .map(|node| self.node_view(node, engine_up))
+            .map(|node| {
+                let duplicate = duplicates
+                    .iter()
+                    .find(|duplicate| duplicate.source == node.id)
+                    .map(|duplicate| self.duplicate_view(duplicate));
+                self.node_view(node, engine_up, duplicate)
+            })
+            .collect();
+        let routes = workspace
+            .routes()
+            .iter()
+            .map(|route| {
+                let duplicate = duplicates
+                    .iter()
+                    .find(|duplicate| duplicate.routes.contains(&(route.from, route.to)))
+                    .map(|duplicate| self.duplicate_view(duplicate));
+                RouteView::new(route, duplicate)
+            })
             .collect();
         let slots = all_slots()
             .into_iter()
@@ -1145,22 +1693,40 @@ impl Controller {
             language: self.config.preferences.language.clone(),
             last_page: self.config.preferences.last_page.clone(),
             nodes,
-            routes: workspace.routes().iter().map(RouteView::from).collect(),
+            routes,
             console: workspace.console().iter().map(|id| id.0).collect(),
+            hotkeys: hotkeys::all_hotkeys(workspace, &self.config.preferences)
+                .into_iter()
+                .map(|(target, binding)| HotkeyRowView {
+                    target: target.into(),
+                    binding: binding.into(),
+                    occupied: self.occupied_hotkeys.contains(&target),
+                })
+                .collect(),
+            panic_mute: self.overlay.panic_mute,
+            recording: RecordingView {
+                folder: recording_folder(&self.config.preferences).display().to_string(),
+                defaults: self.config.preferences.recording_defaults.into(),
+            },
             slots,
             notices: self.notices.iter().cloned().collect(),
         }
     }
 
-    fn node_view(&self, node: &Node, engine_up: bool) -> NodeView {
+    fn node_view(&self, node: &Node, engine_up: bool, duplicate: Option<DuplicateView>) -> NodeView {
         let status = match &node.kind {
-            NodeKind::ExternalInput { .. } | NodeKind::ExternalOutput { .. } if engine_up => {
+            NodeKind::ExternalInput { .. }
+            | NodeKind::ExternalOutput { .. }
+            | NodeKind::AppSource { .. }
+            | NodeKind::ExternalInsert { .. }
+                if engine_up =>
+            {
                 NodeStatus::of_endpoint(self.endpoint_status.get(&node.id))
             }
             NodeKind::VirtualInput { slot } | NodeKind::VirtualOutput { slot } if engine_up => {
                 NodeStatus::of_slot(self.slot_status.get(slot).map(|status| status.health))
             }
-            NodeKind::Bus => NodeStatus::Ok,
+            NodeKind::Bus | NodeKind::Recorder { .. } => NodeStatus::Ok,
             _ => NodeStatus::Pending,
         };
         NodeView {
@@ -1172,6 +1738,14 @@ impl Controller {
                 endpoint_id: device.endpoint.0.clone(),
                 name: device.name.clone(),
             }),
+            program: node.kind.program().map(|program| ProgramView {
+                path: program.as_str().to_owned(),
+                file_name: program.file_name().to_owned(),
+            }),
+            resampler: match node.kind {
+                NodeKind::AppSource { resampler, .. } => resampler.map(ResamplerView::from),
+                _ => None,
+            },
             x: node.position.x,
             y: node.position.y,
             gain_db: node.strip.gain.db(),
@@ -1196,14 +1770,41 @@ impl Controller {
                 })
                 .unwrap_or_default(),
             status,
+            mute_hotkey: node.mute_hotkey.map(HotkeyBindingView::from),
+            record_hotkey: node.record_hotkey.map(HotkeyBindingView::from),
+            recorder: match node.kind {
+                NodeKind::Recorder { settings } => Some(RecorderView {
+                    settings: settings.into(),
+                    state: self
+                        .recorder_status
+                        .get(&node.id)
+                        .map_or(RecorderStateView::Idle, RecorderStateView::from),
+                }),
+                _ => None,
+            },
+            duplicate,
         }
     }
+}
+
+fn session_executable(session: &AppSession) -> Option<String> {
+    session.executable.as_ref().map(|path| path.display().to_string())
+}
+
+fn program_stem(executable: &str) -> String {
+    Path::new(executable)
+        .file_stem()
+        .map_or_else(|| executable.to_owned(), |stem| stem.to_string_lossy().into_owned())
 }
 
 fn failed(error: impl std::fmt::Display) -> CommandError {
     CommandError::Failed {
         message: error.to_string(),
     }
+}
+
+fn parse_program(path: &str) -> Result<ProgramPath, CommandError> {
+    ProgramPath::new(path).map_err(|_| CommandError::InvalidProgram)
 }
 
 fn strip_of(workspace: &Workspace, node: NodeId) -> Result<Strip, CommandError> {

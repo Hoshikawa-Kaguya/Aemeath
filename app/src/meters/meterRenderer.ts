@@ -3,7 +3,7 @@
 //
 // - 每次推送的是"自上次以来的峰值"，显示值取它与衰减后旧值中的较大者，两次推送之间按 DECAY_DB_PER_SECOND 衰减；
 // - 电平稳定不动的表不重绘，静音、无信号时几乎没有开销；
-// - dB 数字每秒只更新 READOUT_HZ 次，避免 64 个节点每帧改 DOM；
+// - dB 数字每秒只更新 READOUT_HZ 次，避免 64 个节点每帧改 DOM；控制台通道条的读数更慢（STRIP_READOUT_MS），显示这段时间内的最高峰值；
 // - 颜色取自 CSS 变量（Fluent 令牌），主题切换时重新读取。
 
 import { watchMeters, type MeterSample } from '@/api/backend'
@@ -15,7 +15,9 @@ const DECAY_DB_PER_SECOND = 24
 const MID_DB = -18
 const HIGH_DB = -6
 const READOUT_HZ = 10
+const STRIP_READOUT_MS = 250
 const MS_PER_SECOND = 1000
+const SILENT_TEXT = '−∞'
 /** 立体声：两根条之间的间隔（CSS 像素） */
 const BAR_GAP = 1
 
@@ -42,6 +44,9 @@ interface Meter {
   orientation: MeterOrientation
   drawn: Level | null
   readoutText: string
+  /** 竖向读数：当前时间窗内的最高峰值（dB）与时间窗的起点 */
+  windowPeak: number
+  windowStart: number
 }
 
 interface Palette {
@@ -69,7 +74,16 @@ class MeterRenderer {
     readout: HTMLElement | null,
     orientation: MeterOrientation = 'horizontal',
   ): () => void {
-    const meter: Meter = { node, canvas, readout, orientation, drawn: null, readoutText: '' }
+    const meter: Meter = {
+      node,
+      canvas,
+      readout,
+      orientation,
+      drawn: null,
+      readoutText: '',
+      windowPeak: -Infinity,
+      windowStart: 0,
+    }
     this.meters.add(meter)
     this.ensureRunning()
     return () => {
@@ -129,7 +143,8 @@ class MeterRenderer {
     }
     const palette = (this.palette ??= readPalette())
     for (const meter of this.meters) {
-      this.draw(meter, palette, updateReadouts)
+      this.updateReadout(meter, time, updateReadouts)
+      this.draw(meter, palette)
     }
     if (this.meters.size > 0) {
       this.frame = requestAnimationFrame((next) => this.tick(next))
@@ -138,17 +153,39 @@ class MeterRenderer {
     }
   }
 
-  private draw(meter: Meter, palette: Palette, updateReadout: boolean): void {
+  private updateReadout(meter: Meter, time: number, updateHorizontal: boolean): void {
+    if (meter.readout === null) {
+      return
+    }
+    const level = this.levels.get(meter.node)
+    const peak = level === undefined ? -Infinity : Math.max(level.left, level.right)
+    let text: string
+    if (meter.orientation === 'vertical') {
+      meter.windowPeak = Math.max(meter.windowPeak, peak)
+      if (time - meter.windowStart < STRIP_READOUT_MS) {
+        return
+      }
+      text =
+        meter.windowPeak <= FLOOR_DB || this.muted.has(meter.node)
+          ? SILENT_TEXT
+          : meter.windowPeak.toFixed(1).replace('-', '−')
+      meter.windowPeak = -Infinity
+      meter.windowStart = time
+    } else {
+      if (!updateHorizontal) {
+        return
+      }
+      text = peak <= FLOOR_DB ? SILENT_TEXT : `${Math.round(peak)} dB`.replace('-', '−')
+    }
+    if (text !== meter.readoutText) {
+      meter.readoutText = text
+      meter.readout.textContent = text
+    }
+  }
+
+  private draw(meter: Meter, palette: Palette): void {
     const level = this.levels.get(meter.node) ?? { left: -Infinity, right: -Infinity }
     const shown = { left: fraction(level.left), right: fraction(level.right) }
-    if (updateReadout && meter.readout !== null) {
-      const peak = Math.max(level.left, level.right)
-      const text = peak <= FLOOR_DB ? '−∞' : `${Math.round(peak)} dB`.replace('-', '−')
-      if (text !== meter.readoutText) {
-        meter.readoutText = text
-        meter.readout.textContent = text
-      }
-    }
     if (meter.drawn !== null && meter.drawn.left === shown.left && meter.drawn.right === shown.right) {
       return
     }

@@ -17,19 +17,22 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+use aemeath_io::app_source::{AppSourceConfig, app_rings, spawn_app_source};
 use aemeath_io::capabilities::{CapabilityCache, DeviceProber};
 use aemeath_io::clock::ClockTap;
 use aemeath_io::device::IoContext;
 use aemeath_io::follow::{ClockTarget, Follower};
-use aemeath_io::redetect::Redetect;
+use aemeath_io::redetect::{Redetect, RedetectTarget};
 use aemeath_io::{
-    BridgeConfig, BridgeHandle, IoDirection, STEREO, StatusSink, input, output, stereo_ring, target_frames,
+    AppStatusSink, BridgeConfig, BridgeHandle, IoDirection, STEREO, StatusSink, input, output, stereo_ring,
+    target_frames,
 };
-use aemeath_protocol::ids::{EndpointId, NodeId};
+use aemeath_protocol::ids::{EndpointId, NodeId, ProgramPath};
 use aemeath_protocol::topology::{NodeKind, NodeRole, RouteTopology};
+use aemeath_protocol::units::SampleRate;
 use aemeath_sys::clock::now_hns;
 
-use crate::mixer::Mixer;
+use crate::mixer::{MAX_BLOCK_FRAMES, Mixer};
 use crate::port::Port;
 use crate::timeline::{Timeline, TimelineWriter};
 
@@ -73,8 +76,15 @@ struct Bridge {
     config: BridgeConfig,
 }
 
+struct AppBridge {
+    /// 只为持有：丢弃时停止寻找线程和全部采集线程
+    _thread: BridgeHandle,
+    config: AppSourceConfig,
+}
+
 pub struct ExternalDevices {
     bridges: HashMap<DeviceKey, Bridge>,
+    apps: HashMap<ProgramPath, AppBridge>,
     taps: HashMap<DeviceKey, ClockTap>,
     clock: Clock,
     context: IoContext,
@@ -82,9 +92,10 @@ pub struct ExternalDevices {
 }
 
 impl ExternalDevices {
-    pub fn new(clock: TimelineClock, status: StatusSink) -> Self {
+    pub fn new(clock: TimelineClock, status: StatusSink, app_status: AppStatusSink) -> Self {
         let context = IoContext {
             status,
+            app_status,
             capabilities: CapabilityCache::default(),
             redetect: Redetect::default(),
         };
@@ -93,6 +104,7 @@ impl ExternalDevices {
             .ok();
         Self {
             bridges: HashMap::new(),
+            apps: HashMap::new(),
             taps: HashMap::new(),
             clock: Clock::Free(Box::new(clock)),
             context,
@@ -105,12 +117,69 @@ impl ExternalDevices {
         DeviceProber::new(self.context.capabilities.clone())
     }
 
-    /// 立即重新检测离线设备：`endpoints` 为 None 时全部。
-    pub fn redetect(&self, endpoints: Option<&[EndpointId]>) {
-        match endpoints {
-            Some(endpoints) => self.context.redetect.wake_endpoints(endpoints.to_vec()),
+    /// 立即重新检测离线设备和缺失的程序：`targets` 为 None 时全部。
+    pub fn redetect(&self, targets: Option<&[RedetectTarget]>) {
+        match targets {
+            Some(targets) => self.context.redetect.wake_targets(targets.to_vec()),
             None => self.context.redetect.wake_all(),
         }
+    }
+
+    /// 应用源节点在这份拓扑里要求的配置：(节点下标, 节点 ID, 配置)。
+    fn wanted_apps(topology: &RouteTopology) -> Vec<(usize, NodeId, AppSourceConfig)> {
+        topology
+            .nodes
+            .iter()
+            .enumerate()
+            .filter_map(|(index, node)| match &node.kind {
+                NodeKind::AppSource { program, resampler } => Some((
+                    index,
+                    node.id,
+                    AppSourceConfig {
+                        program: program.clone(),
+                        engine_rate: topology.engine_sample_rate,
+                        quality: resampler.unwrap_or(topology.resampler),
+                    },
+                )),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// 为新混音器准备应用源。规则与外部设备相同；应用源不占设备，配置变了直接重建。
+    fn prepare_apps(&mut self, topology: &RouteTopology, mixer: &mut Mixer) {
+        let rate = topology.engine_sample_rate;
+        let mut keep = HashSet::new();
+        for (node, _, config) in Self::wanted_apps(topology) {
+            let key = config.program.clone();
+            keep.insert(key.clone());
+            let unchanged = self.apps.get(&key).is_some_and(|app| app.config == config);
+            if unchanged && mixer.inherits_port(node) {
+                continue;
+            }
+            self.apps.remove(&key);
+            let (producers, consumers) = app_rings(rate);
+            let fade = port_fade_frames(rate);
+            let prime = target_frames(rate) * STEREO;
+            let inputs = consumers
+                .into_iter()
+                .map(|consumer| Port::input(consumer, prime, fade))
+                .collect();
+            mixer.attach_port(node, Port::summed(inputs, MAX_BLOCK_FRAMES * STEREO));
+            match spawn_app_source(config.clone(), producers, self.context.clone()) {
+                Ok(handle) => {
+                    self.apps.insert(
+                        key,
+                        AppBridge {
+                            _thread: handle,
+                            config,
+                        },
+                    );
+                }
+                Err(error) => tracing::error!(%error, "cannot start the app source thread"),
+            }
+        }
+        self.apps.retain(|key, _| keep.contains(key));
     }
 
     /// 外部设备节点在这份拓扑里要求的 IO 线程配置：(节点下标, 节点 ID, 设备, 配置)。
@@ -122,6 +191,7 @@ impl ExternalDevices {
             .enumerate()
             .filter_map(|(index, node)| {
                 let endpoint = node.kind.device()?.clone();
+                let role = node.kind.endpoint_role()?;
                 let settings = node.io.unwrap_or_default();
                 let config = BridgeConfig {
                     endpoint: endpoint.clone(),
@@ -129,18 +199,22 @@ impl ExternalDevices {
                     quality: settings.resampler_or(topology.resampler),
                     access: settings.access,
                 };
-                Some((index, node.id, (endpoint, direction(node.kind.role())), config))
+                Some((index, node.id, (endpoint, direction(role)), config))
             })
             .collect()
     }
 
     /// 设备流要重建的节点：IO 线程已经在运行、但配置变了（换拓扑前要先让它们淡出）。
     pub fn reconfigured_nodes(&self, topology: &RouteTopology) -> Vec<NodeId> {
-        Self::wanted(topology)
+        let devices = Self::wanted(topology)
             .into_iter()
             .filter(|(_, _, key, config)| self.bridges.get(key).is_some_and(|bridge| bridge.config != *config))
-            .map(|(_, node, _, _)| node)
-            .collect()
+            .map(|(_, node, _, _)| node);
+        let apps = Self::wanted_apps(topology)
+            .into_iter()
+            .filter(|(_, _, config)| self.apps.get(&config.program).is_some_and(|app| app.config != *config))
+            .map(|(_, node, _)| node);
+        devices.chain(apps).collect()
     }
 
     /// 为新混音器准备外部设备：复用、新建或停止 IO 线程，并把新建的端口接到混音器上。
@@ -159,7 +233,7 @@ impl ExternalDevices {
             }
             let tap = self.taps.entry(key.clone()).or_default().clone();
             let (producer, consumer) = stereo_ring(topology.engine_sample_rate);
-            let fade = (f64::from(topology.engine_sample_rate.hz()) * PORT_FADE_SECONDS).round() as u32;
+            let fade = port_fade_frames(topology.engine_sample_rate);
             let spawned = match key.1 {
                 IoDirection::Input => {
                     let prime = target_frames(topology.engine_sample_rate) * STEREO;
@@ -187,6 +261,7 @@ impl ExternalDevices {
         }
         self.bridges.retain(|key, _| keep.contains(key));
         self.taps.retain(|key, _| keep.contains(key));
+        self.prepare_apps(topology, mixer);
         self.update_clock(topology);
     }
 
@@ -240,6 +315,7 @@ impl ExternalDevices {
 
     /// 停止所有 IO 线程、跟随线程和端点监听线程。
     pub fn shutdown(&mut self) {
+        self.apps.clear();
         self.bridges.clear();
         if let Clock::Following { follower, .. } = std::mem::replace(&mut self.clock, Clock::Lost)
             && let Some(target) = follower.stop()
@@ -248,6 +324,10 @@ impl ExternalDevices {
         }
         self.watcher = None;
     }
+}
+
+fn port_fade_frames(rate: SampleRate) -> u32 {
+    (f64::from(rate.hz()) * PORT_FADE_SECONDS).round() as u32
 }
 
 fn direction(role: NodeRole) -> IoDirection {

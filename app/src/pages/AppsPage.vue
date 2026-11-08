@@ -9,11 +9,13 @@ import { usePolling } from './usePolling'
 
 // 应用页（选型报告 5.5 节、S7）：只列出有音频会话的程序，可以把落点（GLOSSARY：落点）改到某个虚拟输入、外部输出，
 // 或者跟随系统默认。指派按可执行文件持久保存；已在播放的流不一定转移，这时提示"重启该应用后生效"。
-// 被 Aemeath 独占的外部输出不可选（应用打不开它）。应用源在 M3 加入。
+// 被 Aemeath 独占的外部输出不可选（应用打不开它）。每张卡片可以把程序添加为应用源（M3 计划 A5）。
 const REFRESH_MS = 3000
 /** 指派后等这么久再刷新，看会话有没有转移 */
 const SETTLE_MS = 800
 const FOLLOW_SYSTEM = ''
+const NEW_NODE_X = 40
+const NEW_NODE_Y = 40
 
 const { t } = useI18n()
 const store = useAppStore()
@@ -72,6 +74,22 @@ async function choose(app: AppView, event: Event): Promise<void> {
   }
   window.setTimeout(() => void refresh(), SETTLE_MS)
 }
+
+/** 添加为应用源：放在工作台左上角，用户再拖到合适的位置 */
+async function addSource(app: AppView): Promise<void> {
+  if (app.executable === null) {
+    return
+  }
+  const program = app.executable
+  try {
+    const name = await backend.describeProgram(program)
+    if (await store.run(() => backend.addNode({ type: 'appSource', program }, name, NEW_NODE_X, NEW_NODE_Y))) {
+      await refresh()
+    }
+  } catch (error) {
+    store.showToast(store.errorText(error))
+  }
+}
 </script>
 
 <template>
@@ -91,6 +109,14 @@ async function choose(app: AppView, event: Event): Promise<void> {
               {{ app.system ? t('apps.system') : app.name }}
             </b>
             <span class="caption ellipsis" :title="app.executable ?? ''">{{ app.executable ?? '' }}</span>
+            <div v-if="!app.system && app.executable !== null">
+              <button v-if="app.sourceNode === null" type="button" class="link" @click="addSource(app)">
+                {{ t('apps.addSource') }}
+              </button>
+              <button v-else type="button" class="link" @click="store.page = 'workbench'">
+                {{ t('apps.showSource') }}
+              </button>
+            </div>
           </div>
           <div class="now">
             <span class="caption">{{ t('apps.now') }}</span>
@@ -205,6 +231,22 @@ async function choose(app: AppView, event: Event): Promise<void> {
 
 .pick .select {
   width: 100%;
+}
+
+.link {
+  height: 22px;
+  padding: 0 4px;
+  margin-left: -4px;
+  border: 0;
+  border-radius: var(--r-ctl);
+  background: transparent;
+  color: var(--accent-text);
+  font: var(--fontSizeBase100) / 22px var(--fontFamilyBase);
+  cursor: pointer;
+}
+
+.link:hover {
+  background: var(--card-hover);
 }
 
 .warn {

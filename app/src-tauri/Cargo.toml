@@ -22,6 +22,7 @@ aemeath-runtime = { workspace = true }
 aemeath-sys = { workspace = true }
 serde = { workspace = true }
 tauri = { workspace = true, features = ["tray-icon"] }
+tauri-plugin-dialog = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["macros", "sync", "time"] }
 tracing = { workspace = true }

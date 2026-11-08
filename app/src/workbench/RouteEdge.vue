@@ -136,11 +136,21 @@ onBeforeUnmount(() => release?.())
   <EdgeLabelRenderer>
     <div
       class="wire-label nodrag nopan"
-      :class="{ on: route.enabled, off: !route.enabled, sel: data.selected, dragging: dragPosition !== null }"
+      :class="{
+        on: route.enabled,
+        off: !route.enabled,
+        sel: data.selected,
+        dragging: dragPosition !== null,
+        duplicate: route.duplicate !== null,
+      }"
       :style="{
         transform: `translate(-50%, -50%) translate(${labelPoint.x}px, ${labelPoint.y}px) scale(var(--label-lift))`,
       }"
-      :title="t('route.moveHint')"
+      :title="
+        route.duplicate === null
+          ? t('route.moveHint')
+          : t('node.duplicate', { program: route.duplicate.program, destination: route.duplicate.destination })
+      "
       @pointerdown.stop="onLabelPointerDown"
       @pointerenter="hoverWheel.enter()"
       @wheel="onWheel"

@@ -1,9 +1,10 @@
 //! 界面可以调用的命令（`invoke`）。编辑类命令都返回编辑后的完整状态，界面直接替换。
 
+use aemeath_core::hotkeys::HotkeyBinding;
 use aemeath_core::model::Position;
 use aemeath_core::preferences::LanguagePreference;
 use aemeath_protocol::ids::{EndpointId, NodeId};
-use aemeath_protocol::topology::DeviceSettings;
+use aemeath_protocol::topology::{DeviceSettings, Resampler};
 use serde::Serialize;
 use tauri::State;
 use tauri::ipc::{Channel, InvokeResponseBody};
@@ -13,8 +14,10 @@ use aemeath_sys::policy_config::DefaultRole;
 use crate::apps::AppsView;
 use crate::controller::{CommandError, ControllerHandle, DeviceDirection, Edit, NewNodeKind};
 use crate::default_devices::DefaultDevicesView;
-use crate::device_settings::{CapabilitiesView, DeviceSettingsView};
+use crate::device_settings::{CapabilitiesView, DeviceSettingsView, ResamplerView};
+use crate::hotkey_views::{CaptureView, HotkeyBindingView, HotkeyTargetView};
 use crate::meters::MeterHub;
+use crate::recording::RecorderSettingsView;
 use crate::tray::{TrayLabels, TrayMenu};
 use crate::view::{PairVerdict, RouteVerdict, ViewState};
 
@@ -76,6 +79,38 @@ pub async fn set_device_settings(
         .await
 }
 
+/// 应用源的默认节点名（文件说明，或不带扩展名的文件名）。
+#[tauri::command]
+pub fn describe_program(path: String) -> String {
+    crate::apps::default_program_name(&path)
+}
+
+/// 让应用源改绑另一个程序。
+#[tauri::command]
+pub async fn replace_program(controller: State<'_, ControllerHandle>, node: u32, program: String) -> Reply<ViewState> {
+    controller
+        .edit(Edit::ReplaceProgram {
+            node: NodeId(node),
+            program,
+        })
+        .await
+}
+
+/// 应用源按节点覆盖的重采样算法；null 表示跟随全局默认。
+#[tauri::command]
+pub async fn set_app_resampler(
+    controller: State<'_, ControllerHandle>,
+    node: u32,
+    resampler: Option<ResamplerView>,
+) -> Reply<ViewState> {
+    controller
+        .edit(Edit::SetAppResampler {
+            node: NodeId(node),
+            resampler: resampler.map(Resampler::from),
+        })
+        .await
+}
+
 /// 从同名候选里选定外部设备节点要改用的设备（选型报告 6.5 节）。
 #[tauri::command]
 pub async fn replace_device(
@@ -118,6 +153,90 @@ pub async fn set_landing(
     endpoint_id: Option<String>,
 ) -> Reply<()> {
     controller.set_landing(process_id, executable, endpoint_id).await
+}
+
+/// 开始录音（M3 计划 R4）。
+#[tauri::command]
+pub async fn start_recording(controller: State<'_, ControllerHandle>, node: u32) -> Reply<()> {
+    controller.start_recording(NodeId(node)).await
+}
+
+#[tauri::command]
+pub async fn stop_recording(controller: State<'_, ControllerHandle>, node: u32) -> Reply<()> {
+    controller.stop_recording(NodeId(node)).await
+}
+
+#[tauri::command]
+pub async fn set_recorder_settings(
+    controller: State<'_, ControllerHandle>,
+    node: u32,
+    settings: RecorderSettingsView,
+) -> Reply<ViewState> {
+    controller
+        .edit(Edit::SetRecorderSettings {
+            node: NodeId(node),
+            settings: settings.into(),
+        })
+        .await
+}
+
+#[tauri::command]
+pub async fn set_recording_folder(controller: State<'_, ControllerHandle>, folder: String) -> Reply<ViewState> {
+    controller.edit(Edit::SetRecordingFolder(folder)).await
+}
+
+#[tauri::command]
+pub async fn set_recording_defaults(
+    controller: State<'_, ControllerHandle>,
+    settings: RecorderSettingsView,
+) -> Reply<ViewState> {
+    controller.edit(Edit::SetRecordingDefaults(settings.into())).await
+}
+
+/// 在资源管理器里打开录音文件夹（不存在时先创建）。
+#[tauri::command]
+pub async fn open_recording_folder(controller: State<'_, ControllerHandle>) -> Reply<()> {
+    let state = controller.state().await?;
+    let folder = state.recording.folder;
+    std::fs::create_dir_all(&folder).map_err(invalid)?;
+    std::process::Command::new("explorer")
+        .arg(&folder)
+        .spawn()
+        .map_err(invalid)?;
+    Ok(())
+}
+
+/// 设定或清除一个热键；`binding` 为 null 表示清除。
+#[tauri::command]
+pub async fn set_hotkey(
+    controller: State<'_, ControllerHandle>,
+    target: HotkeyTargetView,
+    binding: Option<HotkeyBindingView>,
+) -> Reply<ViewState> {
+    controller
+        .edit(Edit::SetHotkey {
+            target: target.into(),
+            binding: binding.map(HotkeyBinding::from),
+        })
+        .await
+}
+
+/// 录入下一个按键组合（M3 计划 H12）。
+#[tauri::command]
+pub async fn capture_hotkey(controller: State<'_, ControllerHandle>) -> Reply<CaptureView> {
+    controller.capture_hotkey().await
+}
+
+/// 打开或解除紧急静音。
+#[tauri::command]
+pub async fn set_panic_mute(controller: State<'_, ControllerHandle>, active: bool) -> Reply<ViewState> {
+    controller.edit(Edit::SetPanicMute(active)).await
+}
+
+/// 落在这个节点上的应用数（删除节点前的提示用）。
+#[tauri::command]
+pub async fn landing_count(controller: State<'_, ControllerHandle>, node: u32) -> Reply<usize> {
+    controller.landing_count(NodeId(node)).await
 }
 
 /// 工具页：两个方向的活动端点及 Windows 默认设备。

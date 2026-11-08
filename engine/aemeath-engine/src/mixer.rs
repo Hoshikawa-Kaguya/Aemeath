@@ -14,7 +14,7 @@ use std::sync::Arc;
 use aemeath_dsp::gain::{SmoothedGain, db_to_linear};
 use aemeath_dsp::gate::Gate;
 use aemeath_protocol::graph;
-use aemeath_protocol::ids::{EndpointId, NodeId, SlotId, TopologyRevision};
+use aemeath_protocol::ids::{EndpointId, NodeId, ProgramPath, SlotDirection, SlotId, TopologyRevision};
 use aemeath_protocol::topology::{NodeKind, NodeRole, RouteTopology};
 use aemeath_protocol::units::{GateThreshold, SampleRate};
 
@@ -40,6 +40,16 @@ struct MixNode {
     buffer: Vec<f32>,
     /// 外部设备节点的端口；没有端口时外部输入为静音、外部输出被丢弃
     port: Option<Port>,
+    /// 外部插入专用：本块从取回端读到的信号。其余节点为空
+    ret: Vec<f32>,
+    /// 外部插入专用：本块要写进送出端槽位的信号（入边的求和）。其余节点为空
+    send: Vec<f32>,
+}
+
+impl MixNode {
+    fn is_insert(&self) -> bool {
+        matches!(self.kind, NodeKind::ExternalInsert { .. })
+    }
 }
 
 #[derive(Debug)]
@@ -56,8 +66,30 @@ pub struct MixerLayout {
     node_ids: Vec<NodeId>,
     /// 拓扑中的连线（不含正在淡出的旧连线）
     routes: Vec<(NodeId, NodeId)>,
-    /// 每个节点的外部端点（端点 + 角色），用来移交端口
-    endpoints: Vec<Option<(EndpointId, NodeRole)>>,
+    /// 每个节点的端口身份，用来移交端口
+    ports: Vec<Option<PortKey>>,
+}
+
+/// 端口的身份：换拓扑时身份相同的端口移交给新混音器，IO 线程不中断。
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PortKey {
+    Device(EndpointId, NodeRole),
+    Program(ProgramPath),
+    /// 录音节点的端口按节点 ID 接过，写盘线程不随混音器替换（M3 计划 R7）
+    Recorder(NodeId),
+}
+
+fn port_key(id: NodeId, kind: &NodeKind) -> Option<PortKey> {
+    if matches!(kind, NodeKind::Recorder { .. }) {
+        return Some(PortKey::Recorder(id));
+    }
+    match kind.program() {
+        Some(program) => Some(PortKey::Program(program.clone())),
+        None => kind
+            .device()
+            .zip(kind.endpoint_role())
+            .map(|(endpoint, role)| PortKey::Device(endpoint.clone(), role)),
+    }
 }
 
 #[derive(Debug)]
@@ -104,6 +136,13 @@ impl Mixer {
                     db_to_linear(node.strip.gain.db())
                 };
                 let gate_threshold = node.strip.gate.map(GateThreshold::db);
+                let insert_buffer = || {
+                    if matches!(node.kind, NodeKind::ExternalInsert { .. }) {
+                        vec![0.0; MAX_BLOCK_FRAMES * STEREO]
+                    } else {
+                        Vec::new()
+                    }
+                };
                 MixNode {
                     kind: node.kind.clone(),
                     gate: (node.kind.role() == NodeRole::Input)
@@ -113,6 +152,8 @@ impl Mixer {
                     strip_target,
                     buffer: vec![0.0; MAX_BLOCK_FRAMES * STEREO],
                     port: None,
+                    ret: insert_buffer(),
+                    send: insert_buffer(),
                 }
             })
             .collect();
@@ -184,27 +225,28 @@ impl Mixer {
             .map(|key| previous?.routes.iter().position(|previous_key| previous_key == key))
             .collect();
 
-        let endpoints: Vec<Option<(EndpointId, NodeRole)>> = nodes
+        let ports: Vec<Option<PortKey>> = topology
+            .nodes
             .iter()
-            .map(|node| node.kind.device().map(|endpoint| (endpoint.clone(), node.kind.role())))
+            .map(|node| port_key(node.id, &node.kind))
             .collect();
-        let inherit_ports = endpoints
+        let inherit_ports = ports
             .iter()
             .map(|key| {
                 let key = key.as_ref()?;
                 previous?
-                    .endpoints
+                    .ports
                     .iter()
                     .position(|previous| previous.as_ref() == Some(key))
             })
             .collect();
 
-        let slot_inputs = slot_nodes(&nodes, NodeRole::Input);
-        let slot_outputs = slot_nodes(&nodes, NodeRole::Output);
+        let slot_inputs = slot_nodes(&nodes, SlotDirection::In);
+        let slot_outputs = slot_nodes(&nodes, SlotDirection::Out);
         let layout = MixerLayout {
             node_ids: topology.nodes.iter().map(|node| node.id).collect(),
             routes: current_routes,
-            endpoints,
+            ports,
         };
         let mixer = Self {
             revision: topology.revision,
@@ -280,9 +322,14 @@ impl Mixer {
     /// 把外部输入端口的数据读进对应节点的缓冲（在 [`Self::begin_block`] 之后调用）。
     pub fn pull_ports(&mut self, frames: usize, issues: &mut PortIssues) {
         let len = frames.min(MAX_BLOCK_FRAMES) * STEREO;
-        for node in self.nodes.iter_mut().filter(|node| node.kind.role() == NodeRole::Input) {
+        for node in &mut self.nodes {
+            let is_insert = matches!(node.kind, NodeKind::ExternalInsert { .. });
             if let Some(port) = node.port.as_mut() {
-                port.pull(&mut node.buffer[..len], issues);
+                if is_insert {
+                    port.pull(&mut node.ret[..len], issues);
+                } else if node.kind.role() == NodeRole::Input {
+                    port.pull(&mut node.buffer[..len], issues);
+                }
             }
         }
     }
@@ -319,11 +366,15 @@ impl Mixer {
         &self.slot_outputs
     }
 
-    /// 开始一个块：把所有输入节点清零。之后由调用方填入有声音的输入。
+    /// 开始一个块：把所有输入节点和外部插入的取回端清零。之后由调用方填入有声音的输入。
     pub fn begin_block(&mut self, frames: usize) {
         let len = frames.min(MAX_BLOCK_FRAMES) * STEREO;
-        for node in self.nodes.iter_mut().filter(|node| node.kind.role() == NodeRole::Input) {
-            node.buffer[..len].fill(0.0);
+        for node in &mut self.nodes {
+            if node.is_insert() {
+                node.ret[..len].fill(0.0);
+            } else if node.kind.role() == NodeRole::Input {
+                node.buffer[..len].fill(0.0);
+            }
         }
     }
 
@@ -339,7 +390,20 @@ impl Mixer {
         self.nodes.get(node).map(|node| &node.buffer[..len])
     }
 
+    /// 要写进槽位的信号：虚拟输出是节点本身的信号，外部插入是送出端（入边的求和，不经过它的通道条）。
+    pub fn slot_output(&self, node: usize, frames: usize) -> Option<&[f32]> {
+        let len = frames.min(MAX_BLOCK_FRAMES) * STEREO;
+        self.nodes.get(node).map(|node| {
+            if node.is_insert() {
+                &node.send[..len]
+            } else {
+                &node.buffer[..len]
+            }
+        })
+    }
+
     /// 处理一个块。输入节点的缓冲须已填好；其余节点按拓扑顺序求和、过通道条。
+    /// 外部插入：入边的求和存为送出端，节点继续处理的是取回端的信号。取回端不依赖同一块的送出端，外部程序本身就有延迟。
     pub fn process(&mut self, frames: usize) {
         let frames = frames.min(MAX_BLOCK_FRAMES);
         let len = frames * STEREO;
@@ -369,6 +433,10 @@ impl Mixer {
             }
 
             let node = &mut self.nodes[index];
+            if node.is_insert() {
+                node.send[..len].copy_from_slice(&buffer[..len]);
+                buffer[..len].copy_from_slice(&node.ret[..len]);
+            }
             let mut peaks = [0f32; STEREO];
             for frame in buffer[..len].as_chunks_mut::<STEREO>().0.iter_mut() {
                 // 门限按增益之前的信号判定
@@ -388,11 +456,12 @@ impl Mixer {
     }
 }
 
-fn slot_nodes(nodes: &[MixNode], role: NodeRole) -> Vec<(usize, SlotId)> {
+/// 按槽位方向取占用槽位的节点（外部插入的送出端算输出方向）。
+fn slot_nodes(nodes: &[MixNode], direction: SlotDirection) -> Vec<(usize, SlotId)> {
     nodes
         .iter()
         .enumerate()
-        .filter(|(_, node)| node.kind.role() == role)
+        .filter(|(_, node)| node.kind.slot_direction() == Some(direction))
         .filter_map(|(index, node)| Some((index, node.kind.slot()?)))
         .collect()
 }
@@ -400,7 +469,7 @@ fn slot_nodes(nodes: &[MixNode], role: NodeRole) -> Vec<(usize, SlotId)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aemeath_protocol::ids::{SlotDirection, SlotNumber};
+    use aemeath_protocol::ids::SlotNumber;
     use aemeath_protocol::topology::{Resampler, Strip, TopologyNode, TopologyRoute};
     use aemeath_protocol::units::GainDb;
 
@@ -632,6 +701,57 @@ mod tests {
         assert!(
             second.nodes[4].port.is_some(),
             "the old port stays behind and is dropped with the old mixer"
+        );
+    }
+
+    #[test]
+    fn an_external_insert_sends_its_inputs_and_emits_the_return() {
+        let insert = NodeId(9);
+        let mut topology = topology(vec![route(GAME, insert, 0.0), route(insert, OBS, 0.0)]);
+        topology.nodes.push(TopologyNode {
+            strip: Strip {
+                gain: GainDb::new(-6.0).unwrap(),
+                ..Strip::default()
+            },
+            ..node(
+                insert,
+                NodeKind::ExternalInsert {
+                    send: slot(SlotDirection::Out, 2),
+                    ret: EndpointId("{broadcast}".to_owned()),
+                },
+            )
+        });
+        let (mut mixer, _) = build(&topology, None);
+        let insert_index = 4;
+        assert!(
+            mixer
+                .slot_outputs()
+                .contains(&(insert_index, slot(SlotDirection::Out, 2)))
+        );
+
+        let (mut producer, consumer) = rtrb::RingBuffer::<f32>::new(4096);
+        mixer.attach_port(insert_index, Port::input(consumer, FRAMES * STEREO, 0));
+        let mut issues = PortIssues::default();
+        let (mut send, mut emitted) = (0.0, 0.0);
+        for _ in 0..(RAMP / FRAMES + 1) {
+            for _ in 0..FRAMES * STEREO {
+                producer.push(0.5).unwrap();
+            }
+            mixer.begin_block(FRAMES);
+            mixer.input_mut(0, FRAMES).unwrap().fill(0.25);
+            mixer.pull_ports(FRAMES, &mut issues);
+            mixer.process(FRAMES);
+            send = mixer.slot_output(insert_index, FRAMES).unwrap()[FRAMES * STEREO - 2];
+            emitted = mixer.output(3, FRAMES).unwrap()[FRAMES * STEREO - 2];
+        }
+        assert!(
+            (send - 0.25).abs() < 1e-5,
+            "the send gets the input sum without the strip: {send}"
+        );
+        let expected = 0.5 * db_to_linear(-6.0);
+        assert!(
+            (emitted - expected).abs() < 1e-5,
+            "the strip acts on the return: {emitted}"
         );
     }
 

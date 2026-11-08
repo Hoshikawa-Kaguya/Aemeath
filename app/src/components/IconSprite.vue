@@ -60,6 +60,19 @@
         <path d="M3.5 12h17M12 3.5c2.5 2.5 3.5 5.5 3.5 8.5s-1 6-3.5 8.5c-2.5-2.5-3.5-5.5-3.5-8.5s1-6 3.5-8.5z" />
       </symbol>
       <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3" /></symbol>
+      <symbol id="i-rec" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6" fill="currentColor" stroke="none" /></symbol>
+      <symbol id="i-stop" viewBox="0 0 24 24">
+        <rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor" stroke="none" />
+      </symbol>
+      <symbol id="i-rec" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6" fill="currentColor" stroke="none" /></symbol>
+      <symbol id="i-stop" viewBox="0 0 24 24">
+        <rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor" stroke="none" />
+      </symbol>
+      <symbol id="i-key" viewBox="0 0 24 24">
+        <rect x="3" y="7" width="18" height="11" rx="2" />
+        <path d="M7 11h.01M11 11h.01M15 11h.01M8 15h8" />
+      </symbol>
+      <symbol id="i-fx" viewBox="0 0 24 24"><path d="M3 12h4l3-6h4l3 6h4M10 18h4" /></symbol>
       <symbol id="i-apps" viewBox="0 0 24 24">
         <rect x="4" y="4" width="6.5" height="6.5" rx="1.5" />
         <rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5" />
