@@ -108,6 +108,26 @@ pub fn stereo_ring(engine_rate: SampleRate) -> (Producer<f32>, Consumer<f32>) {
     RingBuffer::new(frames * STEREO)
 }
 
+/// 缓冲里的样本超过目标水位的这么多倍时，丢到目标水位（例如某一侧的线程曾被耽搁）。
+/// 只靠重采样追赶每秒只能降约 1 ms，积压几十毫秒就要等上一分钟。
+const BACKLOG_LIMIT_FACTOR: usize = 4;
+
+/// 积压过多时丢掉多余的样本，返回丢弃的样本数。实时线程调用，不分配内存。
+pub fn skip_backlog(consumer: &mut Consumer<f32>, target_samples: usize) -> usize {
+    let backlog = consumer.slots();
+    if backlog <= target_samples * BACKLOG_LIMIT_FACTOR {
+        return 0;
+    }
+    match consumer.read_chunk(backlog - target_samples) {
+        Ok(chunk) => {
+            let skipped = chunk.len();
+            chunk.commit_all();
+            skipped
+        }
+        Err(_) => 0,
+    }
+}
+
 /// 目标水位对应的帧数。
 pub fn target_frames(rate: SampleRate) -> usize {
     (f64::from(rate.hz()) * TARGET_LEVEL_MS / MILLISECONDS_PER_SECOND as f64) as usize

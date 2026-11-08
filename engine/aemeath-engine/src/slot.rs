@@ -6,18 +6,18 @@
 //! - 输出槽位（OBS 等从里面录）：混音每 1 ms 写入一块；等时 IN URB 到期时按节拍取出、编码、应答。
 //!
 //! 采样率与引擎不同时输出静音；固定比率重采样在 M1 第 5 项加入。
-//! 导入、流开始这类低频事件中允许分配内存；逐块、逐 URB 的路径只在应答编码时分配（与 S4 相同，以后改用缓冲池）。
+//! 导入、流开始这类低频事件中允许分配内存；逐块、逐 URB 的路径复用缓冲（写线程把写完的缓冲还回来），不申请也不释放内存。
 
 use std::collections::VecDeque;
-use std::io::{self, Write};
-use std::net::TcpStream;
+use std::io;
 
 use aemeath_dsp::codec;
 use aemeath_protocol::ids::{SlotDirection, SlotId};
 use aemeath_protocol::units::SampleRate;
 use aemeath_usbip::function::StreamChange;
 use aemeath_usbip::stream::{CapturePacer, StreamFormat};
-use aemeath_usbip::wire::{IsoPacket, RetSubmit, Submit, UrbStatus};
+use aemeath_usbip::wire::{IsoPacket, RetSubmit, Submit, UrbStatus, encode_ret_submit_into};
+use aemeath_usbip::writer::ConnectionWriter;
 
 use crate::STEREO;
 use crate::fifo::FrameFifo;
@@ -32,6 +32,8 @@ const LATE_TOLERANCE_MICROFRAMES: i64 = RENDER_PRIME_MICROFRAMES;
 const FIFO_CAPACITY_FRAMES: usize = 76_800;
 /// 待放出的包数上限：每个 URB 80 个包，留出几个 URB 的余量
 const MAX_PENDING_PACKETS: usize = 1024;
+/// 复用的包描述缓冲的初始容量：一个 URB 通常 80 个包
+const TYPICAL_ISO_PACKETS: usize = 128;
 
 /// 一个 URB 在时间线上的位置。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,7 +57,7 @@ pub struct SlotStats {
 #[derive(Debug)]
 pub struct SlotStream {
     slot: SlotId,
-    writer: TcpStream,
+    writer: ConnectionWriter,
     format: Option<StreamFormat>,
     engine_rate: Option<SampleRate>,
     next_microframe: Option<i64>,
@@ -65,11 +67,14 @@ pub struct SlotStream {
     readable_frames: usize,
     pacer: CapturePacer,
     scratch: Vec<f32>,
+    /// 编码应答时复用的包描述和音频数据
+    reply_packets: Vec<IsoPacket>,
+    reply_data: Vec<u8>,
     pub stats: SlotStats,
 }
 
 impl SlotStream {
-    pub fn new(slot: SlotId, writer: TcpStream) -> Self {
+    pub fn new(slot: SlotId, writer: ConnectionWriter) -> Self {
         Self {
             slot,
             writer,
@@ -81,6 +86,8 @@ impl SlotStream {
             readable_frames: 0,
             pacer: CapturePacer::default(),
             scratch: Vec::new(),
+            reply_packets: Vec::with_capacity(TYPICAL_ISO_PACKETS),
+            reply_data: Vec::new(),
             stats: SlotStats::default(),
         }
     }
@@ -93,8 +100,9 @@ impl SlotStream {
         self.format
     }
 
-    pub fn write(&mut self, bytes: &[u8]) -> io::Result<()> {
-        self.writer.write_all(bytes)
+    /// 把应答交给写线程，不阻塞。`submit` 是它对应的 URB，由写线程释放。
+    pub fn send(&self, bytes: Vec<u8>, submit: Option<Submit>) -> io::Result<()> {
+        self.writer.send(bytes, submit)
     }
 
     pub fn apply_change(&mut self, change: StreamChange) {
@@ -145,6 +153,10 @@ impl SlotStream {
             Some(next) if keeps_position(next) => (next, None),
             Some(next) => {
                 self.stats.restarts += 1;
+                // 混音器在迟到期间照常写入，这些帧不会再有 URB 来取，留着就成了永久的延迟
+                if self.slot.direction == SlotDirection::Out {
+                    self.fifo.clear();
+                }
                 (now_microframe + RESTART_LEAD_MICROFRAMES, Some(now_microframe - next))
             }
             None => (now_microframe + RESTART_LEAD_MICROFRAMES, None),
@@ -175,25 +187,28 @@ impl SlotStream {
             }
         }
 
-        let packets: Vec<IsoPacket> = submit
-            .iso_packets
-            .iter()
-            .map(|packet| IsoPacket {
+        self.reply_packets.clear();
+        self.reply_packets
+            .extend(submit.iso_packets.iter().map(|packet| IsoPacket {
                 actual_length: packet.length,
                 status: UrbStatus::Ok.code(),
                 ..*packet
-            })
-            .collect();
-        let total: u32 = packets.iter().map(|packet| packet.length).sum();
-        aemeath_usbip::wire::encode_ret_submit(&RetSubmit {
-            seq: submit.seq,
-            status: UrbStatus::Ok,
-            actual_length: total,
-            start_frame: submit.start_frame,
-            iso_packets: Some(&packets),
-            error_count: 0,
-            data: &[],
-        })
+            }));
+        let total: u32 = self.reply_packets.iter().map(|packet| packet.length).sum();
+        let mut reply = self.writer.buffer();
+        encode_ret_submit_into(
+            &RetSubmit {
+                seq: submit.seq,
+                status: UrbStatus::Ok,
+                actual_length: total,
+                start_frame: submit.start_frame,
+                iso_packets: Some(&self.reply_packets),
+                error_count: 0,
+                data: &[],
+            },
+            &mut reply,
+        );
+        reply
     }
 
     /// 输入方向：放出时间线已经走过的包。
@@ -228,8 +243,8 @@ impl SlotStream {
 
     /// 输出方向：一个等时 IN URB 到期，按节拍取出数据并编码成应答。
     pub fn complete_capture(&mut self, submit: &Submit) -> Vec<u8> {
-        let mut data = Vec::new();
-        let mut packets = Vec::with_capacity(submit.iso_packets.len());
+        self.reply_data.clear();
+        self.reply_packets.clear();
         let format = self.passthrough_format().or(self.format);
         let mut offset = 0u32;
         for packet in &submit.iso_packets {
@@ -246,11 +261,11 @@ impl SlotStream {
                     let popped = self.fifo.pop_into(&mut self.scratch);
                     self.stats.underflow_frames += (frames - popped) as u64;
                 }
-                let before = data.len();
-                codec::encode(format.wire.sample_format, &self.scratch, &mut data);
-                actual = u32::try_from(data.len() - before).unwrap_or(0);
+                let before = self.reply_data.len();
+                codec::encode(format.wire.sample_format, &self.scratch, &mut self.reply_data);
+                actual = u32::try_from(self.reply_data.len() - before).unwrap_or(0);
             }
-            packets.push(IsoPacket {
+            self.reply_packets.push(IsoPacket {
                 offset,
                 length: packet.length,
                 actual_length: actual,
@@ -258,15 +273,20 @@ impl SlotStream {
             });
             offset = offset.saturating_add(packet.length);
         }
-        aemeath_usbip::wire::encode_ret_submit(&RetSubmit {
-            seq: submit.seq,
-            status: UrbStatus::Ok,
-            actual_length: u32::try_from(data.len()).unwrap_or(0),
-            start_frame: submit.start_frame,
-            iso_packets: Some(&packets),
-            error_count: 0,
-            data: &data,
-        })
+        let mut reply = self.writer.buffer();
+        encode_ret_submit_into(
+            &RetSubmit {
+                seq: submit.seq,
+                status: UrbStatus::Ok,
+                actual_length: u32::try_from(self.reply_data.len()).unwrap_or(0),
+                start_frame: submit.start_frame,
+                iso_packets: Some(&self.reply_packets),
+                error_count: 0,
+                data: &self.reply_data,
+            },
+            &mut reply,
+        );
+        reply
     }
 
     pub fn direction(&self) -> SlotDirection {
@@ -288,7 +308,7 @@ mod tests {
     use super::*;
     use aemeath_protocol::ids::SlotNumber;
     use aemeath_usbip::wire::Direction;
-    use std::net::TcpListener;
+    use std::net::{TcpListener, TcpStream};
 
     /// 80 个包、每包 1 个微帧：与 Windows 实测的 URB 相同（10 ms）
     const PACKETS: usize = 80;
@@ -300,7 +320,7 @@ mod tests {
             direction,
             number: SlotNumber::new(1).unwrap(),
         };
-        SlotStream::new(slot, writer)
+        SlotStream::new(slot, ConnectionWriter::spawn(writer, 0).unwrap().0)
     }
 
     fn submit() -> Submit {
@@ -338,6 +358,24 @@ mod tests {
         // 到达时它覆盖的时段已经结束：只能重新开始
         let too_late = stream.reserve(&submit(), 400);
         assert_eq!((too_late.start, too_late.late_by), (408, Some(400 - 168)));
+    }
+
+    #[test]
+    fn restarting_a_capture_slot_drops_the_frames_no_urb_will_collect() {
+        let mut stream = stream(SlotDirection::Out);
+        stream.reserve(&submit(), 0);
+        stream.fifo.push(&[0.5; 960]);
+        stream.reserve(&submit(), 400);
+        assert!(stream.fifo.is_empty());
+    }
+
+    #[test]
+    fn restarting_a_render_slot_keeps_its_data() {
+        let mut stream = stream(SlotDirection::In);
+        stream.reserve(&submit(), 0);
+        stream.fifo.push(&[0.5; 960]);
+        stream.reserve(&submit(), 400);
+        assert_eq!(stream.fifo.len(), 480);
     }
 
     #[test]

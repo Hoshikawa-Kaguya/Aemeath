@@ -16,7 +16,9 @@ use rtrb::Consumer;
 use crate::bridge::{BridgeError, BridgeLog, CONTROL_PERIOD};
 use crate::clock::{ClockReader, ClockTap};
 use crate::device::{self, EventWatch, IoContext, OpenStream, SessionEnd, Waited};
-use crate::{BridgeConfig, BridgeHandle, IoDirection, STEREO, TARGET_LEVEL_MS, frames_to_ms, target_frames};
+use crate::{
+    BridgeConfig, BridgeHandle, IoDirection, STEREO, TARGET_LEVEL_MS, frames_to_ms, skip_backlog, target_frames,
+};
 
 /// 每次重采样产出的设备帧数：5 ms（S5）
 const CHUNKS_PER_SECOND: u32 = 200;
@@ -66,8 +68,8 @@ fn run(
     context: &IoContext,
     clock: &ClockTap,
 ) {
-    let _priority = audio_thread_priority::promote_current_thread_to_real_time(0, config.engine_rate.hz())
-        .inspect_err(|error| tracing::warn!(?error, "cannot raise the output thread priority"));
+    let _priority = aemeath_sys::thread_priority::promote_current_thread()
+        .inspect_err(|error| tracing::warn!(%error, "cannot raise the output thread priority"));
     device::run_with_retry(&config.request(IoDirection::Output), stop, context, |stream| {
         let _active = ActiveGuard::set(active);
         match run_session(config, stream, &mut consumer, stop, clock) {
@@ -129,6 +131,11 @@ fn run_session(
         }
         if let Waited::Timeout = watch.wait(stream)? {
             continue;
+        }
+
+        let skipped = skip_backlog(consumer, prime_samples);
+        if skipped > 0 {
+            log.overflow(skipped / STEREO);
         }
 
         let available = stream.client.get_available_space_in_frames()? as usize;

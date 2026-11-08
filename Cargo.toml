@@ -43,8 +43,6 @@ tracing = "0.1.44"
 tracing-subscriber = "0.3.23"
 windows = "0.62.2"
 windows-core = "0.62.2"
-# MMCSS "Pro Audio" 线程优先级（MPL-2.0，选型报告 6.1 节）
-audio_thread_priority = "0.38.0"
 # WASAPI 设备 IO（MIT，选型报告 6.1 节）
 wasapi = "0.27.0"
 # 重采样（MIT，S5）
@@ -68,6 +66,10 @@ unsafe_code = "forbid"
 unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
+
+# 开发版也要能实时处理：不优化时每路重采样占一个核的约 19%，优化后约 2%
+[profile.dev.package.rubato]
+opt-level = 3
 
 [profile.release]
 # 引擎要求出错时快速失败、干净退出，由守护进程拉起（ADR-0008）；主程序和守护进程同样适用

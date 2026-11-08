@@ -35,8 +35,8 @@ pub fn spawn_input(
 }
 
 fn run(config: &BridgeConfig, mut producer: Producer<f32>, stop: &AtomicBool, context: &IoContext, clock: &ClockTap) {
-    let _priority = audio_thread_priority::promote_current_thread_to_real_time(0, config.engine_rate.hz())
-        .inspect_err(|error| tracing::warn!(?error, "cannot raise the input thread priority"));
+    let _priority = aemeath_sys::thread_priority::promote_current_thread()
+        .inspect_err(|error| tracing::warn!(%error, "cannot raise the input thread priority"));
     device::run_with_retry(
         &config.request(IoDirection::Input),
         stop,

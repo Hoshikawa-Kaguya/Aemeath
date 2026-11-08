@@ -11,7 +11,6 @@ publish.workspace = true
 aemeath-dsp = { workspace = true }
 aemeath-protocol = { workspace = true }
 aemeath-sys = { workspace = true }
-audio_thread_priority = { workspace = true }
 rtrb = { workspace = true }
 tracing = { workspace = true }
 wasapi = { workspace = true }

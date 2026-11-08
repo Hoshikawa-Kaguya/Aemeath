@@ -418,40 +418,46 @@ pub struct RetSubmit<'a> {
 }
 
 pub fn encode_ret_submit(reply: &RetSubmit<'_>) -> Vec<u8> {
+    let mut out = Vec::new();
+    encode_ret_submit_into(reply, &mut out);
+    out
+}
+
+/// 把应答追加到 `out`：实时路径用它复用缓冲，不申请内存。
+pub fn encode_ret_submit_into(reply: &RetSubmit<'_>, out: &mut Vec<u8>) {
     let iso = reply.iso_packets.unwrap_or_default();
-    let mut out = Vec::with_capacity(URB_HEADER_LEN + reply.data.len() + iso.len() * ISO_DESCRIPTOR_LEN);
-    put_u32(&mut out, RET_SUBMIT);
-    put_u32(&mut out, reply.seq);
+    out.reserve(URB_HEADER_LEN + reply.data.len() + iso.len() * ISO_DESCRIPTOR_LEN);
+    put_u32(out, RET_SUBMIT);
+    put_u32(out, reply.seq);
     // devid、direction、ep 在应答中不使用，填 0
-    put_u32(&mut out, 0);
-    put_u32(&mut out, 0);
-    put_u32(&mut out, 0);
-    put_i32(&mut out, reply.status.code());
+    put_u32(out, 0);
+    put_u32(out, 0);
+    put_u32(out, 0);
+    put_i32(out, reply.status.code());
     let carries_data = reply.status == UrbStatus::Ok || reply.iso_packets.is_some();
-    put_u32(&mut out, if carries_data { reply.actual_length } else { 0 });
+    put_u32(out, if carries_data { reply.actual_length } else { 0 });
     match reply.iso_packets {
         Some(packets) => {
-            put_u32(&mut out, reply.start_frame);
-            put_u32(&mut out, u32::try_from(packets.len()).unwrap_or(u32::MAX));
+            put_u32(out, reply.start_frame);
+            put_u32(out, u32::try_from(packets.len()).unwrap_or(u32::MAX));
         }
         None => {
-            put_u32(&mut out, 0);
-            put_u32(&mut out, NOT_ISO);
+            put_u32(out, 0);
+            put_u32(out, NOT_ISO);
         }
     }
-    put_u32(&mut out, reply.error_count);
+    put_u32(out, reply.error_count);
     // setup 字段在应答中不使用
     out.extend_from_slice(&[0u8; 8]);
     if carries_data {
         out.extend_from_slice(reply.data);
     }
     for packet in iso {
-        put_u32(&mut out, packet.offset);
-        put_u32(&mut out, packet.length);
-        put_u32(&mut out, packet.actual_length);
-        put_i32(&mut out, packet.status);
+        put_u32(out, packet.offset);
+        put_u32(out, packet.length);
+        put_u32(out, packet.actual_length);
+        put_i32(out, packet.status);
     }
-    out
 }
 
 pub fn encode_ret_unlink(seq: u32, status: UrbStatus) -> Vec<u8> {

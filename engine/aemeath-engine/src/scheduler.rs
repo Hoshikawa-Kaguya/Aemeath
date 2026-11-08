@@ -36,9 +36,6 @@ const MAX_SLEEP_HNS: i64 = 5_000;
 const MAX_CATCH_UP_MICROFRAMES: i64 = 80;
 /// 外部设备端口的问题最多每隔这么久记一次日志（100 ns 单位，5 s）
 const PORT_ISSUE_LOG_INTERVAL_HNS: i64 = 50_000_000;
-/// MMCSS 需要一个缓冲大小和采样率作参考，这里只用于提升优先级
-const PRIORITY_HINT_FRAMES: u32 = 48;
-const PRIORITY_HINT_RATE: u32 = 48_000;
 
 /// 控制线程发给调度线程的命令。
 #[derive(Debug)]
@@ -50,8 +47,8 @@ pub enum Command {
 /// 到期时要发出的应答
 #[derive(Debug)]
 enum Pending {
-    /// 输入槽位的 OUT URB：应答已编好
-    Ready(Vec<u8>),
+    /// 输入槽位的 OUT URB：应答已编好；URB 留到发出时交给写线程释放
+    Ready(Vec<u8>, Submit),
     /// 输出槽位的 IN URB：到期时才取数据
     Capture(Submit),
 }
@@ -102,10 +99,9 @@ impl Scheduler {
     }
 
     pub fn run(mut self) {
-        let priority =
-            audio_thread_priority::promote_current_thread_to_real_time(PRIORITY_HINT_FRAMES, PRIORITY_HINT_RATE);
+        let priority = aemeath_sys::thread_priority::promote_current_thread();
         if let Err(error) = &priority {
-            tracing::warn!(?error, "cannot raise the scheduler thread to MMCSS priority");
+            tracing::warn!(%error, "cannot raise the scheduler thread to MMCSS priority");
         }
         let timer = HighResolutionTimer::new()
             .inspect_err(|error| tracing::warn!(%error, "no high-resolution timer, falling back to sleep"))
@@ -174,7 +170,7 @@ impl Scheduler {
                     let _ = self.events.send(EngineEvent::SlotConnection { slot, connected: true });
                 }
                 ServerEvent::Released { slot, connection } => self.drop_connection(connection, slot),
-                ServerEvent::Reply { connection, bytes } => self.write(connection, &bytes),
+                ServerEvent::Reply { connection, bytes } => self.send(connection, bytes, None),
                 ServerEvent::StreamChanged {
                     slot,
                     connection,
@@ -219,7 +215,7 @@ impl Scheduler {
                     } else {
                         UrbStatus::Ok
                     };
-                    self.write(connection, &encode_ret_unlink(seq, status));
+                    self.send(connection, encode_ret_unlink(seq, status), None);
                 }
             }
         }
@@ -244,7 +240,7 @@ impl Scheduler {
         let deadline = self.timeline.time_of(end);
         let seq = submit.seq;
         let pending = match submit.direction {
-            Direction::Out => Pending::Ready(stream.accept_render(&submit, start)),
+            Direction::Out => Pending::Ready(stream.accept_render(&submit, start), submit),
             Direction::In => Pending::Capture(submit),
         };
         self.pending.insert((connection.0, seq), pending);
@@ -328,14 +324,14 @@ impl Scheduler {
                 continue;
             };
             let connection = ConnectionId(connection);
-            let bytes = match pending {
-                Pending::Ready(bytes) => bytes,
+            let (bytes, submit) = match pending {
+                Pending::Ready(bytes, submit) => (bytes, submit),
                 Pending::Capture(submit) => match self.streams.get_mut(&connection) {
-                    Some(stream) => stream.complete_capture(&submit),
+                    Some(stream) => (stream.complete_capture(&submit), submit),
                     None => continue,
                 },
             };
-            self.write(connection, &bytes);
+            self.send(connection, bytes, Some(submit));
         }
     }
 
@@ -362,13 +358,13 @@ impl Scheduler {
         }
     }
 
-    fn write(&mut self, connection: ConnectionId, bytes: &[u8]) {
+    fn send(&mut self, connection: ConnectionId, bytes: Vec<u8>, submit: Option<Submit>) {
         let Some(stream) = self.streams.get_mut(&connection) else {
             return;
         };
-        if let Err(error) = stream.write(bytes) {
+        if let Err(error) = stream.send(bytes, submit) {
             let slot = stream.slot();
-            tracing::info!(%slot, %error, "write failed, dropping the connection");
+            tracing::info!(%slot, %error, "cannot queue the reply, dropping the connection");
             self.drop_connection(connection, slot);
         }
     }

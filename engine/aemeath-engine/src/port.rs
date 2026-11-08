@@ -12,9 +12,6 @@ use rtrb::{Consumer, Producer};
 
 use crate::STEREO;
 
-/// 输入端口积压超过目标水位的这么多倍时，丢掉多余的部分（例如调度线程曾被耽搁）
-const BACKLOG_LIMIT_FACTOR: usize = 4;
-
 /// 开始收发时的线性淡入（只在端口内部使用）。
 #[derive(Debug, Clone, Copy)]
 pub struct Onset {
@@ -109,14 +106,7 @@ impl Port {
             *primed = true;
             onset.restart();
         }
-        let backlog = consumer.slots();
-        let limit = *prime_samples * BACKLOG_LIMIT_FACTOR;
-        if backlog > limit
-            && let Ok(chunk) = consumer.read_chunk(backlog - *prime_samples)
-        {
-            issues.skipped_samples += chunk.len();
-            chunk.commit_all();
-        }
+        issues.skipped_samples += aemeath_io::skip_backlog(consumer, *prime_samples);
 
         let wanted = buffer.len();
         let available = consumer.slots().min(wanted);

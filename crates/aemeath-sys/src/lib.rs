@@ -18,6 +18,7 @@ pub mod service;
 pub mod shared_memory;
 pub mod single_instance;
 pub mod task_dialog;
+pub mod thread_priority;
 pub mod timer;
 mod token;
 pub mod ui_language;

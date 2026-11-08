@@ -88,8 +88,11 @@ impl Lock {
     }
 }
 
-// 跟随线程只读取时钟，不参与实时音频，不提升优先级。
+// 跟随线程更新时间线的几条指令期间，调度线程要等它写完，所以它不能被普通线程抢占。
 fn run(tap: &ClockTap, mut target: Box<dyn ClockTarget>, stop: &AtomicBool) -> Box<dyn ClockTarget> {
+    if let Err(error) = aemeath_sys::thread_priority::raise_current_thread() {
+        tracing::warn!(%error, "cannot raise the clock following thread priority");
+    }
     tracing::info!("clock master following started");
     let mut lock: Option<Lock> = None;
     let mut last_reading: Option<ClockReading> = None;

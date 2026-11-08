@@ -3,8 +3,9 @@
 //! 线程模型（与 S4 验证过的结构一致）：
 //! - 一个监听线程，加上每条连接一个读线程（非实时）。读线程解析 URB，在本地处理控制请求，
 //!   并把一切需要写回连接的内容作为 [`ServerEvent`] 交给引擎。
-//! - 导入成功后，连接的写端随 [`ServerEvent::Imported`] 交给引擎的调度线程。此后**只有调度线程**
-//!   向这条连接写数据，所以控制请求的应答也经事件转交，不在读线程里直接写。
+//! - 导入成功后，连接的写端（[`ConnectionWriter`]）随 [`ServerEvent::Imported`] 交给引擎的调度线程。
+//!   此后**只有调度线程**向这条连接发数据，所以控制请求的应答也经事件转交，不在读线程里直接写。
+//! - 读线程导入后提高优先级：它被抢占时 URB 会迟到，调度线程再快也没用。
 //!
 //! 只有被导出的槽位（路由拓扑里被占用的槽位）可以导入；重复的导入返回"设备忙"（ADR-0007）。
 
@@ -19,6 +20,7 @@ use std::time::Duration;
 
 use aemeath_protocol::ids::{SlotDirection, SlotId};
 use aemeath_sys::clock::now_hns;
+use aemeath_sys::thread_priority::raise_current_thread;
 
 use crate::descriptors::Descriptors;
 use crate::function::{Setup, StreamChange, Uac2Function};
@@ -27,6 +29,7 @@ use crate::wire::{
     self, BUSID_LEN, BusId, DeviceRecord, Direction, OP_HEADER_LEN, OpRequest, OpStatus, RetSubmit, Submit, UrbCommand,
     UrbDecoder, UrbStatus, WireError,
 };
+use crate::writer::ConnectionWriter;
 
 /// usbip-win2 默认连接的端口
 pub const DEFAULT_PORT: u16 = 3241;
@@ -54,7 +57,7 @@ pub enum ServerEvent {
     Imported {
         slot: SlotId,
         connection: ConnectionId,
-        writer: TcpStream,
+        writer: ConnectionWriter,
     },
     /// 连接已断开（主机卸载、出错，或槽位不再被导出）。
     Released { slot: SlotId, connection: ConnectionId },
@@ -276,7 +279,10 @@ fn admit(
 fn import(mut stream: TcpStream, identity: SlotIdentity, connection: ConnectionId, shared: &Shared) -> io::Result<()> {
     stream.set_read_timeout(Some(EXPORT_CHECK_INTERVAL))?;
     let slot = identity.slot;
-    let writer = stream.try_clone()?;
+    if let Err(error) = raise_current_thread() {
+        tracing::warn!(%error, %slot, "cannot raise the USB/IP reader thread priority");
+    }
+    let (writer, abandoned) = ConnectionWriter::spawn(stream.try_clone()?, connection.0)?;
     send(
         shared,
         ServerEvent::Imported {
@@ -290,6 +296,10 @@ fn import(mut stream: TcpStream, identity: SlotIdentity, connection: ConnectionI
     let mut decoder = UrbDecoder::new();
     let mut chunk = vec![0u8; READ_CHUNK];
     loop {
+        // Windows 上 shutdown 不保证唤醒阻塞中的 recv（见 EXPORT_CHECK_INTERVAL），所以每次读之前都查
+        if abandoned.load(Ordering::Relaxed) {
+            return Ok(());
+        }
         let read = match stream.read(&mut chunk) {
             Ok(0) => return Ok(()),
             Ok(read) => read,

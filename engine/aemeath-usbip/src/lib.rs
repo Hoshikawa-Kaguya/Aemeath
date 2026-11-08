@@ -8,6 +8,7 @@
 //! - [`function`]：控制请求处理与流格式。
 //! - [`stream`]：流格式与等时包的节拍。
 //! - [`server`]：TCP 服务端，把 URB 以事件交给引擎。
+//! - [`writer`]：连接的写线程，让调度线程不必等 socket。
 
 pub mod descriptors;
 pub mod function;
@@ -15,3 +16,4 @@ pub mod identity;
 pub mod server;
 pub mod stream;
 pub mod wire;
+pub mod writer;

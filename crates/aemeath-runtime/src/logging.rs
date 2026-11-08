@@ -41,7 +41,8 @@ impl Process {
 
 /// 持有到进程结束：析构时把尚未写出的日志刷到文件。
 pub struct LogGuard {
-    _worker: WorkerGuard,
+    _file: WorkerGuard,
+    _console: WorkerGuard,
 }
 
 /// 初始化日志，写到 `data_dir` 下的 [`LOG_FOLDER`]。重复初始化（例如测试中）时只建立文件写入器，不替换已有的全局订阅者。
@@ -58,14 +59,20 @@ pub fn init(data_dir: &Path, process: Process) -> io::Result<LogGuard> {
         .map_err(io::Error::other)?;
     let (writer, worker) = tracing_appender::non_blocking(appender);
     let file_layer = tracing_subscriber::fmt::layer().with_writer(writer).with_ansi(false);
-    let console_layer = tracing_subscriber::fmt::layer().with_writer(io::stderr);
+    // 实时线程也写日志，而终端或管道可能卡住几百毫秒（2026-11-08 实测调度线程因此停了 187 ms、285 ms），
+    // 所以控制台和文件一样交给后台线程，写不过来时丢弃
+    let (console_writer, console_worker) = tracing_appender::non_blocking(io::stderr());
+    let console_layer = tracing_subscriber::fmt::layer().with_writer(console_writer);
     let _ = tracing_subscriber::registry()
         .with(LevelFilter::INFO)
         .with(file_layer)
         .with(console_layer)
         .try_init();
     install_panic_hook(&log_dir.join(format!("{}.{PANIC_LOG_SUFFIX}", process.file_prefix())));
-    Ok(LogGuard { _worker: worker })
+    Ok(LogGuard {
+        _file: worker,
+        _console: console_worker,
+    })
 }
 
 /// panic 时先同步写一份到 `<进程>.panic.log`，再交给 tracing（发布构建 `panic = "abort"`，随后进程中止，由守护进程拉起）。

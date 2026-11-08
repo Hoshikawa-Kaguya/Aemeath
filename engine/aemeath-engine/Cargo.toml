@@ -13,7 +13,6 @@ aemeath-io = { workspace = true }
 aemeath-protocol = { workspace = true }
 aemeath-sys = { workspace = true }
 aemeath-usbip = { workspace = true }
-audio_thread_priority = { workspace = true }
 rtrb = { workspace = true }
 tracing = { workspace = true }
 

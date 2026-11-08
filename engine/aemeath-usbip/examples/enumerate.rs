@@ -7,7 +7,6 @@
 //! 挂载与卸下另用 `usbip.exe` 完成。
 
 use std::collections::{BTreeSet, HashMap};
-use std::io::Write;
 use std::process::ExitCode;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -80,8 +79,8 @@ fn main() -> ExitCode {
                 writers.remove(&connection);
             }
             ServerEvent::Reply { connection, bytes } => {
-                if let Some(writer) = writers.get_mut(&connection) {
-                    let _ = writer.write_all(&bytes);
+                if let Some(writer) = writers.get(&connection) {
+                    let _ = writer.send(bytes, None);
                 }
             }
             ServerEvent::StreamChanged { slot, change, .. } => println!("{slot}: {change:?}"),
