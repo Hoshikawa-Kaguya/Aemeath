@@ -376,10 +376,14 @@ function onNodeDragStart(event: NodeDragEvent): void {
   dragging.value = Number(event.node.id)
 }
 
-function onNodeDragStop(event: NodeDragEvent): void {
-  dragging.value = null
+async function onNodeDragStop(event: NodeDragEvent): Promise<void> {
+  const id = Number(event.node.id)
   const { x, y } = event.node.position
-  void store.run(() => backend.moveNode(Number(event.node.id), Math.round(x), Math.round(y)))
+  await store.run(() => backend.moveNode(id, Math.round(x), Math.round(y)))
+  // 等后端返回新坐标再松手，否则节点会先退回旧坐标闪一下；等待期间又开始拖动时不能松手
+  if (dragging.value === id && findNode(event.node.id)?.dragging !== true) {
+    dragging.value = null
+  }
 }
 
 function addNode(): void {
