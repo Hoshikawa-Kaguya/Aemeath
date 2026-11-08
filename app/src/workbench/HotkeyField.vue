@@ -1,13 +1,14 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { backend } from '@/api/backend'
-import type { HotkeyBindingView, HotkeyModeView, HotkeyTargetView, HotkeyView } from '@/api/types'
+import type { CaptureView, HotkeyBindingView, HotkeyModeView, HotkeyTargetView, HotkeyView } from '@/api/types'
 import { useAppStore } from '@/stores/app'
-import { formatHotkey } from './hotkeyLabels'
+import { captureFromKey, captureFromPointer, formatHotkey } from './hotkeyLabels'
 
 // 一个热键的编辑控件（M3 计划 H7、H12）：节点设置、连线的"热键…"对话框和热键页共用，改的是同一份数据。
-// 录入由后端的低级钩子捕获，WebView 收不到 Win 组合键和鼠标侧键。Esc 取消，Backspace 清除。
+// 录入有两条路，先到的算数：后端的低级钩子（窗口没有焦点时、Win 组合键），界面自己的键鼠事件（窗口有焦点时钩子收不到按键）。
+// Esc 取消，Backspace 清除，点别处也取消。
 const props = defineProps<{
   target: HotkeyTargetView
   binding: HotkeyBindingView | null
@@ -36,8 +37,40 @@ function modeFor(key: HotkeyView, wanted: HotkeyModeView): HotkeyModeView {
   return bare && wanted === 'toggle' && !props.toggleOnly ? 'hold' : wanted
 }
 
+function finish(result: CaptureView): void {
+  backend.finishHotkeyCapture(result).catch((error: unknown) => store.showToast(store.errorText(error)))
+}
+
+// 在捕获阶段拦下：Esc 不能关掉对话框，Delete 不能删掉选中的节点
+function onCaptureKey(event: KeyboardEvent): void {
+  event.preventDefault()
+  event.stopPropagation()
+  const result = captureFromKey(event)
+  if (result !== null) {
+    finish(result)
+  }
+}
+
+function onCapturePointer(event: PointerEvent): void {
+  finish(captureFromPointer(event))
+}
+
+function removeListeners(): void {
+  window.removeEventListener('keydown', onCaptureKey, true)
+  window.removeEventListener('pointerdown', onCapturePointer, true)
+}
+
+onBeforeUnmount(() => {
+  if (capturing.value) {
+    finish({ type: 'cancelled' })
+    removeListeners()
+  }
+})
+
 async function capture(): Promise<void> {
   capturing.value = true
+  window.addEventListener('keydown', onCaptureKey, true)
+  window.addEventListener('pointerdown', onCapturePointer, true)
   try {
     const result = await backend.captureHotkey()
     if (result.type === 'captured') {
@@ -48,6 +81,7 @@ async function capture(): Promise<void> {
   } catch (error) {
     store.showToast(store.errorText(error))
   } finally {
+    removeListeners()
     capturing.value = false
   }
 }
@@ -114,9 +148,10 @@ function setMode(event: Event): void {
   color: var(--accent-text);
 }
 
-.mode {
+/* 对话框里的 .field .select 是 100% 宽，这里要按内容自适应，否则会撑出水平滚动条 */
+.hotkey-field .mode {
   flex: none;
-  width: 110px;
+  width: auto;
 }
 
 .clear {

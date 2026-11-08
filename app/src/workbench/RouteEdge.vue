@@ -297,6 +297,11 @@ onBeforeUnmount(() => release?.())
   color: var(--text-3);
 }
 
+/* 重复路由只警告：描边标出，不改变开关的颜色 */
+.wire-label.duplicate {
+  border-color: var(--warn);
+}
+
 .wire-label.sel {
   outline: 2px solid var(--accent);
   outline-offset: 1px;

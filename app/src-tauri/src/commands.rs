@@ -227,6 +227,12 @@ pub async fn capture_hotkey(controller: State<'_, ControllerHandle>) -> Reply<Ca
     controller.capture_hotkey().await
 }
 
+/// 由界面结束录入：窗口有焦点时界面自己收到了按键，或者用户放弃了录入。
+#[tauri::command]
+pub fn finish_hotkey_capture(controller: State<'_, ControllerHandle>, result: CaptureView) {
+    controller.finish_hotkey_capture(result.into());
+}
+
 /// 打开或解除紧急静音。
 #[tauri::command]
 pub async fn set_panic_mute(controller: State<'_, ControllerHandle>, active: bool) -> Reply<ViewState> {

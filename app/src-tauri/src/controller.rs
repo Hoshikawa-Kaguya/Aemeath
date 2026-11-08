@@ -313,6 +313,7 @@ enum Request {
     },
     MatrixVerdicts(oneshot::Sender<Vec<PairVerdict>>),
     CaptureHotkey(oneshot::Sender<Result<oneshot::Receiver<CaptureResult>, CommandError>>),
+    FinishCapture(CaptureResult),
     LandingCount {
         node: NodeId,
         reply: oneshot::Sender<usize>,
@@ -467,6 +468,11 @@ impl ControllerHandle {
             reply,
         })
         .await?
+    }
+
+    /// 由界面结束录入：收到了按键，或者用户放弃了录入。
+    pub fn finish_hotkey_capture(&self, result: CaptureResult) {
+        let _ = self.requests.send(Request::FinishCapture(result));
     }
 
     /// 录入下一个按键组合。
@@ -757,6 +763,11 @@ impl Controller {
                 } else {
                     self.stop_recording(node)
                 });
+            }
+            Request::FinishCapture(result) => {
+                if let Some(service) = &self.hotkeys {
+                    service.finish_capture(result);
+                }
             }
             Request::CaptureHotkey(reply) => {
                 let result = match &self.hotkeys {

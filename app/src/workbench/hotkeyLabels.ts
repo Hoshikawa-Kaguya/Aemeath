@@ -1,6 +1,6 @@
 // 热键的显示文字（热键页、节点设置、连线的"热键…"对话框共用）。
 
-import type { HotkeyTargetView, HotkeyView, NodeView } from '@/api/types'
+import type { CaptureView, HotkeyTargetView, HotkeyView, ModifiersView, NodeView } from '@/api/types'
 import { i18n } from '@/i18n'
 import { nodeCode } from '@/stores/nodeLabels'
 
@@ -13,6 +13,10 @@ const VK_9 = 0x39
 const VK_A = 0x41
 const VK_Z = 0x5a
 const HEX = 16
+const KEYCODE_IME = 229
+const BUTTON_X1 = 3
+const BUTTON_X2 = 4
+const MODIFIER_KEYS = ['Control', 'Alt', 'Shift', 'Meta']
 
 const NAMED_KEYS: Record<number, string> = {
   0x09: 'Tab',
@@ -91,6 +95,44 @@ export function formatHotkey(hotkey: HotkeyView): string {
       break
   }
   return parts.join(' + ')
+}
+
+function modifiersOf(event: KeyboardEvent | PointerEvent): ModifiersView {
+  return { ctrl: event.ctrlKey, alt: event.altKey, shift: event.shiftKey, win: event.metaKey }
+}
+
+/** Windows 上 keyCode 就是虚拟键码；输入法组字时它是 229，字母和数字改从 code 推出来 */
+function virtualKey(event: KeyboardEvent): number | null {
+  if (event.keyCode !== KEYCODE_IME) {
+    return event.keyCode
+  }
+  const match = /^(?:Key|Digit)(.)$/.exec(event.code)
+  return match === null ? null : (match[1] ?? '').charCodeAt(0)
+}
+
+/** 窗口有焦点时收到的按键；单独的修饰键还不算录入完成（返回 null） */
+export function captureFromKey(event: KeyboardEvent): CaptureView | null {
+  if (MODIFIER_KEYS.includes(event.key)) {
+    return null
+  }
+  if (event.key === 'Escape') {
+    return { type: 'cancelled' }
+  }
+  if (event.key === 'Backspace') {
+    return { type: 'cleared' }
+  }
+  const vk = virtualKey(event)
+  return vk === null
+    ? null
+    : { type: 'captured', key: { modifiers: modifiersOf(event), key: { type: 'keyboard', vk } } }
+}
+
+/** 鼠标侧键录成热键，其他按键表示点了别处，取消录入 */
+export function captureFromPointer(event: PointerEvent): CaptureView {
+  const key = event.button === BUTTON_X1 ? 'mouseX1' : event.button === BUTTON_X2 ? 'mouseX2' : null
+  return key === null
+    ? { type: 'cancelled' }
+    : { type: 'captured', key: { modifiers: modifiersOf(event), key: { type: key } } }
 }
 
 /** 热键作用的对象，例如"A1 Rear Mic · 静音""IN1 → OUT2 · 开关" */

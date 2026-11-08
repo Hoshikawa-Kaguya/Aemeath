@@ -102,6 +102,7 @@ fn main() -> ExitCode {
             commands::landing_count,
             commands::set_hotkey,
             commands::capture_hotkey,
+            commands::finish_hotkey_capture,
             commands::set_panic_mute,
             commands::start_recording,
             commands::stop_recording,

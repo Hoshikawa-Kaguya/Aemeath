@@ -243,6 +243,15 @@ impl HotkeyService {
         }
         result
     }
+
+    /// 由界面结束录入（窗口有焦点时界面自己收到了按键，或者用户放弃了录入）。录入已经结束时什么也不做。
+    pub fn finish_capture(&self, result: CaptureResult) {
+        let mut shared = self.shared.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(reply) = shared.matcher.capture.take() {
+            let _ = reply.send(result);
+            apply(&mut shared, &self.input);
+        }
+    }
 }
 
 fn release_all(shared: &mut Shared, input: &InputThread) {

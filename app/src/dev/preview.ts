@@ -113,6 +113,7 @@ const nodes: NodeView[] = [
   node({
     id: 7,
     name: 'Google Chrome',
+    duplicate: { program: 'Google Chrome', destination: '监听音箱' },
     kind: 'appSource',
     program: { path: 'C:\\Program Files\\Google\\Chrome\\chrome.exe', fileName: 'chrome.exe' },
     x: 40,
@@ -148,7 +149,15 @@ let state: ViewState = {
   nodes,
   routes: [
     { from: 1, to: 3, gainDb: -3, enabled: true, labelPosition: 0.5, duplicate: null, toggleHotkey: null },
-    { from: 2, to: 4, gainDb: 0, enabled: true, labelPosition: 0.5, duplicate: null, toggleHotkey: null },
+    {
+      from: 2,
+      to: 4,
+      gainDb: 0,
+      enabled: true,
+      labelPosition: 0.5,
+      duplicate: { program: 'Google Chrome', destination: '监听音箱' },
+      toggleHotkey: null,
+    },
     { from: 1, to: 4, gainDb: -6, enabled: false, labelPosition: 0.35, duplicate: null, toggleHotkey: null },
   ],
   console: [1, 2, 7, 6, 10, 3, 11],
@@ -184,6 +193,7 @@ let state: ViewState = {
   slots: [],
 }
 const undoStack: ViewState[] = []
+let finishCapture: ((result: unknown) => void) | null = null
 
 function slotsOf(current: ViewState): SlotView[] {
   const rows: SlotView[] = []
@@ -384,10 +394,20 @@ mockIPC(
         return null
       case 'landing_count':
         return 0
-      case 'set_hotkey':
-        return state
+      case 'set_hotkey': {
+        const target = args.target as { type: string; node?: number }
+        return target.type === 'nodeMute'
+          ? updateNode({ node: target.node }, { muteHotkey: args.binding as NodeView['muteHotkey'] }, false)
+          : state
+      }
       case 'capture_hotkey':
-        return { type: 'cancelled' }
+        return new Promise((resolve) => {
+          finishCapture = resolve
+        })
+      case 'finish_hotkey_capture':
+        finishCapture?.(args.result)
+        finishCapture = null
+        return null
       case 'set_panic_mute':
         return commit({ ...state, panicMute: args.active as boolean }, false)
       case 'start_recording':

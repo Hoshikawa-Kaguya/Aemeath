@@ -51,6 +51,7 @@ export const backend = {
   setHotkey: (target: HotkeyTargetView, binding: HotkeyBindingView | null) =>
     invoke<ViewState>('set_hotkey', { target, binding }),
   captureHotkey: () => invoke<CaptureView>('capture_hotkey'),
+  finishHotkeyCapture: (result: CaptureView) => invoke<void>('finish_hotkey_capture', { result }),
   setPanicMute: (active: boolean) => invoke<ViewState>('set_panic_mute', { active }),
   startRecording: (node: number) => invoke<void>('start_recording', { node }),
   stopRecording: (node: number) => invoke<void>('stop_recording', { node }),
