@@ -375,7 +375,8 @@ function isHot(node: NodeView, axis: 'from' | 'to'): boolean {
 .matrix-pane {
   display: flex;
   flex-direction: column;
-  min-width: 300px;
+  /* 放得下图例里最长的一项（中文操作提示约 293 px，加左右内边距），不让它折行 */
+  min-width: 340px;
   min-height: 0;
 }
 

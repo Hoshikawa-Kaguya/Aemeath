@@ -54,7 +54,7 @@ pub fn duplicate_routes(workspace: &Workspace, landings: &[(NodeId, NodeId)]) ->
         .filter(|route| route.enabled)
         .map(|route| (route.from, route.to))
         .collect();
-    let mut found = Vec::new();
+    let mut found: Vec<DuplicateRoute> = Vec::new();
     for &(source, landing) in landings {
         let Some(landing_node) = workspace.node(landing) else {
             continue;
@@ -78,11 +78,18 @@ pub fn duplicate_routes(workspace: &Workspace, landings: &[(NodeId, NodeId)]) ->
             let mut routes = BTreeSet::new();
             path_routes(&edges, source, destination, &mut routes);
             path_routes(&edges, landing, destination, &mut routes);
-            found.push(DuplicateRoute {
-                source,
-                destination,
-                routes,
-            });
+            // 一个程序常有多个音频会话，`landings` 里会有多条：同一处重复只报告一次，连线合并
+            match found
+                .iter_mut()
+                .find(|own| own.source == source && own.destination == destination)
+            {
+                Some(existing) => existing.routes.extend(routes),
+                None => found.push(DuplicateRoute {
+                    source,
+                    destination,
+                    routes,
+                }),
+            }
         }
     }
     found
@@ -152,6 +159,34 @@ mod tests {
         assert_eq!(
             found[0].routes,
             BTreeSet::from([(source, bus), (landing, bus), (bus, destination)])
+        );
+    }
+
+    #[test]
+    fn several_sessions_of_one_program_report_one_duplicate_with_all_routes() {
+        let Fixture {
+            mut workspace,
+            source,
+            landing,
+            destination,
+            ..
+        } = fixture();
+        let second_landing = add(&mut workspace, NodeSpec::VirtualInput(None));
+        workspace.connect(source, destination).unwrap();
+        workspace.connect(landing, destination).unwrap();
+        workspace.connect(second_landing, destination).unwrap();
+        let found = duplicate_routes(
+            &workspace,
+            &[(source, landing), (source, landing), (source, second_landing)],
+        );
+        assert_eq!(found.len(), 1);
+        assert_eq!(
+            found[0].routes,
+            BTreeSet::from([
+                (source, destination),
+                (landing, destination),
+                (second_landing, destination)
+            ])
         );
     }
 

@@ -158,6 +158,7 @@ export const useAppStore = defineStore('app', () => {
         return
       }
     }
+    showToast(i18n.global.t('toast.nodeDeleting'))
     if (await run(() => backend.removeNode(node.id))) {
       showToast(i18n.global.t('toast.nodeDeleted', { name: node.name }), true)
     }

@@ -45,6 +45,7 @@
     "system": "System sounds",
     "systemHint": "System sounds always follow the default device.",
     "restart": "Restart the app for this to take effect",
+    "assigning": "Assigning…",
     "unknownDevice": "Another device",
     "empty": "No app is playing sound right now.",
     "unavailable": "Can't read the apps' audio sessions.",
@@ -130,6 +131,7 @@
   },
   "toast": {
     "routeDeleted": "Route deleted: {src} → {dst}",
+    "nodeDeleting": "Deleting…",
     "nodeDeleted": "Node deleted: {name}",
     "deviceReplaced": "{node} now uses the newly connected device with the same name: {device}",
     "undo": "Undo",

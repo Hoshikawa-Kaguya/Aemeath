@@ -532,6 +532,14 @@ onBeforeUnmount(() => {
         </fluent-button>
         <span class="caption zoom">{{ t('wb.zoom', { percent: Math.round(viewport.zoom * PERCENT) }) }}</span>
       </div>
+      <ul v-if="store.state?.duplicates.length" class="duplicates" role="status">
+        <li v-for="duplicate in store.state.duplicates" :key="`${duplicate.program}-${duplicate.destination}`">
+          <AppIcon name="warn" />
+          <span class="ellipsis" :title="t('node.duplicate', { ...duplicate })">
+            {{ t('node.duplicate', { ...duplicate }) }}
+          </span>
+        </li>
+      </ul>
       <div ref="pane" class="graph" :style="gridStyle">
         <VueFlow
           :nodes="flowNodes"
@@ -659,6 +667,33 @@ onBeforeUnmount(() => {
   flex: none;
   min-width: 40px;
   text-align: right;
+}
+
+/* 重复路由的文字警告：占自己的一行，不盖住节点；多条时最多显示三行，其余滚动 */
+.duplicates {
+  flex: none;
+  max-height: 88px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px 16px;
+  list-style: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+  font-size: var(--fontSizeBase200);
+}
+
+.duplicates li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+}
+
+.duplicates svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--warn);
 }
 
 .graph {

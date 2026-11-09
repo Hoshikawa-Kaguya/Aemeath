@@ -38,6 +38,8 @@ pub struct ViewState {
     pub slots: Vec<SlotView>,
     /// 最近的一次性提示（按编号递增），界面只显示没见过的
     pub notices: Vec<NoticeView>,
+    /// 当前全部的重复路由（工作台上的文字警告）
+    pub duplicates: Vec<DuplicateView>,
 }
 
 /// 后端主动给出的一次性提示。

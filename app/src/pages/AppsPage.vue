@@ -21,17 +21,27 @@ const { t } = useI18n()
 const store = useAppStore()
 const view = ref<AppsView | null>(null)
 const failed = ref(false)
+/** 刚指派、还在等会话转移的进程及选中的值：下拉框立即显示新值，这段时间不提示"重启后生效"，也不用轮询结果覆盖 */
+const settling = ref(new Map<number, string>())
 
-async function refresh(): Promise<void> {
+/** `settled` 是等待结束的进程：拿到新列表后才解除，否则下拉框会先退回旧值 */
+async function refresh(settled?: number): Promise<void> {
+  let next: AppsView | null = null
   try {
-    view.value = await backend.listApps()
+    next = await backend.listApps()
     failed.value = false
   } catch {
     failed.value = true
   }
+  if (settled !== undefined) {
+    settling.value.delete(settled)
+  }
+  if (next !== null && settling.value.size === 0) {
+    view.value = next
+  }
 }
 
-usePolling(refresh, REFRESH_MS)
+usePolling(() => refresh(), REFRESH_MS)
 
 const virtualInputs = computed(() => view.value?.choices.filter((choice) => choice.kind === 'virtualInput') ?? [])
 const outputs = computed(() => view.value?.choices.filter((choice) => choice.kind === 'externalOutput') ?? [])
@@ -47,6 +57,10 @@ function landingName(app: AppView): string {
 
 /** 下拉框显示的值：Aemeath 记录的指派优先，否则是实际落点（不在候选里时为"跟随系统默认"） */
 function selectedOf(app: AppView): string {
+  const chosen = settling.value.get(app.processId)
+  if (chosen !== undefined) {
+    return chosen
+  }
   if (app.assigned !== null) {
     return app.assigned
   }
@@ -56,7 +70,7 @@ function selectedOf(app: AppView): string {
 
 /** 指派了，但会话还在原来的端点上：多半是程序启动时就选定了设备 */
 function needsRestart(app: AppView): boolean {
-  return app.assigned !== null && app.assigned !== app.landing
+  return !settling.value.has(app.processId) && app.assigned !== null && app.assigned !== app.landing
 }
 
 function optionLabel(choice: LandingChoice): string {
@@ -67,12 +81,14 @@ function optionLabel(choice: LandingChoice): string {
 
 async function choose(app: AppView, event: Event): Promise<void> {
   const value = (event.target as HTMLSelectElement).value
+  const processId = app.processId
+  settling.value.set(processId, value)
   try {
-    await backend.setLanding(app.processId, app.executable, value === FOLLOW_SYSTEM ? null : value)
+    await backend.setLanding(processId, app.executable, value === FOLLOW_SYSTEM ? null : value)
   } catch (error) {
     store.showToast(store.errorText(error))
   }
-  window.setTimeout(() => void refresh(), SETTLE_MS)
+  window.setTimeout(() => void refresh(processId), SETTLE_MS)
 }
 
 /** 添加为应用源：放在工作台左上角，用户再拖到合适的位置 */
@@ -126,7 +142,7 @@ async function addSource(app: AppView): Promise<void> {
             <select
               class="select"
               :value="selectedOf(app)"
-              :disabled="app.system"
+              :disabled="app.system || settling.has(app.processId)"
               :aria-label="t('apps.landingAria', { app: app.system ? t('apps.system') : app.name })"
               @change="choose(app, $event)"
             >
@@ -148,6 +164,7 @@ async function addSource(app: AppView): Promise<void> {
               </optgroup>
             </select>
             <span v-if="app.system" class="caption">{{ t('apps.systemHint') }}</span>
+            <span v-else-if="settling.has(app.processId)" class="caption" role="status">{{ t('apps.assigning') }}</span>
             <span v-else-if="needsRestart(app)" class="caption warn">
               <AppIcon name="warn" />{{ t('apps.restart') }}
             </span>

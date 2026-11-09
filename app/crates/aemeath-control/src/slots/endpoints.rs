@@ -59,6 +59,7 @@ type Reply<T> = oneshot::Sender<Result<T, ProbeError>>;
 
 enum Request {
     Snapshot(Reply<BTreeMap<SlotId, SlotEndpoint>>),
+    SlotEndpoints(Reply<BTreeMap<SlotId, SlotEndpoint>>),
     ExternalDevices {
         flow: AudioFlow,
         reply: Reply<Vec<ExternalDevice>>,
@@ -94,6 +95,14 @@ impl EndpointProbe {
     pub async fn snapshot(&self) -> Result<BTreeMap<SlotId, SlotEndpoint>, ProbeError> {
         let (reply, wait) = oneshot::channel();
         self.send(Request::Snapshot(reply))?;
+        wait.await.map_err(|_| stopped())?
+    }
+
+    /// 同 [`Self::snapshot`]，但不读设备格式（`format` 都是 None）。
+    /// 只需要端点 ID 和名字时用它：没读过格式的离线槽位，每个要等 90–170 ms 才失败（实测），全部读一遍超过 1 s。
+    pub async fn slot_endpoints(&self) -> Result<BTreeMap<SlotId, SlotEndpoint>, ProbeError> {
+        let (reply, wait) = oneshot::channel();
+        self.send(Request::SlotEndpoints(reply))?;
         wait.await.map_err(|_| stopped())?
     }
 
@@ -173,6 +182,9 @@ fn worker(
         for request in batch {
             match request {
                 Request::Snapshot(reply) => snapshot_replies.push(reply),
+                Request::SlotEndpoints(reply) => {
+                    let _ = reply.send(worker.slot_endpoints());
+                }
                 Request::ExternalDevices { flow, reply } => {
                     let _ = reply.send(worker.external_devices(flow));
                 }
@@ -197,6 +209,14 @@ fn worker(
 
 impl Worker {
     fn snapshot(&self) -> Result<BTreeMap<SlotId, SlotEndpoint>, ProbeError> {
+        let mut result = self.slot_endpoints()?;
+        for endpoint in result.values_mut() {
+            endpoint.format = self.policy.device_format(&endpoint.id).ok();
+        }
+        Ok(result)
+    }
+
+    fn slot_endpoints(&self) -> Result<BTreeMap<SlotId, SlotEndpoint>, ProbeError> {
         let render = self.endpoints.list(AudioFlow::Render)?;
         let capture = self.endpoints.list(AudioFlow::Capture)?;
         let mut result = BTreeMap::new();
@@ -206,14 +226,13 @@ impl Worker {
                 SlotDirection::Out => &capture,
             };
             if let Some(info) = pick(candidates, &identity.product_name) {
-                let format = self.policy.device_format(&info.id).ok();
                 result.insert(
                     identity.slot,
                     SlotEndpoint {
                         id: info.id.clone(),
                         name: info.name.clone(),
                         state: info.state,
-                        format,
+                        format: None,
                     },
                 );
             }

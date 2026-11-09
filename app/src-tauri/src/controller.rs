@@ -35,7 +35,7 @@ use aemeath_sys::policy_config::DefaultRole;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::{mpsc, oneshot};
-use tokio::time::Instant;
+use tokio::time::{Instant, MissedTickBehavior};
 use tracing::{error, info, warn};
 
 use crate::apps::{self, AppsView};
@@ -323,11 +323,11 @@ enum Request {
         reply: oneshot::Sender<Result<(), CommandError>>,
     },
     Apps(oneshot::Sender<Result<AppsView, CommandError>>),
-    SetLanding {
-        process_id: u32,
-        executable: Option<String>,
+    /// 执行指派用的句柄（系统调用可能很慢，在 actor 之外等待，不阻塞其他请求）
+    LandingPolicy(oneshot::Sender<Option<AudioPolicy>>),
+    RecordLanding {
+        executable: String,
         endpoint_id: Option<String>,
-        reply: oneshot::Sender<Result<(), CommandError>>,
     },
     DefaultDevices(oneshot::Sender<Result<DefaultDevicesView, CommandError>>),
     SetDefaultDevice {
@@ -423,13 +423,23 @@ impl ControllerHandle {
         executable: Option<String>,
         endpoint_id: Option<String>,
     ) -> Result<(), CommandError> {
-        self.ask(|reply| Request::SetLanding {
-            process_id,
-            executable,
-            endpoint_id,
-            reply,
-        })
-        .await?
+        let policy = self
+            .ask(Request::LandingPolicy)
+            .await?
+            .ok_or(CommandError::Unavailable)?;
+        policy
+            .set_landing(process_id, endpoint_id.clone())
+            .await
+            .map_err(failed)?;
+        if let Some(executable) = executable {
+            self.requests
+                .send(Request::RecordLanding {
+                    executable,
+                    endpoint_id,
+                })
+                .map_err(|_| CommandError::Unavailable)?;
+        }
+        Ok(())
     }
 
     /// 工具页：两个方向的活动端点及 Windows 默认设备。
@@ -519,6 +529,8 @@ struct Controller {
     probe: Option<EndpointProbe>,
     /// 应用会话、按应用指派与 Windows 默认设备；启动失败时应用页和工具页不可用
     policy: Option<AudioPolicy>,
+    /// 用户在应用页的指派走单独的线程：策略线程按顺序处理请求，指派慢时不能拖住会话轮询
+    landing_policy: Option<AudioPolicy>,
     usbip_version: Option<String>,
     engine_state: EngineState,
     endpoint_status: HashMap<NodeId, EndpointStatus>,
@@ -529,6 +541,7 @@ struct Controller {
     /// 触发一次按名称的后备匹配（端点增减时、节点报告"等待设备"时）
     rematch_trigger: mpsc::UnboundedSender<()>,
     rematch_events: mpsc::UnboundedReceiver<()>,
+    rematch_at: Option<Instant>,
     /// 找到多个同名候选、等用户选择的节点
     candidates: HashMap<NodeId, Vec<ExternalDevice>>,
     /// 最近一次轮询到的音频会话
@@ -645,6 +658,11 @@ impl Controller {
         let hotkeys = HotkeyService::start(hotkey_tx)
             .inspect_err(|error| warn!(%error, "the hotkey service cannot start"))
             .ok();
+        let start_policy = || {
+            AudioPolicy::start()
+                .inspect_err(|error| warn!(%error, "the audio policy service cannot start"))
+                .ok()
+        };
         let mut controller = Self {
             config,
             store,
@@ -655,9 +673,8 @@ impl Controller {
             maintainer,
             slot_events,
             probe: Some(probe),
-            policy: AudioPolicy::start()
-                .inspect_err(|error| warn!(%error, "the audio policy service cannot start"))
-                .ok(),
+            policy: start_policy(),
+            landing_policy: start_policy(),
             usbip_version,
             engine_state: EngineState::Connecting,
             endpoint_status: HashMap::new(),
@@ -667,6 +684,7 @@ impl Controller {
             last_topology: None,
             rematch_trigger,
             rematch_events,
+            rematch_at: None,
             candidates: HashMap::new(),
             sessions: Vec::new(),
             known_sessions: HashSet::new(),
@@ -690,8 +708,11 @@ impl Controller {
         let mut resume_probe = tokio::time::interval(RESUME_PROBE_INTERVAL);
         let mut last_probe = SystemTime::now();
         let mut session_poll = tokio::time::interval(SESSION_POLL_INTERVAL);
+        // 默认的 Burst 会在 actor 忙过之后连续补跑错过的轮询，让界面的请求继续排队
+        session_poll.set_missed_tick_behavior(MissedTickBehavior::Delay);
         loop {
             let emit_at = self.emit_at;
+            let rematch_at = self.rematch_at;
             tokio::select! {
                 request = requests.recv() => {
                     let Some(request) = request else {
@@ -702,9 +723,12 @@ impl Controller {
                 Some(event) = self.client_events.recv() => self.on_engine_event(event),
                 Some(status) = self.slot_events.recv() => self.on_slot_status(status),
                 Some(()) = self.rematch_events.recv() => {
-                    // 端点变化往往成批到达（一台设备有多个端点）：合并成一次匹配
-                    tokio::time::sleep(REMATCH_SETTLE).await;
-                    while self.rematch_events.try_recv().is_ok() {}
+                    // 端点变化往往成批到达（一台设备有多个端点）：合并成一次匹配。
+                    // 用定时分支等待，不能在这里 sleep，否则这段时间界面的请求全都要排队
+                    self.rematch_at.get_or_insert_with(|| Instant::now() + REMATCH_SETTLE);
+                }
+                () = sleep_until(rematch_at), if rematch_at.is_some() => {
+                    self.rematch_at = None;
                     self.rematch().await;
                 }
                 _ = session_poll.tick() => self.poll_sessions().await,
@@ -782,14 +806,13 @@ impl Controller {
             Request::Apps(reply) => {
                 let _ = reply.send(self.apps().await);
             }
-            Request::SetLanding {
-                process_id,
+            Request::LandingPolicy(reply) => {
+                let _ = reply.send(self.landing_policy.clone());
+            }
+            Request::RecordLanding {
                 executable,
                 endpoint_id,
-                reply,
-            } => {
-                let _ = reply.send(self.set_landing(process_id, executable, endpoint_id).await);
-            }
+            } => self.record_landing(executable, endpoint_id),
             Request::DefaultDevices(reply) => {
                 let _ = reply.send(self.default_devices().await);
             }
@@ -1318,7 +1341,7 @@ impl Controller {
             return Err(CommandError::Unavailable);
         };
         let sessions = policy.sessions().await.map_err(failed)?;
-        let slots = probe.snapshot().await.map_err(failed)?;
+        let slots = probe.slot_endpoints().await.map_err(failed)?;
         let outputs = probe.external_devices(AudioFlow::Render).await.map_err(failed)?;
         let all_render = policy.endpoints(AudioFlow::Render).await.map_err(failed)?;
         Ok(apps::build(
@@ -1331,33 +1354,18 @@ impl Controller {
         ))
     }
 
-    /// 指派落点并记录（选型报告 5.5 节：Aemeath 记录自己做过的指派，以便日后撤销）。
-    async fn set_landing(
-        &mut self,
-        process_id: u32,
-        executable: Option<String>,
-        endpoint_id: Option<String>,
-    ) -> Result<(), CommandError> {
-        let Some(policy) = &self.policy else {
-            return Err(CommandError::Unavailable);
-        };
-        policy
-            .set_landing(process_id, endpoint_id.clone())
-            .await
-            .map_err(failed)?;
-        if let Some(executable) = executable {
-            let landings = &mut self.config.preferences.app_landings;
-            match endpoint_id {
-                Some(endpoint) => {
-                    landings.insert(executable, LandingRecord::Endpoint(EndpointId(endpoint)));
-                }
-                None => {
-                    landings.remove(&executable);
-                }
+    /// 记录成功的指派（选型报告 5.5 节：Aemeath 记录自己做过的指派，以便日后撤销）。
+    fn record_landing(&mut self, executable: String, endpoint_id: Option<String>) {
+        let landings = &mut self.config.preferences.app_landings;
+        match endpoint_id {
+            Some(endpoint) => {
+                landings.insert(executable, LandingRecord::Endpoint(EndpointId(endpoint)));
             }
-            self.save();
+            None => {
+                landings.remove(&executable);
+            }
         }
-        Ok(())
+        self.save();
     }
 
     /// 拼出文件路径、确保文件夹存在，然后让引擎开始录音（M3 计划 R6）。
@@ -1389,7 +1397,7 @@ impl Controller {
                 let slot = *slot;
                 self.probe
                     .as_ref()?
-                    .snapshot()
+                    .slot_endpoints()
                     .await
                     .ok()?
                     .get(&slot)
@@ -1447,33 +1455,27 @@ impl Controller {
         let Ok(sessions) = policy.sessions().await else {
             return;
         };
-        let mut changed = false;
-        for session in &sessions {
-            if !self.known_sessions.contains(&session.process_id) {
-                changed |= self.on_new_session(&policy, session).await;
-            }
-        }
-        self.known_sessions = sessions.iter().map(|session| session.process_id).collect();
-        let has_sources = self
-            .config
-            .workspace
-            .nodes()
-            .iter()
-            .any(|node| node.kind.program().is_some());
         let mut slot_endpoints = BTreeMap::new();
-        if has_sources && let Some(probe) = &self.probe {
+        if let Some(probe) = &self.probe {
             slot_endpoints = probe
-                .snapshot()
+                .slot_endpoints()
                 .await
                 .unwrap_or_default()
                 .into_iter()
                 .map(|(slot, endpoint)| (slot, endpoint.id))
                 .collect();
         }
-        let refreshed = slot_endpoints != self.slot_endpoints || sessions != self.sessions;
+        let mut changed = slot_endpoints != self.slot_endpoints || sessions != self.sessions;
+        // 先更新端点表：纠正落点的提示要靠它找到节点名
         self.slot_endpoints = slot_endpoints;
+        for session in &sessions {
+            if !self.known_sessions.contains(&session.process_id) {
+                changed |= self.on_new_session(&policy, session).await;
+            }
+        }
+        self.known_sessions = sessions.iter().map(|session| session.process_id).collect();
         self.sessions = sessions;
-        if changed || refreshed {
+        if changed {
             self.schedule_emit();
         }
     }
@@ -1688,6 +1690,10 @@ impl Controller {
             usbip_version: self.usbip_version.clone(),
             language: self.config.preferences.language.clone(),
             last_page: self.config.preferences.last_page.clone(),
+            duplicates: duplicates
+                .iter()
+                .map(|duplicate| self.duplicate_view(duplicate))
+                .collect(),
             nodes,
             routes,
             console: workspace.console().iter().map(|id| id.0).collect(),

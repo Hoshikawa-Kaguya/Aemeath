@@ -191,6 +191,7 @@ let state: ViewState = {
   recording: { folder: 'C:\\Users\\me\\Music\\Aemeath', defaults: { format: 'flac', depth: 'int24' } },
   notices: [],
   slots: [],
+  duplicates: [{ program: 'Google Chrome', destination: '监听音箱' }],
 }
 const undoStack: ViewState[] = []
 

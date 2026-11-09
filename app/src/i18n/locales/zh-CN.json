@@ -45,6 +45,7 @@
     "system": "系统声音",
     "systemHint": "系统声音总是跟随系统默认设备。",
     "restart": "重启该应用后生效",
+    "assigning": "正在指派…",
     "unknownDevice": "其他设备",
     "empty": "现在没有程序在出声。",
     "unavailable": "无法读取应用的音频会话。",
@@ -130,6 +131,7 @@
   },
   "toast": {
     "routeDeleted": "已删除连线：{src} → {dst}",
+    "nodeDeleting": "删除中…",
     "nodeDeleted": "已删除节点：{name}",
     "deviceReplaced": "{node} 已改用新接入的同名设备：{device}",
     "undo": "撤销",

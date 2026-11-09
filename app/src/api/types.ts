@@ -285,6 +285,7 @@ export interface ViewState {
   panicMute: boolean
   slots: SlotView[]
   notices: Notice[]
+  duplicates: DuplicateView[]
 }
 
 export type Rejection = 'selfRoute' | 'cannotSend' | 'cannotReceive' | 'duplicate' | 'loop'
