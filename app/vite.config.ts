@@ -2,8 +2,8 @@ import { fileURLToPath, URL } from 'node:url'
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
-// 端口与 src-tauri/tauri.conf.json 的 devUrl 一致；端口被占用时直接失败，而不是换端口让 Tauri 连错
-const DEV_PORT = 1420
+// 端口与 src-tauri/tauri.conf.json 的 devUrl 一致；端口被占用时直接失败
+const DEV_PORT = 21364
 
 export default defineConfig({
   plugins: [
