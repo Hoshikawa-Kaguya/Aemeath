@@ -7,6 +7,10 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+# 打包脚本打开，见 M4 计划 I5：开发构建永远使用开发身份
+production-identity = []
+
 [dependencies]
 aemeath-protocol = { workspace = true }
 aemeath-sys = { workspace = true }

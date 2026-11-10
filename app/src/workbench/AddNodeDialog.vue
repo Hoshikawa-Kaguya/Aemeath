@@ -4,15 +4,20 @@ import { useI18n } from 'vue-i18n'
 import { backend } from '@/api/backend'
 import {
   DEFAULT_DEVICE_SETTINGS,
+  DEFAULT_SLOT_SETTINGS,
   type DeviceChoice,
   type DeviceSettings,
   type NewNodeKind,
   type NodeView,
+  type Resampler,
+  type SlotSettings,
 } from '@/api/types'
 import { useAppStore } from '@/stores/app'
 import { slotName } from '@/stores/nodeLabels'
 import DeviceSettingsFields from './DeviceSettingsFields.vue'
 import { pickProgram } from './pickProgram'
+import ResamplerField from './ResamplerField.vue'
+import SlotSettingsFields from './SlotSettingsFields.vue'
 
 // "添加节点"对话框：选类型；外部设备再选设备，并在添加时就设定独占、格式、缓冲和重采样算法（ADR-0014，
 // 维护者要求避免添加后再调整）；名称默认取设备名或类型名，可以修改。
@@ -93,6 +98,10 @@ const device = computed(() => devices.value?.find((choice) => choice.endpointId 
 const programs = ref<ProgramChoice[]>([])
 const program = ref('')
 const programName = ref('')
+const appResampler = ref<Resampler | null>(null)
+const slotSettings = ref<SlotSettings>({ ...DEFAULT_SLOT_SETTINGS })
+/** 这种节点占用槽位：虚拟节点和外部插入的送出端 */
+const hasSlot = computed(() => kind.value === 'virtualInput' || kind.value === 'virtualOutput' || isInsert.value)
 const isAppSource = computed(() => kind.value === 'appSource')
 const canConfirm = computed(
   () =>
@@ -190,6 +199,8 @@ async function open(at: { x: number; y: number }): Promise<void> {
   position = at
   nameEdited.value = false
   io.value = { ...DEFAULT_DEVICE_SETTINGS }
+  appResampler.value = null
+  slotSettings.value = { ...DEFAULT_SLOT_SETTINGS }
   dialog.value?.show()
   await Promise.all([loadDevices(), loadPrograms()])
   suggestName()
@@ -212,13 +223,14 @@ async function confirm(): Promise<void> {
       newKind = { type: kind.value, endpointId: device.value.endpointId, deviceName: device.value.name }
       break
     case 'appSource':
-      newKind = { type: 'appSource', program: program.value }
+      newKind = { type: 'appSource', program: program.value, resampler: appResampler.value }
       break
     default:
       newKind = { type: kind.value }
   }
   const settings = isExternal.value ? io.value : null
-  if (await store.run(() => backend.addNode(newKind, name.value.trim(), position.x, position.y, settings))) {
+  const slot = hasSlot.value ? slotSettings.value : null
+  if (await store.run(() => backend.addNode(newKind, name.value.trim(), position.x, position.y, settings, slot))) {
     dialog.value?.hide()
     emit('added')
   }
@@ -269,6 +281,8 @@ defineExpose({ open })
           <span class="caption">{{ t('add.appSourceNote') }}</span>
         </div>
 
+        <ResamplerField v-if="isAppSource" v-model="appResampler" />
+
         <p v-if="isInsert" class="caption insert-send">
           {{ sendSlot === null ? t('error.noFreeSlot') : t('add.insertSend', { slot: slotName(sendSlot) }) }}
         </p>
@@ -279,6 +293,11 @@ defineExpose({ open })
           :endpoint-id="device.endpointId"
           :direction="direction"
         />
+
+        <template v-if="hasSlot">
+          <b v-if="isInsert">{{ t('slot.sendTitle') }}</b>
+          <SlotSettingsFields v-model="slotSettings" />
+        </template>
 
         <label class="field">
           <span>{{ t('add.name') }}</span>

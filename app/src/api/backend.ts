@@ -3,6 +3,7 @@
 import { Channel, invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type {
+  Appearance,
   AppsView,
   Capabilities,
   DefaultDevicesView,
@@ -14,20 +15,30 @@ import type {
   NewNodeKind,
   PairVerdict,
   RecorderSettingsView,
-  ResamplerKind,
+  Resampler,
   RouteVerdict,
+  SlotSettings,
+  UpdateView,
   ViewState,
 } from './types'
 
 const STATE_EVENT = 'state-changed'
+const UPDATE_EVENT = 'update-changed'
 
 export const backend = {
   getState: () => invoke<ViewState>('get_state'),
   /** 预设：只在工作台为空时生效 */
   applyPreset: (inputName: string, outputName: string) => invoke<ViewState>('apply_preset', { inputName, outputName }),
-  /** `io`：外部设备节点在添加时就设定的设备设置；null 表示默认值 */
-  addNode: (kind: NewNodeKind, name: string, x: number, y: number, io: DeviceSettings | null = null) =>
-    invoke<ViewState>('add_node', { kind, name, x, y, io }),
+  /** `io`、`slotSettings`：外部设备、占用槽位的节点在添加时就设定的设置；null 表示默认值 */
+  addNode: (
+    kind: NewNodeKind,
+    name: string,
+    x: number,
+    y: number,
+    io: DeviceSettings | null = null,
+    slotSettings: SlotSettings | null = null,
+  ) => invoke<ViewState>('add_node', { kind, name, x, y, io, slotSettings }),
+  setSlotSettings: (node: number, settings: SlotSettings) => invoke<ViewState>('set_slot_settings', { node, settings }),
   setDeviceSettings: (node: number, settings: DeviceSettings) =>
     invoke<ViewState>('set_device_settings', { node, settings }),
   replaceDevice: (node: number, endpointId: string, deviceName: string) =>
@@ -36,8 +47,10 @@ export const backend = {
   describeProgram: (path: string) => invoke<string>('describe_program', { path }),
   replaceProgram: (node: number, program: string) => invoke<ViewState>('replace_program', { node, program }),
   /** `resampler` 为 null 表示跟随全局默认 */
-  setAppResampler: (node: number, resampler: ResamplerKind | null) =>
+  setAppResampler: (node: number, resampler: Resampler | null) =>
     invoke<ViewState>('set_app_resampler', { node, resampler }),
+  setGlobalResampler: (resampler: Resampler) => invoke<ViewState>('set_global_resampler', { resampler }),
+  setEngineRate: (hz: number) => invoke<ViewState>('set_engine_rate', { hz }),
   /** 设备打不开时为 null */
   probeDevice: (endpointId: string, direction: 'input' | 'output') =>
     invoke<Capabilities | null>('probe_device', { endpointId, direction }),
@@ -58,6 +71,24 @@ export const backend = {
   setRecordingFolder: (folder: string) => invoke<ViewState>('set_recording_folder', { folder }),
   setRecordingDefaults: (settings: RecorderSettingsView) => invoke<ViewState>('set_recording_defaults', { settings }),
   openRecordingFolder: () => invoke<void>('open_recording_folder'),
+  getUpdateState: () => invoke<UpdateView>('get_update_state'),
+  checkUpdates: () => invoke<void>('check_updates'),
+  downloadUpdate: () => invoke<void>('download_update'),
+  applyUpdate: () => invoke<void>('apply_update'),
+  openReleasesPage: () => invoke<void>('open_releases_page'),
+  setCheckUpdatesOnStart: (enabled: boolean) => invoke<ViewState>('set_check_updates_on_start', { enabled }),
+  autostartEnabled: () => invoke<boolean>('autostart_enabled'),
+  setAutostart: (enabled: boolean) => invoke<boolean>('set_autostart', { enabled }),
+  crashDumpsEnabled: () => invoke<boolean>('crash_dumps_enabled'),
+  enableCrashDumps: () => invoke<boolean>('enable_crash_dumps'),
+  removeVirtualDevices: () => invoke<void>('remove_virtual_devices'),
+  windowReady: () => invoke<void>('window_ready'),
+  setAppearance: (appearance: Omit<Appearance, 'backgroundPath'>) =>
+    invoke<ViewState>('set_appearance', { appearance }),
+  setBackgroundImage: (path: string) => invoke<ViewState>('set_background_image', { path }),
+  removeBackgroundImage: () => invoke<ViewState>('remove_background_image'),
+  openDataFolder: () => invoke<void>('open_data_folder'),
+  openLogFolder: () => invoke<void>('open_log_folder'),
   listDefaultDevices: () => invoke<DefaultDevicesView>('list_default_devices'),
   setDefaultDevice: (endpointId: string, communications: boolean) =>
     invoke<void>('set_default_device', { endpointId, communications }),
@@ -94,6 +125,10 @@ export const backend = {
 
 export function onStateChanged(handler: (state: ViewState) => void): Promise<UnlistenFn> {
   return listen<ViewState>(STATE_EVENT, (event) => handler(event.payload))
+}
+
+export function onUpdateChanged(handler: (update: UpdateView) => void): Promise<UnlistenFn> {
+  return listen<UpdateView>(UPDATE_EVENT, (event) => handler(event.payload))
 }
 
 /** 每个节点 12 字节：节点 ID（u32）、左声道峰值、右声道峰值（f32），小端（src-tauri/src/meters.rs） */

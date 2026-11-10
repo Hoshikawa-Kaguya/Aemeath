@@ -2,7 +2,6 @@
 <template>
   <svg width="0" height="0" style="position: absolute" aria-hidden="true">
     <defs>
-      <symbol id="i-logo" viewBox="0 0 24 24"><path d="M3 12h2l2-6 3 12 3-9 2 5 2-2h4" /></symbol>
       <symbol id="i-graph" viewBox="0 0 24 24">
         <rect x="3" y="4" width="6" height="5" rx="1.5" />
         <rect x="15" y="15" width="6" height="5" rx="1.5" />

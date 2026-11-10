@@ -24,8 +24,11 @@ export type NodeKind =
 export type OfflineReason =
   'waitingForDevice' | 'inUseByOtherApp' | 'exclusiveNotAllowed' | 'noSignal' | 'slotRepairing' | 'slotFailing'
 
-/** 重采样算法的 4 档（S5） */
-export type ResamplerKind = 'sincHigh' | 'sincStandard' | 'polynomial' | 'linear'
+/** 重采样算法及其重采样预设，src-tauri/src/device_settings.rs */
+export type Resampler =
+  | { algorithm: 'polyAsync'; preset: 'fastest' | 'smooth' | 'fine' }
+  | { algorithm: 'sincAsync'; preset: 'veryFast' | 'fast' | 'balanced' | 'accurate' | 'ultra' }
+  | { algorithm: 'fftSync'; preset: 'lowLatency' | 'balanced' }
 
 export type BufferChoice =
   { choice: 'deviceDefault' } | { choice: 'deviceMinimum' } | { choice: 'milliseconds'; ms: number }
@@ -37,8 +40,18 @@ export interface DeviceSettings {
   format: FormatView | null
   buffer: BufferChoice
   /** 按节点覆盖的重采样算法；null 表示跟随全局默认 */
-  resampler: ResamplerKind | null
+  resampler: Resampler | null
 }
+
+/** 占用槽位的节点的设置，src-tauri/src/device_settings.rs */
+export interface SlotSettings {
+  /** null 表示跟随引擎 */
+  format: FormatView | null
+  /** null 表示跟随全局默认 */
+  resampler: Resampler | null
+}
+
+export const DEFAULT_SLOT_SETTINGS: SlotSettings = { format: null, resampler: null }
 
 /** 设备能力（添加节点、节点设置里的格式和缓冲选项） */
 export interface Capabilities {
@@ -82,7 +95,7 @@ export interface NodeView {
   device: DeviceView | null
   program: ProgramView | null
   /** 应用源按节点覆盖的重采样算法；null 表示跟随全局默认 */
-  resampler: ResamplerKind | null
+  resampler: Resampler | null
   x: number
   y: number
   gainDb: number
@@ -91,6 +104,8 @@ export interface NodeView {
   gateDb: number | null
   /** 外部设备节点的设备设置 */
   io: DeviceSettings | null
+  /** 占用槽位的节点的格式与重采样算法 */
+  slotSettings: SlotSettings | null
   /** 外部设备在线时实际使用的设备格式 */
   format: FormatView | null
   /** 设备换了端点、又有多个同名设备时，可以改用的候选 */
@@ -193,6 +208,8 @@ export interface HotkeyRowView {
 }
 
 export type RecordFormat = 'wav' | 'flac'
+/** FLAC 编码器支持的最高采样率：引擎更高时录音文件会降采样（recording_file.rs） */
+export const FLAC_MAX_HZ = 96000
 export type RecordDepth = 'int16' | 'int24' | 'float32'
 
 export interface RecorderSettingsView {
@@ -267,12 +284,38 @@ export interface RegistrationView {
 
 export type LanguagePreference = { mode: 'system' } | { mode: 'fixed'; locale: string }
 
+/** 更新状态，src-tauri/src/updates.rs */
+export type UpdateView = {
+  currentVersion: string
+  /** 打包运行才有更新功能 */
+  supported: boolean
+  portable: boolean
+} & (
+  | { state: 'unchecked' | 'checking' | 'upToDate' | 'failed' }
+  | { state: 'available' | 'ready'; version: string }
+  | { state: 'downloading'; version: string; percent: number }
+)
+
+export type ThemeMode = 'system' | 'dark' | 'light'
+
+/** 界面外观，src-tauri/src/view.rs */
+export interface Appearance {
+  themeMode: ThemeMode
+  /** `#rrggbb`；null 表示默认 */
+  accent: string | null
+  /** 背景图的完整路径；null 表示没有 */
+  backgroundPath: string | null
+  overlayPercent: number
+}
+
 export interface ViewState {
-  engine: { state: EngineState; sampleRate: number }
+  engine: { state: EngineState; sampleRate: number; resampler: Resampler }
   registration: RegistrationView | null
   canUndo: boolean
   usbipVersion: string | null
   language: LanguagePreference
+  checkUpdatesOnStart: boolean
+  appearance: Appearance
   /** 上次停留的页面；没有记录时为 null */
   lastPage: string | null
   nodes: NodeView[]
@@ -308,7 +351,7 @@ export type NewNodeKind =
   | { type: 'virtualInput' }
   | { type: 'virtualOutput' }
   | { type: 'bus' }
-  | { type: 'appSource'; program: string }
+  | { type: 'appSource'; program: string; resampler: Resampler | null }
   | { type: 'recorder' }
   | { type: 'externalInsert'; endpointId: string; deviceName: string }
 

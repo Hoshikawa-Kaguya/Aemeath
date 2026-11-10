@@ -57,6 +57,7 @@ fn run() -> Result<bool> {
     let (source, insert, output) = (NodeId(1), NodeId(2), NodeId(3));
     let node = |id, kind: NodeKind| TopologyNode {
         id,
+        slot_settings: None,
         io: kind.is_external().then_some(DeviceSettings {
             access: DeviceAccess::Shared,
             resampler: None,

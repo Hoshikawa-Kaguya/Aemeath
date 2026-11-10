@@ -1,8 +1,8 @@
 //! 切换设备设置时不爆音（M2 计划 2.5、E2E 第 2、3 项）。
 //!
 //! 与 `recovery` 相同，用第二个引擎 B 的开发槽位扮演"外部设备"，不动真实的设备：
-//! - 引擎 B（端口 3243）：`Aemeath Dev In 2` → `Aemeath Dev Out 2` 直通。
-//! - 引擎 A（端口 3242，被测）：`Dev In 1` → 外部输出 `Dev In 2`；外部输入 `Dev Out 2`（共享）→ `Dev Out 1`。
+//! - 引擎 B（端口 32412）：`Aemeath Dev In 2` → `Aemeath Dev Out 2` 直通。
+//! - 引擎 A（端口 32411，被测）：`Dev In 1` → 外部输出 `Dev In 2`；外部输入 `Dev Out 2`（共享）→ `Dev Out 1`。
 //!
 //! 测试应用往 Dev In 1 播放 1 kHz 正弦，从 Dev Out 1 录音。运行中依次切换外部输出的设置：
 //! 独占（默认）→ 共享 → 共享 + 多项式重采样 → 独占 + 5 ms 缓冲。每次切换设备流都会重建。
@@ -24,8 +24,8 @@ use std::time::{Duration, Instant};
 use aemeath_engine::{Engine, EngineConfig, EngineEvent};
 use aemeath_protocol::ids::{EndpointId, NodeId, SlotDirection, TopologyRevision};
 use aemeath_protocol::topology::{
-    BufferChoice, DeviceAccess, DeviceSettings, FormatChoice, NodeKind, Resampler, RouteTopology, Strip, TopologyNode,
-    TopologyRoute,
+    BufferChoice, DeviceAccess, DeviceSettings, FormatChoice, NodeKind, PolyPreset, Resampler, RouteTopology, Strip,
+    TopologyNode, TopologyRoute,
 };
 use aemeath_protocol::units::{BufferMs, GainDb, SampleRate};
 use aemeath_usbip::identity::IdentityProfile;
@@ -33,7 +33,7 @@ use common::{
     Attachment, PORT, Result, SINE_HZ, check_sine, endpoint_id, find_device, join, record, render_sine, slot,
 };
 
-const DEVICE_PORT: u16 = 3243;
+const DEVICE_PORT: u16 = 32412;
 const ENGINE_BUS_IDS: [&str; 2] = ["1-1", "1-9"];
 const DEVICE_BUS_IDS: [&str; 2] = ["1-2", "1-10"];
 const RENDER_SLOT: &str = "Aemeath Dev In 1";
@@ -91,7 +91,9 @@ fn run() -> Result<bool> {
             "shared, polynomial resampler",
             DeviceSettings {
                 access: DeviceAccess::Shared,
-                resampler: Some(Resampler::Polynomial),
+                resampler: Some(Resampler::PolyAsync {
+                    preset: PolyPreset::Fine,
+                }),
             },
         ),
         (
@@ -215,6 +217,7 @@ fn node(id: NodeId, kind: NodeKind) -> TopologyNode {
         id,
         kind,
         strip: Strip::default(),
+        slot_settings: None,
         io: None,
     }
 }
@@ -277,6 +280,7 @@ fn engine_topology(
                 },
             ),
             TopologyNode {
+                slot_settings: None,
                 io: Some(output_settings),
                 ..node(
                     external_output,
@@ -287,6 +291,7 @@ fn engine_topology(
             },
             // 外部输入保持共享，不参与切换
             TopologyNode {
+                slot_settings: None,
                 io: Some(DeviceSettings {
                     access: DeviceAccess::Shared,
                     resampler: None,

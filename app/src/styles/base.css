@@ -1,4 +1,4 @@
-/* 窗口是透明的，Mica 由系统绘制（tauri.conf.json 的 windowEffects），页面本身不铺底色 */
+/* 窗口底色只铺在 html 上：body 再铺一层会盖住 z-index 为负的背景图（App.vue，M4 计划 V4、V8） */
 :root {
   color-scheme: light;
 }
@@ -12,7 +12,10 @@ body {
   margin: 0;
   height: 100%;
   overflow: hidden;
-  background: transparent;
+}
+
+html {
+  background: var(--window-bg);
 }
 
 body {

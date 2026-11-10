@@ -1,0 +1,2 @@
+// 程序图标：任务管理器的进程列表显示它（与主程序共用）
+1 ICON "../../app/src-tauri/icons/icon.ico"

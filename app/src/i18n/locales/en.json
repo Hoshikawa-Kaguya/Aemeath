@@ -19,6 +19,8 @@
     "slotsTip": "Driver: usbip-win2 {version}. Click to open Devices.",
     "slotsTipNoDriver": "usbip-win2 was not found. Click to open Devices.",
     "rate": "{rate} kHz",
+    "rateTip": "Change the engine sample rate",
+    "rateSwitching": "Switching…",
     "notRunning": "Not running: {n}",
     "notRunningTip": "These app sources connect by themselves when their program starts.",
     "recording": "Recording: {n}",
@@ -216,7 +218,9 @@
     "fmtUnknown": "Unknown",
     "fmtOff": "Unavailable while unplugged",
     "fmtSame": "Same as the engine · no resampling",
-    "fmtDiff": "Differs from the engine sample rate · silent until slot resampling arrives",
+    "fmtDiff": "Differs from the engine sample rate · resampled",
+    "fmtMismatch": "Being applied, or the device does not accept this format",
+    "edit": "Settings",
     "note": "Aemeath sets each virtual device to the engine sample rate when it is first plugged in. Changing a device format briefly disconnects any app that is using that device, such as OBS."
   },
   "sampleFormat": {
@@ -228,6 +232,11 @@
     "float64": "64-bit float"
   },
   "set": {
+    "audio": "Audio",
+    "engineRate": "Engine sample rate",
+    "engineRateSub": "The rate Aemeath mixes at. Devices at other rates are resampled.",
+    "resampler": "Default resampler",
+    "resamplerSub": "Used by every node that follows the global default. Affected nodes fade out and back in when you change it.",
     "detect": "Device detection",
     "detectNow": "Re-detect all devices",
     "detectSub": "Offline devices are re-detected automatically (for example when NVIDIA Broadcast is ready later than Aemeath). Use this button to try again right away.",
@@ -238,7 +247,56 @@
     "langSub": "Takes effect immediately.",
     "langSys": "Use system language",
     "langZh": "中文（简体）",
-    "langEn": "English"
+    "langEn": "English",
+    "data": "Data",
+    "folders": "Configuration and logs",
+    "foldersSub": "Aemeath keeps its configuration, logs and cache here.",
+    "openData": "Open configuration folder",
+    "openLogs": "Open log folder",
+    "update": "Updates",
+    "updateTitle": "Check for a new version",
+    "updateCurrent": "Current version: {version}",
+    "updateChecking": "Checking for updates…",
+    "updateLatest": "Aemeath is up to date",
+    "updateAvailable": "Version {version} is available",
+    "updateDownloading": "Downloading… {percent}%",
+    "updateReady": "Version {version} is ready to install",
+    "updateFailed": "The update check failed",
+    "updateNotes": "Release notes",
+    "updateReleases": "Open Releases",
+    "updateDownload": "Download and update",
+    "updateApply": "Restart and update",
+    "updateCheck": "Check for updates",
+    "updateRecording": "Stop the recording before updating.",
+    "updateConfirm": "Aemeath will restart and sound will stop for a few seconds.",
+    "updateOnStart": "Check for updates at startup",
+    "startup": "Startup",
+    "autostart": "Start with Windows",
+    "autostartSub": "Starts Aemeath when you sign in. It stays in the tray and does not open a window.",
+    "crash": "Crash dumps",
+    "crashSub": "Saves diagnostic files to the data folder when Aemeath crashes. Needs administrator rights once.",
+    "crashEnable": "Enable",
+    "crashEnabled": "Enabled",
+    "removeDevices": "Remove virtual devices",
+    "removeDevicesSub": "Do this before deleting the portable folder. Needs administrator rights.",
+    "removeAction": "Remove and quit",
+    "removeConfirm": "Aemeath will quit and remove its 16 virtual devices. They are registered again the next time you start it.",
+    "themeMode": "Appearance",
+    "themeModeSub": "Light or dark.",
+    "themeSystem": "Follow the system",
+    "themeDark": "Dark",
+    "themeLight": "Light",
+    "accent": "Accent color",
+    "accentSub": "Used for buttons, selections and routes.",
+    "accentCustom": "Pick a color",
+    "accentReset": "Reset",
+    "background": "Background image",
+    "backgroundSub": "PNG, JPG or WebP, up to 40 MB. Aemeath keeps its own copy.",
+    "backgroundChoose": "Choose…",
+    "backgroundRemove": "Remove",
+    "backgroundFilter": "Images",
+    "overlay": "Background overlay",
+    "overlaySub": "How much the image is dimmed so text stays readable."
   },
   "reg": {
     "title": "Preparing virtual devices",
@@ -249,8 +307,8 @@
   },
   "preset": {
     "title": "The workbench is empty",
-    "body": "Start from the preset: a virtual input (apps play into it) and a virtual output (OBS and other apps record from it), with no routes. Or add your own nodes.",
-    "use": "Use the preset",
+    "body": "Start from the workbench preset: a virtual input (apps play into it) and a virtual output (OBS and other apps record from it), with no routes. Or add your own nodes.",
+    "use": "Use the workbench preset",
     "inputName": "Virtual input",
     "outputName": "Virtual output"
   },
@@ -277,22 +335,39 @@
     "resamplerGlobal": "Use the global default",
     "resamplerGlobalHint": "Uses the default resampler from Settings."
   },
+  "rate": {
+    "title": "Engine sample rate",
+    "label": "Sample rate",
+    "body": "Sound stops briefly while every device reopens. Nodes that follow the engine change format with it; nodes with a specified format keep theirs.",
+    "recording": "Recording stops first and does not resume.",
+    "over384": "Virtual devices cannot reach this rate. They run at 384 kHz and are resampled, which uses noticeably more CPU.",
+    "apply": "Apply"
+  },
+  "slot": {
+    "format": "Format",
+    "follow": "Follow the engine",
+    "fixed": "Specify a format",
+    "followHint": "The virtual device uses the engine sample rate, up to 384 kHz, with 32-bit integer samples.",
+    "rate": "Sample rate",
+    "sampleFormat": "Sample format",
+    "sendTitle": "Send",
+    "changeConfirm": "Apps using this device will be briefly disconnected.",
+    "changeAction": "Change format"
+  },
   "resampler": {
-    "sincHigh": {
-      "name": "Sinc, high quality",
-      "hint": "Flat up to 20 kHz, for music and recording. About 2.7 ms of added latency, the highest CPU use."
-    },
-    "sincStandard": {
-      "name": "Sinc, standard (recommended)",
-      "hint": "Sounds the same as high quality, with a slight roll-off near 20 kHz. About 1.3 ms of added latency."
-    },
-    "polynomial": {
-      "name": "Polynomial",
-      "hint": "Almost no added latency and very low CPU use. Good at low frequencies, poor at high ones (clear distortion above 15 kHz)."
-    },
-    "linear": {
-      "name": "Linear",
-      "hint": "The lowest CPU use, but clearly audible aliasing. Only for speech or when the CPU is very busy."
+    "latency": "[Latency {ms} ms]",
+    "polyWarning": "High-frequency distortion is high, and downsampling aliases.",
+    "preset": {
+      "label": "Preset",
+      "polyAsync": {
+        "fastest": "Fastest",
+        "smooth": "Smooth",
+        "fine": "Fine"
+      },
+      "fftSync": {
+        "lowLatency": "Low Latency",
+        "balanced": "Balanced"
+      }
     }
   },
   "strip": {
@@ -383,9 +458,11 @@
     "folder": "Recording folder",
     "chooseFolder": "Change…",
     "openFolder": "Open folder",
+    "folderHint": "Changing the folder does not move existing recordings.",
     "defaultFormat": "File format",
     "defaultDepth": "Bit depth",
     "settingsHint": "Applies to the next recording.",
+    "flacRateHint": "FLAC files are limited to 96 kHz, so this recording is saved at 96 kHz (88.2 kHz for 44.1 kHz-based engine rates). WAV keeps the engine sample rate.",
     "format": {
       "flac": "FLAC (lossless, smaller)",
       "wav": "WAV (uncompressed)"

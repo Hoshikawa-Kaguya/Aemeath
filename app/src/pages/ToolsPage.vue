@@ -114,7 +114,6 @@ const ROLES: Role[] = ['default', 'communications']
 
 .page-sub {
   margin: 0 24px 8px;
-  max-width: 900px;
   color: var(--text-2);
 }
 
@@ -123,7 +122,6 @@ const ROLES: Role[] = ['default', 'communications']
 }
 
 .set-group {
-  max-width: 1000px;
   margin-top: 16px;
   display: flex;
   flex-direction: column;
@@ -146,7 +144,7 @@ const ROLES: Role[] = ['default', 'communications']
   gap: 14px;
   align-items: center;
   min-height: 64px;
-  padding: 12px 16px;
+  padding: 12px var(--card-padding-end) 12px 16px;
   border-radius: var(--r-card);
   background: var(--card);
   border: 1px solid var(--stroke);

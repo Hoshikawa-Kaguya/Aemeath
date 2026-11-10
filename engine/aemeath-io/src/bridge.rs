@@ -58,6 +58,10 @@ pub struct BridgeLog {
     pub discontinuities: u64,
     overflow_frames: u64,
     underflow_events: u64,
+    /// 本摘要周期内单块重采样的最大耗时
+    block_max: Duration,
+    /// 整个会话内单块重采样的最大耗时
+    session_block_max: Duration,
     last_problem_log: Option<Instant>,
     last_update: RateUpdate,
 }
@@ -80,9 +84,17 @@ impl BridgeLog {
             discontinuities: 0,
             overflow_frames: 0,
             underflow_events: 0,
+            block_max: Duration::ZERO,
+            session_block_max: Duration::ZERO,
             last_problem_log: None,
             last_update: RateUpdate::default(),
         }
+    }
+
+    /// 记录一块重采样的耗时（M4 计划 1.2 节）。
+    pub fn block_processed(&mut self, elapsed: Duration) {
+        self.block_max = self.block_max.max(elapsed);
+        self.session_block_max = self.session_block_max.max(elapsed);
     }
 
     pub fn level(&mut self, level_ms: f64) {
@@ -117,11 +129,13 @@ impl BridgeLog {
                 overflow_frames = self.overflow_frames,
                 underflow_events = self.underflow_events,
                 discontinuities = self.discontinuities,
+                block_max_us = self.block_max.as_micros() as u64,
                 "bridge status"
             );
             self.last_log = Instant::now();
             self.level_min = f64::MAX;
             self.level_max = 0.0;
+            self.block_max = Duration::ZERO;
         }
     }
 
@@ -183,6 +197,7 @@ impl Drop for BridgeLog {
             overflow_frames = self.overflow_frames,
             underflow_events = self.underflow_events,
             discontinuities = self.discontinuities,
+            block_max_us = self.session_block_max.as_micros() as u64,
             "bridge session ended"
         );
     }

@@ -31,8 +31,6 @@ use crate::wire::{
 };
 use crate::writer::ConnectionWriter;
 
-/// usbip-win2 默认连接的端口
-pub const DEFAULT_PORT: u16 = 3241;
 /// 同时存在的连接数上限：16 个槽位，加上残留的后台重连和 `usbip.exe` 的查询，留足余量
 const MAX_CONNECTIONS: usize = 64;
 /// 连接建立后必须在这段时间内发来操作请求，否则断开，防止空连接一直占着名额

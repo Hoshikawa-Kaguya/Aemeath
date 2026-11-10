@@ -17,7 +17,7 @@ use aemeath_runtime::config::RuntimeConfig;
 /// 运行宿主，直到收到 `shutdown` 命令或 `shutdown` future 完成。
 pub async fn run(config: RuntimeConfig, shutdown: impl Future<Output = ()>) -> io::Result<()> {
     tracing::info!(
-        version = env!("CARGO_PKG_VERSION"),
+        version = aemeath_runtime::VERSION,
         data_dir = %config.data_dir.display(),
         pipe = %config.pipe_name,
         usbip_port = config.usbip_port,

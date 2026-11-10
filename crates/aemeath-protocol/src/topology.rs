@@ -13,7 +13,7 @@ use thiserror::Error;
 
 use crate::graph;
 use crate::ids::{EndpointId, NodeId, ProgramPath, SlotDirection, SlotId, TopologyRevision};
-use crate::message::DeviceFormat;
+use crate::message::{DeviceFormat, SampleFormat};
 use crate::units::{BufferMs, GainDb, GateThreshold, SampleRate};
 
 /// 一份拓扑里节点数的上限。只用来拒绝异常输入：16 个槽位加上外部设备和总线，远小于这个数。
@@ -29,25 +29,58 @@ pub struct RouteTopology {
     pub engine_sample_rate: SampleRate,
     /// 主时钟：引擎跟随其时钟运行的外部设备节点；为 None 时跟随系统时钟（QPC）
     pub clock_master: Option<NodeId>,
-    /// 全局默认的重采样算法（M1 不支持按节点覆盖）
+    /// 全局默认的重采样算法；节点可以单独覆盖
     pub resampler: Resampler,
     pub nodes: Vec<TopologyNode>,
     pub routes: Vec<TopologyRoute>,
 }
 
-/// 重采样算法的档位（S5）。
+/// 重采样算法及其重采样预设（GLOSSARY）。参数不对用户开放，每个预设对应一组固定参数（`aemeath-dsp`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "algorithm", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Resampler {
+    PolyAsync { preset: PolyPreset },
+    SincAsync { preset: SincPreset },
+    FftSync { preset: FftPreset },
+}
+
+impl Default for Resampler {
+    fn default() -> Self {
+        Self::SincAsync {
+            preset: SincPreset::default(),
+        }
+    }
+}
+
+/// Poly Async 的重采样预设：多项式次数依次升高。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum Resampler {
-    /// Sinc 高质量：附加延迟最大（48k→192k 约 2.7 ms）
-    SincHigh,
-    /// Sinc 标准：默认档
+pub enum PolyPreset {
+    Fastest,
+    Smooth,
     #[default]
-    SincStandard,
-    /// 多项式插值：低频好、高频差
-    Polynomial,
-    /// 线性插值：开销最小，音质最差
-    Linear,
+    Fine,
+}
+
+/// Sinc Async 的重采样预设：滤波器依次变长，通带更宽，延迟和 CPU 开销更高。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SincPreset {
+    VeryFast,
+    Fast,
+    #[default]
+    Balanced,
+    Accurate,
+    Ultra,
+}
+
+/// FFT Sync 的重采样预设：分块越大延迟越高，通带越宽。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FftPreset {
+    #[default]
+    LowLatency,
+    Balanced,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -59,6 +92,49 @@ pub struct TopologyNode {
     /// 外部设备节点的打开方式与重采样算法；只有外部设备节点可以有。外部设备节点没有时按默认值（独占）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub io: Option<DeviceSettings>,
+    /// 占用槽位的节点的格式与重采样算法（GLOSSARY：跟随引擎）；只有占用槽位的节点可以有
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slot_settings: Option<SlotNodeSettings>,
+}
+
+/// 占用槽位的节点的设置。属于节点，不属于槽位：节点换槽位时带到新槽位。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SlotNodeSettings {
+    #[serde(default)]
+    pub format: SlotFormatChoice,
+    /// 按节点覆盖的重采样算法；None 表示使用全局默认（[`RouteTopology::resampler`]）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resampler: Option<Resampler>,
+}
+
+/// 槽位设备格式的来源。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(tag = "choice", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SlotFormatChoice {
+    /// 跟随引擎采样率，最高到 [`SLOT_FORMAT_MAX_HZ`]
+    #[default]
+    FollowEngine,
+    /// 指定采样率和样本格式；靠固定比率重采样转换到引擎采样率
+    Fixed {
+        sample_rate: SampleRate,
+        sample_format: SampleFormat,
+    },
+}
+
+/// 槽位设备格式的采样率上限：共享模式下 Windows 不接受更高的采样率（M4 计划 E1）
+pub const SLOT_FORMAT_MAX_HZ: u32 = 384_000;
+
+impl SlotFormatChoice {
+    pub fn is_valid(self) -> bool {
+        match self {
+            Self::FollowEngine => true,
+            Self::Fixed {
+                sample_rate,
+                sample_format,
+            } => sample_rate.hz() <= SLOT_FORMAT_MAX_HZ && sample_format != SampleFormat::Float64,
+        }
+    }
 }
 
 /// 外部设备节点的设备设置（ADR-0014）。
@@ -415,6 +491,10 @@ pub enum TopologyError {
     DeviceSettingsOnNonExternal(NodeId),
     #[error("{0} has a fixed device format without channels")]
     InvalidDeviceFormat(NodeId),
+    #[error("{0} does not occupy a slot but has slot settings")]
+    SlotSettingsOnNonSlot(NodeId),
+    #[error("{0} has a slot format the virtual device cannot use")]
+    InvalidSlotFormat(NodeId),
     #[error("a route refers to {0}, which is not in the topology")]
     UnknownNode(NodeId),
     #[error("the route from {from} to {to} is not allowed: {rejection}")]
@@ -467,6 +547,14 @@ impl RouteTopology {
             }
             if node.strip.gate.is_some() && node.kind.role() != NodeRole::Input {
                 return Err(TopologyError::GateOnNonInput(node.id));
+            }
+            if let Some(settings) = node.slot_settings {
+                if node.kind.slot().is_none() {
+                    return Err(TopologyError::SlotSettingsOnNonSlot(node.id));
+                }
+                if !settings.format.is_valid() {
+                    return Err(TopologyError::InvalidSlotFormat(node.id));
+                }
             }
             if let Some(io) = &node.io {
                 if !node.kind.is_external() {
@@ -549,6 +637,7 @@ mod tests {
             id,
             kind,
             strip: Strip::default(),
+            slot_settings: None,
             io: None,
         }
     }
@@ -813,7 +902,9 @@ mod tests {
         let mut topology = sample_topology();
         topology.nodes[0].io = Some(DeviceSettings {
             access: DeviceAccess::Shared,
-            resampler: Some(Resampler::Linear),
+            resampler: Some(Resampler::PolyAsync {
+                preset: PolyPreset::Fastest,
+            }),
         });
         assert_eq!(topology.validate(), Ok(()));
         topology.nodes[2].io = Some(DeviceSettings::default());
@@ -821,6 +912,39 @@ mod tests {
             topology.validate(),
             Err(TopologyError::DeviceSettingsOnNonExternal(BUS))
         );
+    }
+
+    #[test]
+    fn slot_settings_need_a_slot_and_a_usable_format() {
+        let mut topology = sample_topology();
+        let fixed = |hz: u32, sample_format| SlotNodeSettings {
+            format: SlotFormatChoice::Fixed {
+                sample_rate: SampleRate::new(hz).unwrap(),
+                sample_format,
+            },
+            resampler: None,
+        };
+        let slot_index = topology
+            .nodes
+            .iter()
+            .position(|node| node.kind.slot().is_some())
+            .unwrap();
+        let slot_node = topology.nodes[slot_index].id;
+        topology.nodes[slot_index].slot_settings = Some(fixed(384_000, SampleFormat::Int24));
+        assert_eq!(topology.validate(), Ok(()));
+        topology.nodes[slot_index].slot_settings = Some(fixed(768_000, SampleFormat::Int24));
+        assert_eq!(topology.validate(), Err(TopologyError::InvalidSlotFormat(slot_node)));
+        topology.nodes[slot_index].slot_settings = Some(fixed(48_000, SampleFormat::Float64));
+        assert_eq!(topology.validate(), Err(TopologyError::InvalidSlotFormat(slot_node)));
+        topology.nodes[slot_index].slot_settings = None;
+        let other = topology
+            .nodes
+            .iter()
+            .position(|node| node.kind.slot().is_none())
+            .unwrap();
+        let other_id = topology.nodes[other].id;
+        topology.nodes[other].slot_settings = Some(SlotNodeSettings::default());
+        assert_eq!(topology.validate(), Err(TopologyError::SlotSettingsOnNonSlot(other_id)));
     }
 
     #[test]

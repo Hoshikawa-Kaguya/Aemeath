@@ -4,7 +4,7 @@
 //! 只描述"用户搭建了什么"，不含运行时状态（设备是否在线、槽位是否已挂载等由控制面另行跟踪）。
 
 use aemeath_protocol::ids::{EndpointId, NodeId};
-use aemeath_protocol::topology::{self, DeviceSettings, Resampler, Strip};
+use aemeath_protocol::topology::{self, DeviceSettings, Resampler, SlotNodeSettings, Strip};
 use aemeath_protocol::units::{GainDb, SampleRate};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -84,6 +84,9 @@ pub struct Node {
     /// 外部设备节点的设备设置（ADR-0014）；其他节点为 None。外部设备节点缺少它时按默认值（独占）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub io: Option<DeviceSettings>,
+    /// 占用槽位的节点的格式与重采样算法；随节点换槽位、删除、撤销删除。其他节点为 None
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slot_settings: Option<SlotNodeSettings>,
     #[serde(default)]
     pub position: Position,
     /// 节点静音的专属热键
@@ -98,6 +101,11 @@ impl Node {
     /// 外部设备节点实际使用的设备设置；其他节点为 None
     pub fn device_settings(&self) -> Option<DeviceSettings> {
         self.kind.is_external().then(|| self.io.unwrap_or_default())
+    }
+
+    /// 占用槽位的节点实际使用的设置；其他节点为 None
+    pub fn slot_settings(&self) -> Option<SlotNodeSettings> {
+        self.kind.slot().map(|_| self.slot_settings.unwrap_or_default())
     }
 }
 

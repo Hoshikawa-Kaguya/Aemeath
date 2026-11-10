@@ -31,7 +31,7 @@ use crate::topology_cache::TopologyCache;
 /// 连接后必须在这段时间内完成握手
 pub const HELLO_TIMEOUT: Duration = Duration::from_secs(5);
 const READ_BUFFER: usize = 64 * 1024;
-const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");
+const ENGINE_VERSION: &str = aemeath_runtime::VERSION;
 
 /// 宿主进程的状态：引擎、拓扑缓存、当前拓扑、状态缓存和引擎事件。
 pub struct HostState {
@@ -198,6 +198,7 @@ async fn handle(
                 protocol: PROTOCOL_VERSION,
                 engine_version: ENGINE_VERSION.to_owned(),
                 restored_topology: state.topology.as_ref().map(|topology| topology.revision),
+                usbip_port: state.engine.usbip_address().port(),
             };
             if send(pipe, &welcome).await.is_err() {
                 return Flow::Disconnect;

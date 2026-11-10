@@ -5,17 +5,20 @@
 //!   （Windows 实测每个 URB 10 ms）无关。
 //! - 输出槽位（OBS 等从里面录）：混音每 1 ms 写入一块；等时 IN URB 到期时按节拍取出、编码、应答。
 //!
-//! 采样率与引擎不同时输出静音；固定比率重采样在 M1 第 5 项加入。
+//! 采样率与引擎不同时走固定比率重采样（比率是精确值，不做漂移校正）：输入方向在放进缓冲前转成引擎采样率，
+//! 放出的帧数按引擎采样率换算；输出方向在放进缓冲前转成槽位采样率。
 //! 导入、流开始这类低频事件中允许分配内存；逐块、逐 URB 的路径复用缓冲（写线程把写完的缓冲还回来），不申请也不释放内存。
 
 use std::collections::VecDeque;
 use std::io;
 
 use aemeath_dsp::codec;
+use aemeath_dsp::resample::{FixedSide, StereoResampler};
 use aemeath_protocol::ids::{SlotDirection, SlotId};
+use aemeath_protocol::topology::Resampler;
 use aemeath_protocol::units::SampleRate;
 use aemeath_usbip::function::StreamChange;
-use aemeath_usbip::stream::{CapturePacer, StreamFormat};
+use aemeath_usbip::stream::{CapturePacer, MICROFRAMES_PER_SECOND, StreamFormat};
 use aemeath_usbip::wire::{IsoPacket, RetSubmit, Submit, UrbStatus, encode_ret_submit_into};
 use aemeath_usbip::writer::ConnectionWriter;
 
@@ -34,6 +37,87 @@ const FIFO_CAPACITY_FRAMES: usize = 76_800;
 const MAX_PENDING_PACKETS: usize = 1024;
 /// 复用的包描述缓冲的初始容量：一个 URB 通常 80 个包
 const TYPICAL_ISO_PACKETS: usize = 128;
+/// 重采样每块的时长：1 ms（FFT 的分块由预设决定）
+const RESAMPLE_CHUNKS_PER_SECOND: u32 = 1000;
+/// 输出方向预先放进缓冲的静音，在一块重采样的时长之外再留的余量（1 ms）
+const CAPTURE_PREFILL_MARGIN_PER_SECOND: u32 = 1000;
+
+/// 构建一个重采样器需要的全部信息，在辅助线程上用。
+#[derive(Debug, Clone, Copy)]
+pub struct ResamplerSpec {
+    pub slot: SlotId,
+    /// 请求的序号：等待构建期间格式又变了，旧结果靠它识别并丢弃
+    pub generation: u64,
+    pub quality: Resampler,
+    pub input_rate: SampleRate,
+    pub output_rate: SampleRate,
+}
+
+/// 重采样器和它在逐块路径上用的缓冲：全部在辅助线程准备好，调度线程只做交接，不分配内存。
+#[derive(Debug)]
+pub struct SlotResampler {
+    generation: u64,
+    resampler: StereoResampler,
+    /// 等待凑够一块的输入
+    input: Vec<f32>,
+    output: Vec<f32>,
+    /// 输入方向：成块造成的额外放出延迟（微帧）
+    lead: i64,
+    /// 输出方向：预先放进缓冲的静音（输入方向为空）
+    prefill: Vec<f32>,
+}
+
+impl SlotResampler {
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+}
+
+impl ResamplerSpec {
+    /// 构建。失败时记录日志并返回 None，这个槽位保持静音。
+    pub fn build(self) -> Option<SlotResampler> {
+        let chunk_frames = (self.input_rate.hz() / RESAMPLE_CHUNKS_PER_SECOND).max(1) as usize;
+        let resampler = StereoResampler::new(
+            self.quality,
+            self.input_rate,
+            self.output_rate,
+            chunk_frames,
+            FixedSide::Input,
+        )
+        .inspect_err(|error| {
+            tracing::error!(slot = %self.slot, %error, "cannot create the slot resampler; the slot is silent");
+        })
+        .ok()?;
+        let block_frames = resampler.input_frames_next();
+        // 成批量按最大单次产出算：FFT 把分块取整后，一批可能比输入分块对应的帧数多
+        let max_output = resampler.output_frames_max();
+        // 一个 URB 的 10 ms 和一块的输入都要放得下，逐块路径不再增长
+        let urb_frames = self.input_rate.hz() as usize / 100;
+        let input = Vec::with_capacity((block_frames * 2 + urb_frames) * STEREO);
+        let output = Vec::with_capacity(max_output * 2 * STEREO);
+        let burst_microframes = max_output as u64 * MICROFRAMES_PER_SECOND;
+        let lead = i64::try_from(burst_microframes.div_ceil(u64::from(self.output_rate.hz()))).unwrap_or(i64::MAX);
+        let prefill_frames = match self.slot.direction {
+            SlotDirection::In => 0,
+            SlotDirection::Out => max_output + (self.output_rate.hz() / CAPTURE_PREFILL_MARGIN_PER_SECOND) as usize,
+        };
+        Some(SlotResampler {
+            generation: self.generation,
+            resampler,
+            input,
+            output,
+            lead,
+            prefill: vec![0.0; prefill_frames * STEREO],
+        })
+    }
+}
+
+/// 交给辅助线程的工作：释放换下来的重采样器、构建新的。
+#[derive(Debug, Default)]
+pub struct ResamplerWork {
+    pub retired: Option<SlotResampler>,
+    pub spec: Option<ResamplerSpec>,
+}
 
 /// 一个 URB 在时间线上的位置。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,6 +154,14 @@ pub struct SlotStream {
     /// 编码应答时复用的包描述和音频数据
     reply_packets: Vec<IsoPacket>,
     reply_data: Vec<u8>,
+    quality: Resampler,
+    /// 采样率与引擎不同、且辅助线程已构建好时存在
+    resampler: Option<SlotResampler>,
+    /// 最新一次重建请求的序号
+    generation: u64,
+    /// 输入方向：累计收到的槽位帧数和已安排放出的引擎帧数，用精确比率换算，不累积舍入误差
+    render_input_frames: u64,
+    render_released_frames: u64,
     pub stats: SlotStats,
 }
 
@@ -88,6 +180,11 @@ impl SlotStream {
             scratch: Vec::new(),
             reply_packets: Vec::with_capacity(TYPICAL_ISO_PACKETS),
             reply_data: Vec::new(),
+            quality: Resampler::default(),
+            resampler: None,
+            generation: 0,
+            render_input_frames: 0,
+            render_released_frames: 0,
             stats: SlotStats::default(),
         }
     }
@@ -105,7 +202,8 @@ impl SlotStream {
         self.writer.send(bytes, submit)
     }
 
-    pub fn apply_change(&mut self, change: StreamChange) {
+    /// 流开始或停止。返回要交给辅助线程的重采样器工作。
+    pub fn apply_change(&mut self, change: StreamChange) -> ResamplerWork {
         self.format = match change {
             StreamChange::Started(format) => Some(format),
             StreamChange::Stopped => None,
@@ -115,15 +213,67 @@ impl SlotStream {
         self.pending.clear();
         self.readable_frames = 0;
         self.pacer.reset();
+        self.rebuild_resampler()
     }
 
-    /// 引擎采样率变化（换拓扑）时调用。
-    pub fn set_engine_rate(&mut self, rate: Option<SampleRate>) {
-        if self.engine_rate != rate {
-            self.engine_rate = rate;
-            self.fifo.clear();
-            self.pending.clear();
-            self.readable_frames = 0;
+    /// 换拓扑时调用：引擎采样率或这个槽位的重采样算法变化时重建重采样器。
+    pub fn set_processing(&mut self, rate: Option<SampleRate>, quality: Resampler) -> ResamplerWork {
+        if self.engine_rate == rate && self.quality == quality {
+            return ResamplerWork::default();
+        }
+        self.engine_rate = rate;
+        self.quality = quality;
+        self.fifo.clear();
+        self.pending.clear();
+        self.readable_frames = 0;
+        self.rebuild_resampler()
+    }
+
+    /// 换下旧的重采样器，算出新的构建参数。真正的构建在辅助线程（[`crate::resampler_worker`]），
+    /// 结果到来之前这个槽位是静音的，只有几毫秒，发生在流开始或换拓扑时。
+    fn rebuild_resampler(&mut self) -> ResamplerWork {
+        self.generation += 1;
+        let retired = self.resampler.take();
+        self.render_input_frames = 0;
+        self.render_released_frames = 0;
+        let spec = match (self.format, self.engine_rate) {
+            (Some(format), Some(engine_rate)) if format.sample_rate != engine_rate => {
+                let (input_rate, output_rate) = match self.slot.direction {
+                    SlotDirection::In => (format.sample_rate, engine_rate),
+                    SlotDirection::Out => (engine_rate, format.sample_rate),
+                };
+                Some(ResamplerSpec {
+                    slot: self.slot,
+                    generation: self.generation,
+                    quality: self.quality,
+                    input_rate,
+                    output_rate,
+                })
+            }
+            _ => None,
+        };
+        ResamplerWork { retired, spec }
+    }
+
+    /// 装上辅助线程构建好的重采样器。已经过期（等待期间格式又变了）时不装，原样还给调用方去释放。
+    pub fn install(&mut self, built: SlotResampler) -> Option<SlotResampler> {
+        if built.generation != self.generation {
+            return Some(built);
+        }
+        self.resampler = Some(built);
+        self.prefill_capture();
+        None
+    }
+
+    /// 连接关闭时取走重采样器，由辅助线程释放。
+    pub fn take_resampler(&mut self) -> Option<SlotResampler> {
+        self.resampler.take()
+    }
+
+    /// 输出方向：重采样成块到达，先垫一段静音，URB 到期时缓冲里才总有数据。
+    fn prefill_capture(&mut self) {
+        if let Some(resampler) = &self.resampler {
+            self.fifo.push(&resampler.prefill);
         }
     }
 
@@ -131,6 +281,52 @@ impl SlotStream {
     fn passthrough_format(&self) -> Option<StreamFormat> {
         self.format
             .filter(|format| Some(format.sample_rate) == self.engine_rate)
+    }
+
+    /// 可以收发音频时返回流格式：直通，或者有重采样器
+    fn active_format(&self) -> Option<StreamFormat> {
+        self.format
+            .filter(|format| Some(format.sample_rate) == self.engine_rate || self.resampler.is_some())
+    }
+
+    /// 把攒够的输入重采样后放进缓冲。
+    fn convert_buffered(&mut self) {
+        let Some(state) = &mut self.resampler else {
+            return;
+        };
+        let mut consumed = 0;
+        loop {
+            let needed = state.resampler.input_frames_next() * STEREO;
+            if state.input.len() - consumed < needed {
+                break;
+            }
+            if let Err(error) = state
+                .resampler
+                .process(&state.input[consumed..consumed + needed], &mut state.output)
+            {
+                tracing::error!(slot = %self.slot, %error, "slot resampling failed");
+            }
+            consumed += needed;
+        }
+        state.input.drain(..consumed);
+        self.stats.overflow_frames += self.fifo.push(&state.output) as u64;
+        state.output.clear();
+    }
+
+    /// 输入方向：重采样 `scratch` 里的一个包，返回这个包对应放出的引擎帧数。
+    fn resample_render(&mut self, frames: usize) -> usize {
+        let (Some(format), Some(engine_rate)) = (self.format, self.engine_rate) else {
+            return 0;
+        };
+        if let Some(state) = &mut self.resampler {
+            state.input.extend_from_slice(&self.scratch);
+        }
+        self.convert_buffered();
+        self.render_input_frames += frames as u64;
+        let target = self.render_input_frames * u64::from(engine_rate.hz()) / u64::from(format.sample_rate.hz());
+        let released = target - self.render_released_frames;
+        self.render_released_frames = target;
+        usize::try_from(released).unwrap_or(0)
     }
 
     /// 在时间线上为一个 URB 预留位置。
@@ -156,6 +352,7 @@ impl SlotStream {
                 // 混音器在迟到期间照常写入，这些帧不会再有 URB 来取，留着就成了永久的延迟
                 if self.slot.direction == SlotDirection::Out {
                     self.fifo.clear();
+                    self.prefill_capture();
                 }
                 (now_microframe + RESTART_LEAD_MICROFRAMES, Some(now_microframe - next))
             }
@@ -169,7 +366,7 @@ impl SlotStream {
     /// 输入方向：接收一个等时 OUT URB 的数据，返回到期时要发出的应答。
     pub fn accept_render(&mut self, submit: &Submit, start_microframe: i64) -> Vec<u8> {
         let interval = i64::from(submit.interval.max(1));
-        if let Some(format) = self.passthrough_format() {
+        if let Some(format) = self.active_format() {
             let bytes_per_frame = format.bytes_per_frame();
             for (index, packet) in submit.iso_packets.iter().enumerate() {
                 let range = packet_range(packet, submit.out_data.len());
@@ -181,9 +378,15 @@ impl SlotStream {
                     self.stats.overflow_frames += frames as u64;
                     continue;
                 }
-                self.stats.overflow_frames += self.fifo.push(&self.scratch) as u64;
-                let release = start_microframe + (index as i64 + 1) * interval + RENDER_PRIME_MICROFRAMES;
-                self.pending.push_back((release, frames));
+                let released = if self.resampler.is_some() {
+                    self.resample_render(frames)
+                } else {
+                    self.stats.overflow_frames += self.fifo.push(&self.scratch) as u64;
+                    frames
+                };
+                let lead = self.resampler.as_ref().map_or(0, |state| state.lead);
+                let release = start_microframe + (index as i64 + 1) * interval + RENDER_PRIME_MICROFRAMES + lead;
+                self.pending.push_back((release, released));
             }
         }
 
@@ -229,14 +432,18 @@ impl SlotStream {
         let popped = self.fifo.pop_into(&mut out[..take * STEREO]);
         out[take * STEREO..].fill(0.0);
         self.readable_frames -= popped;
-        if self.format.is_some() {
+        // 等重采样器构建的几毫秒本来就是静音，不算欠载
+        if self.active_format().is_some() {
             self.stats.underflow_frames += (wanted - popped) as u64;
         }
     }
 
-    /// 输出方向：混音写入一块。没有在流动或采样率不同时丢弃。
+    /// 输出方向：混音写入一块（引擎采样率）。没有在流动时丢弃。
     pub fn push_capture(&mut self, interleaved: &[f32]) {
-        if self.passthrough_format().is_some() {
+        if let Some(state) = &mut self.resampler {
+            state.input.extend_from_slice(interleaved);
+            self.convert_buffered();
+        } else if self.passthrough_format().is_some() {
             self.stats.overflow_frames += self.fifo.push(interleaved) as u64;
         }
     }
@@ -245,7 +452,8 @@ impl SlotStream {
     pub fn complete_capture(&mut self, submit: &Submit) -> Vec<u8> {
         self.reply_data.clear();
         self.reply_packets.clear();
-        let format = self.passthrough_format().or(self.format);
+        let format = self.format;
+        let streaming = self.active_format().is_some();
         let mut offset = 0u32;
         for packet in &submit.iso_packets {
             let mut actual = 0u32;
@@ -257,7 +465,7 @@ impl SlotStream {
                     .min(usize::try_from(packet.length).unwrap_or(0) / bytes_per_frame);
                 self.scratch.clear();
                 self.scratch.resize(frames * STEREO, 0.0);
-                if self.passthrough_format().is_some() {
+                if streaming {
                     let popped = self.fifo.pop_into(&mut self.scratch);
                     self.stats.underflow_frames += (frames - popped) as u64;
                 }
@@ -307,11 +515,16 @@ fn packet_range(packet: &IsoPacket, buffer_len: usize) -> std::ops::Range<usize>
 mod tests {
     use super::*;
     use aemeath_protocol::ids::SlotNumber;
+    use aemeath_protocol::message::SampleFormat;
+    use aemeath_protocol::topology::{FftPreset, PolyPreset};
+    use aemeath_usbip::stream::WIRE_FORMATS;
     use aemeath_usbip::wire::Direction;
     use std::net::{TcpListener, TcpStream};
 
     /// 80 个包、每包 1 个微帧：与 Windows 实测的 URB 相同（10 ms）
     const PACKETS: usize = 80;
+    /// `WIRE_FORMATS` 里 Float32 的位置
+    const FLOAT32_WIRE: usize = 3;
 
     fn stream(direction: SlotDirection) -> SlotStream {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -336,6 +549,212 @@ mod tests {
             out_data: Vec::new(),
             iso_packets: vec![IsoPacket::default(); PACKETS],
         }
+    }
+
+    const ENGINE_HZ: u32 = 48_000;
+    const TONE_HZ: f64 = 997.0;
+    const AMPLITUDE: f64 = 0.5;
+    /// 测试时长（ms），前面的启动段不检查
+    const TEST_MS: usize = 2000;
+    const SETTLE_MS: usize = 200;
+
+    fn rate(hz: u32) -> SampleRate {
+        SampleRate::new(hz).unwrap()
+    }
+
+    fn float_format(hz: u32) -> StreamFormat {
+        StreamFormat {
+            sample_rate: rate(hz),
+            wire: WIRE_FORMATS[FLOAT32_WIRE],
+        }
+    }
+
+    fn tone(position: u64, hz: u32) -> f32 {
+        (AMPLITUDE * (std::f64::consts::TAU * TONE_HZ * position as f64 / f64::from(hz)).sin()) as f32
+    }
+
+    /// 单声道序列的频率和连续性：相邻样本的差不能超过正弦的最大斜率（留 30% 余量）
+    fn assert_clean_tone(samples: &[f32], hz: u32, label: &str) {
+        let crossings = samples
+            .windows(2)
+            .filter(|pair| pair[0] < 0.0 && pair[1] >= 0.0)
+            .count();
+        let measured = crossings as f64 * f64::from(hz) / samples.len() as f64;
+        assert!((measured - TONE_HZ).abs() < 3.0, "{label}: {measured} Hz");
+        let limit = (std::f64::consts::TAU * TONE_HZ * AMPLITUDE / f64::from(hz) * 1.3) as f32;
+        let worst = samples
+            .windows(2)
+            .map(|pair| (pair[1] - pair[0]).abs())
+            .fold(0.0, f32::max);
+        assert!(worst <= limit, "{label}: step {worst} > {limit}");
+    }
+
+    /// 同步走完"流开始 → 构建 → 装上"，真实运行时构建在辅助线程
+    fn start(stream: &mut SlotStream, hz: u32, quality: Resampler) {
+        stream.set_processing(Some(rate(ENGINE_HZ)), quality);
+        let work = stream.apply_change(StreamChange::Started(float_format(hz)));
+        finish(stream, work);
+    }
+
+    fn finish(stream: &mut SlotStream, work: ResamplerWork) {
+        let built = work.spec.and_then(ResamplerSpec::build).unwrap();
+        assert!(stream.install(built).is_none());
+    }
+
+    fn qualities() -> [Resampler; 3] {
+        [
+            Resampler::default(),
+            Resampler::PolyAsync {
+                preset: PolyPreset::Fine,
+            },
+            Resampler::FftSync {
+                preset: FftPreset::Balanced,
+            },
+        ]
+    }
+
+    #[test]
+    fn render_slots_convert_to_the_engine_rate() {
+        for hz in [44_100, 96_000, 192_000] {
+            for quality in qualities() {
+                let mut stream = stream(SlotDirection::In);
+                start(&mut stream, hz, quality);
+                assert!(stream.resampler.is_some());
+
+                let mut pacer = CapturePacer::default();
+                let mut position = 0u64;
+                let mut output = Vec::new();
+                let mut block = vec![0.0f32; ENGINE_HZ as usize / 1000 * STEREO];
+                let mut underflow_after_settle = 0;
+                for ms in 0..TEST_MS {
+                    let microframe = (ms * 8) as i64;
+                    // 与 Windows 一样，每 10 ms 提前交来一个 URB
+                    if ms % 10 == 0 {
+                        let mut urb = submit();
+                        let mut bytes = Vec::new();
+                        let mut offset = 0u32;
+                        for packet in &mut urb.iso_packets {
+                            let frames = pacer.next_packet_frames(rate(hz), 1);
+                            let samples: Vec<f32> = (0..frames)
+                                .flat_map(|index| [tone(position + index as u64, hz); STEREO])
+                                .collect();
+                            position += frames as u64;
+                            let before = bytes.len();
+                            codec::encode(SampleFormat::Float32, &samples, &mut bytes);
+                            packet.offset = offset;
+                            packet.length = (bytes.len() - before) as u32;
+                            offset = bytes.len() as u32;
+                        }
+                        urb.out_data = bytes;
+                        stream.accept_render(&urb, microframe);
+                    }
+                    stream.release(microframe);
+                    let before = stream.stats.underflow_frames;
+                    stream.pop_render(&mut block);
+                    if ms >= SETTLE_MS {
+                        underflow_after_settle += stream.stats.underflow_frames - before;
+                        output.extend(block.iter().step_by(STEREO).copied());
+                    }
+                }
+                let label = format!("{hz} Hz {quality:?}");
+                assert_eq!(underflow_after_settle, 0, "{label}");
+                assert_eq!(stream.stats.overflow_frames, 0, "{label}");
+                assert_clean_tone(&output, ENGINE_HZ, &label);
+            }
+        }
+    }
+
+    #[test]
+    fn capture_slots_convert_to_the_device_rate() {
+        for hz in [44_100, 96_000, 192_000] {
+            for quality in qualities() {
+                let mut stream = stream(SlotDirection::Out);
+                start(&mut stream, hz, quality);
+
+                let mut urb = submit();
+                for packet in &mut urb.iso_packets {
+                    packet.length = (hz / 8000 + 1) * 8;
+                }
+                let block_frames = ENGINE_HZ as usize / 1000;
+                let mut position = 0u64;
+                let mut output = Vec::new();
+                let mut underflow_after_settle = 0;
+                for ms in 1..=TEST_MS {
+                    let block: Vec<f32> = (0..block_frames)
+                        .flat_map(|index| [tone(position + index as u64, ENGINE_HZ); STEREO])
+                        .collect();
+                    position += block_frames as u64;
+                    stream.push_capture(&block);
+                    if ms % 10 == 0 {
+                        let before = stream.stats.underflow_frames;
+                        stream.complete_capture(&urb);
+                        if ms > SETTLE_MS {
+                            underflow_after_settle += stream.stats.underflow_frames - before;
+                            let mut samples = Vec::new();
+                            codec::decode(SampleFormat::Float32, &stream.reply_data, &mut samples);
+                            output.extend(samples.iter().step_by(STEREO).copied());
+                        }
+                    }
+                }
+                let label = format!("{hz} Hz {quality:?}");
+                assert_eq!(underflow_after_settle, 0, "{label}");
+                assert_clean_tone(&output, hz, &label);
+            }
+        }
+    }
+
+    #[test]
+    fn matching_rates_stay_on_the_direct_path() {
+        let mut stream = stream(SlotDirection::In);
+        stream.set_processing(Some(rate(ENGINE_HZ)), Resampler::default());
+        let work = stream.apply_change(StreamChange::Started(float_format(ENGINE_HZ)));
+        assert!(work.spec.is_none());
+        assert!(stream.resampler.is_none());
+    }
+
+    #[test]
+    fn changing_the_algorithm_rebuilds_the_resampler() {
+        let mut stream = stream(SlotDirection::Out);
+        start(&mut stream, 44_100, Resampler::default());
+        let prefill = stream.fifo.len();
+        let work = stream.set_processing(
+            Some(rate(ENGINE_HZ)),
+            Resampler::FftSync {
+                preset: FftPreset::Balanced,
+            },
+        );
+        assert!(work.retired.is_some(), "the old resampler goes to the worker");
+        assert!(stream.resampler.is_none());
+        finish(&mut stream, work);
+        assert!(stream.fifo.len() > prefill);
+    }
+
+    #[test]
+    fn a_result_from_an_older_request_is_not_installed() {
+        let mut stream = stream(SlotDirection::Out);
+        stream.set_processing(Some(rate(ENGINE_HZ)), Resampler::default());
+        let first = stream.apply_change(StreamChange::Started(float_format(44_100)));
+        let stale = first.spec.and_then(ResamplerSpec::build).unwrap();
+        // 等待构建期间采样率又变了
+        let second = stream.apply_change(StreamChange::Started(float_format(96_000)));
+        assert!(stream.install(stale).is_some());
+        assert!(stream.resampler.is_none());
+        finish(&mut stream, second);
+        assert!(stream.resampler.is_some());
+    }
+
+    #[test]
+    fn the_slot_is_silent_while_the_resampler_is_being_built() {
+        let mut stream = stream(SlotDirection::In);
+        stream.set_processing(Some(rate(ENGINE_HZ)), Resampler::default());
+        let _pending = stream.apply_change(StreamChange::Started(float_format(44_100)));
+        let mut block = [1.0f32; 96];
+        stream.pop_render(&mut block);
+        assert!(block.iter().all(|sample| *sample == 0.0));
+        assert_eq!(
+            stream.stats.underflow_frames, 0,
+            "waiting for the build is not an underflow"
+        );
     }
 
     #[test]

@@ -19,6 +19,8 @@
     "slotsTip": "驱动：usbip-win2 {version}。单击打开设备页。",
     "slotsTipNoDriver": "没有找到 usbip-win2。单击打开设备页。",
     "rate": "{rate} kHz",
+    "rateTip": "修改引擎采样率",
+    "rateSwitching": "切换中…",
     "notRunning": "未运行 {n}",
     "notRunningTip": "程序启动后，这些应用源会自动接入。",
     "recording": "录音中 {n}",
@@ -216,7 +218,9 @@
     "fmtUnknown": "未知",
     "fmtOff": "拔出时不可设置",
     "fmtSame": "与引擎相同 · 不重采样",
-    "fmtDiff": "与引擎采样率不同 · 支持槽位重采样之前没有声音",
+    "fmtDiff": "与引擎采样率不同 · 重采样",
+    "fmtMismatch": "正在应用，或设备不接受这个格式",
+    "edit": "设置",
     "note": "虚拟设备第一次挂上时，Aemeath 会把它设成引擎采样率。修改设备格式会让正在使用该设备的应用（例如 OBS）短暂断开。"
   },
   "sampleFormat": {
@@ -228,6 +232,11 @@
     "float64": "64 位浮点"
   },
   "set": {
+    "audio": "音频",
+    "engineRate": "引擎采样率",
+    "engineRateSub": "Aemeath 内部混音使用的采样率。其他采样率的设备会重采样。",
+    "resampler": "默认重采样算法",
+    "resamplerSub": "所有跟随全局默认的节点都使用它。修改时受影响的节点会短暂淡出再淡入。",
     "detect": "设备检测",
     "detectNow": "重新检测全部设备",
     "detectSub": "离线的设备会自动重新检测（例如 NVIDIA Broadcast 比 Aemeath 晚就绪）。需要立即重试时用这个按钮。",
@@ -238,7 +247,56 @@
     "langSub": "立即生效。",
     "langSys": "跟随系统",
     "langZh": "中文（简体）",
-    "langEn": "English"
+    "langEn": "English",
+    "data": "数据",
+    "folders": "配置和日志",
+    "foldersSub": "Aemeath 的配置、日志和缓存都放在这里。",
+    "openData": "打开配置目录",
+    "openLogs": "打开日志目录",
+    "update": "更新",
+    "updateTitle": "检查新版本",
+    "updateCurrent": "当前版本：{version}",
+    "updateChecking": "正在检查更新…",
+    "updateLatest": "已是最新版本",
+    "updateAvailable": "有新版本 {version}",
+    "updateDownloading": "正在下载… {percent}%",
+    "updateReady": "新版本 {version} 已可以安装",
+    "updateFailed": "检查失败",
+    "updateNotes": "发布说明",
+    "updateReleases": "打开 Releases 页面",
+    "updateDownload": "下载并更新",
+    "updateApply": "重启并更新",
+    "updateCheck": "检查更新",
+    "updateRecording": "录音进行中不能更新，请先停止录音。",
+    "updateConfirm": "Aemeath 会重启，声音中断几秒。",
+    "updateOnStart": "启动时检查更新",
+    "startup": "启动",
+    "autostart": "开机自启动",
+    "autostartSub": "登录 Windows 后自动启动，只留在托盘，不打开窗口。",
+    "crash": "崩溃转储",
+    "crashSub": "Aemeath 崩溃时把诊断文件保存到数据目录。需要一次管理员权限。",
+    "crashEnable": "启用",
+    "crashEnabled": "已启用",
+    "removeDevices": "移除虚拟设备",
+    "removeDevicesSub": "删除便携版文件夹之前先执行。需要管理员权限。",
+    "removeAction": "移除并退出",
+    "removeConfirm": "Aemeath 将退出并移除它的 16 个虚拟设备。下次启动时会重新注册。",
+    "themeMode": "深浅色",
+    "themeModeSub": "浅色或深色。",
+    "themeSystem": "跟随系统",
+    "themeDark": "深色",
+    "themeLight": "浅色",
+    "accent": "主题色",
+    "accentSub": "用于按钮、选中状态和连线。",
+    "accentCustom": "自定义颜色",
+    "accentReset": "恢复默认",
+    "background": "背景图",
+    "backgroundSub": "PNG、JPG 或 WebP，最大 40 MB。Aemeath 会保存一份副本。",
+    "backgroundChoose": "选择…",
+    "backgroundRemove": "移除",
+    "backgroundFilter": "图片",
+    "overlay": "背景遮罩",
+    "overlaySub": "遮住背景图的程度，保证文字看得清。"
   },
   "reg": {
     "title": "正在准备虚拟设备",
@@ -254,8 +312,8 @@
   },
   "preset": {
     "title": "工作台是空的",
-    "body": "可以用预设开始：一个虚拟输入（应用播放到这里）和一个虚拟输出（OBS 等从这里录制），不带连线。也可以自己添加节点。",
-    "use": "使用预设",
+    "body": "可以用工作台预设开始：一个虚拟输入（应用播放到这里）和一个虚拟输出（OBS 等从这里录制），不带连线。也可以自己添加节点。",
+    "use": "使用工作台预设",
     "inputName": "虚拟输入",
     "outputName": "虚拟输出"
   },
@@ -282,22 +340,39 @@
     "resamplerGlobal": "跟随全局默认",
     "resamplerGlobalHint": "使用设置页里的默认重采样算法。"
   },
+  "rate": {
+    "title": "引擎采样率",
+    "label": "采样率",
+    "body": "切换时声音会短暂中断，所有设备重新打开。跟随引擎的节点随之改变格式，指定格式的节点保持不变。",
+    "recording": "录音会先停止，切换后不会自动恢复。",
+    "over384": "虚拟设备不能达到引擎采样率，将以 384 kHz 运行并重采样，CPU 开销明显增加。",
+    "apply": "应用"
+  },
+  "slot": {
+    "format": "格式",
+    "follow": "跟随引擎",
+    "fixed": "指定格式",
+    "followHint": "虚拟设备使用引擎采样率（最高 384 kHz）和 32 位整数。",
+    "rate": "采样率",
+    "sampleFormat": "样本格式",
+    "sendTitle": "送出端",
+    "changeConfirm": "正在使用该设备的应用会短暂断开。",
+    "changeAction": "修改格式"
+  },
   "resampler": {
-    "sincHigh": {
-      "name": "Sinc 高质量",
-      "hint": "直到 20 kHz 都保持平直，适合音乐和录音。附加延迟约 2.7 ms，CPU 开销最高。"
-    },
-    "sincStandard": {
-      "name": "Sinc 标准（推荐）",
-      "hint": "听感上与高质量档没有差别，只在 20 kHz 附近略有衰减。附加延迟约 1.3 ms。"
-    },
-    "polynomial": {
-      "name": "多项式插值",
-      "hint": "几乎没有附加延迟、CPU 开销很低；低频好，高频差（15 kHz 以上失真明显）。"
-    },
-    "linear": {
-      "name": "线性插值",
-      "hint": "开销最低，但混叠明显，只适合语音或 CPU 极为紧张的情况。"
+    "latency": "[延迟 {ms} ms]",
+    "polyWarning": "高频失真大，降采样有混叠。",
+    "preset": {
+      "label": "预设",
+      "polyAsync": {
+        "fastest": "极速",
+        "smooth": "平滑",
+        "fine": "精细"
+      },
+      "fftSync": {
+        "lowLatency": "低延迟",
+        "balanced": "均衡"
+      }
     }
   },
   "strip": {
@@ -383,9 +458,11 @@
     "folder": "录音文件夹",
     "chooseFolder": "更改…",
     "openFolder": "打开文件夹",
+    "folderHint": "修改后，已有录音不会移动。",
     "defaultFormat": "文件格式",
     "defaultDepth": "位深",
     "settingsHint": "对下一次录音生效。",
+    "flacRateHint": "FLAC 最高支持 96 kHz，录音会保存为 96 kHz（引擎采样率属于 44.1 kHz 系时为 88.2 kHz）。WAV 保持引擎采样率。",
     "format": {
       "flac": "FLAC（无损，体积小）",
       "wav": "WAV（不压缩）"

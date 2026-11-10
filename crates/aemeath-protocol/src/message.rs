@@ -76,6 +76,8 @@ pub enum EngineToApp {
         engine_version: String,
         /// 引擎启动时从缓存恢复的拓扑修订号；为 None 表示没有缓存，引擎处于静音的空拓扑
         restored_topology: Option<TopologyRevision>,
+        /// USB/IP 服务端监听的端口。引擎重启时守护进程可能换了端口，还在运行的主程序靠它得知
+        usbip_port: u16,
     },
     /// 握手失败：协议版本不同。引擎随后关闭连接。
     HelloRejected { engine_protocol: ProtocolVersion },

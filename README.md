@@ -63,4 +63,4 @@ cargo test --workspace
 
 ## 许可证
 
-[GPL-3.0-or-later](LICENSE)
+[AGPL-3.0-only](LICENSE)

@@ -80,6 +80,8 @@ pub enum ClientEvent {
     /// 握手完成。`restored_topology` 是引擎启动时从缓存恢复的拓扑修订号（ADR-0008）
     Connected {
         restored_topology: Option<TopologyRevision>,
+        /// USB/IP 服务端实际监听的端口
+        usbip_port: u16,
     },
     Disconnected(DisconnectReason),
     TopologyApplied {
@@ -339,10 +341,10 @@ async fn session(
                         }
                     };
                     match message {
-                        EngineToApp::Welcome { engine_version, restored_topology, .. } => {
-                            info!(%engine_version, ?restored_topology, "connected to the engine");
+                        EngineToApp::Welcome { engine_version, restored_topology, usbip_port, .. } => {
+                            info!(%engine_version, ?restored_topology, usbip_port, "connected to the engine");
                             handshaken = true;
-                            let _ = events.send(ClientEvent::Connected { restored_topology });
+                            let _ = events.send(ClientEvent::Connected { restored_topology, usbip_port });
                             // 握手后立即下发当前想要的拓扑（引擎可能刚重启，只恢复了缓存）
                             desired.mark_changed();
                         }

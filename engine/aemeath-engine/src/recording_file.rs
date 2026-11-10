@@ -7,7 +7,8 @@ use std::fs::File;
 use std::io::{self, BufWriter, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
-use aemeath_protocol::topology::{RecordDepth, RecordFormat, RecorderSettings};
+use aemeath_dsp::resample::{FixedSide, StereoResampler};
+use aemeath_protocol::topology::{FftPreset, RecordDepth, RecordFormat, RecorderSettings, Resampler};
 use aemeath_protocol::units::SampleRate;
 use flacenc::bitsink::ByteSink;
 use flacenc::component::{BitRepr, StreamInfo};
@@ -24,6 +25,13 @@ const FLAC_BLOCK_FRAMES: usize = 4096;
 /// `fLaC` 标记加上元数据块头的长度：文件头回填时 STREAMINFO 从这里开始
 const FLAC_MARKER: &[u8] = b"fLaC";
 const STREAMINFO_LAST_BLOCK: u8 = 0x80;
+/// `flacenc` 接受的最高采样率（2026-11-10 实测 192 kHz 建文件失败）
+const FLAC_MAX_HZ: u32 = 96_000;
+/// 超过上限时的目标采样率：44.1 kHz 系用 88.2 kHz，其余用 96 kHz，比率都是整数
+const CD_FAMILY_HZ: u32 = 44_100;
+const FLAC_CD_FAMILY_TARGET_HZ: u32 = 88_200;
+/// 降采样每块的时长：1 ms
+const DOWNSAMPLE_CHUNKS_PER_SECOND: u32 = 1000;
 
 fn bits_of(depth: RecordDepth) -> u16 {
     match depth {
@@ -255,6 +263,72 @@ fn write_flac_header(file: &mut File, info: &StreamInfo) -> io::Result<()> {
     Ok(())
 }
 
+/// FLAC 文件的采样率：不超过编码器上限时就是引擎采样率。
+fn flac_rate(engine: SampleRate) -> io::Result<SampleRate> {
+    let hz = engine.hz();
+    if hz <= FLAC_MAX_HZ {
+        return Ok(engine);
+    }
+    let target = if hz.is_multiple_of(CD_FAMILY_HZ) {
+        FLAC_CD_FAMILY_TARGET_HZ
+    } else {
+        FLAC_MAX_HZ
+    };
+    SampleRate::new(target).map_err(to_io)
+}
+
+/// 引擎采样率超过 FLAC 上限时，写入前先降采样。在录音的写文件线程上运行，不影响调度线程。
+struct Downsampler {
+    resampler: StereoResampler,
+    /// 等待凑够一块的输入
+    input: Vec<f32>,
+    output: Vec<f32>,
+    /// 把滤波器里的样本全部推出来所需的输入帧数
+    flush_frames: usize,
+}
+
+impl Downsampler {
+    fn new(from: SampleRate, to: SampleRate) -> io::Result<Self> {
+        let chunk_frames = (from.hz() / DOWNSAMPLE_CHUNKS_PER_SECOND) as usize;
+        let quality = Resampler::FftSync {
+            preset: FftPreset::Balanced,
+        };
+        let resampler = StereoResampler::new(quality, from, to, chunk_frames, FixedSide::Input).map_err(to_io)?;
+        let delay_input = (resampler.output_delay_frames() as u64 * u64::from(from.hz())).div_ceil(u64::from(to.hz()));
+        let flush_frames = usize::try_from(delay_input).map_err(to_io)? + resampler.input_frames_next();
+        Ok(Self {
+            resampler,
+            input: Vec::new(),
+            output: Vec::new(),
+            flush_frames,
+        })
+    }
+
+    fn convert(&mut self, stereo: &[f32]) -> io::Result<&[f32]> {
+        self.output.clear();
+        self.input.extend_from_slice(stereo);
+        let mut consumed = 0;
+        loop {
+            let needed = self.resampler.input_frames_next() * STEREO;
+            if self.input.len() - consumed < needed {
+                break;
+            }
+            self.resampler
+                .process(&self.input[consumed..consumed + needed], &mut self.output)
+                .map_err(to_io)?;
+            consumed += needed;
+        }
+        self.input.drain(..consumed);
+        Ok(&self.output)
+    }
+
+    /// 录音结束时用静音把还留在滤波器里的样本推出来，否则结尾会少几毫秒。
+    fn flush(&mut self) -> io::Result<&[f32]> {
+        let silence = vec![0.0; self.flush_frames * STEREO];
+        self.convert(&silence)
+    }
+}
+
 enum Writer {
     Wav(WavSink),
     Flac(Box<FlacSink>),
@@ -263,23 +337,39 @@ enum Writer {
 /// 一个正在写的录音文件。
 pub struct RecordingFile {
     writer: Writer,
+    /// 只有 FLAC 且引擎采样率超过上限时存在
+    downsampler: Option<Downsampler>,
+    /// 写入的帧数（引擎采样率），用来计算时长
     frames: u64,
 }
 
 impl RecordingFile {
     /// `limit` 是 WAV 每段的数据字节数上限（测试时调小）。
     pub fn open(path: &Path, settings: RecorderSettings, rate: SampleRate, limit: u64) -> io::Result<Self> {
-        let writer = match settings.format {
-            RecordFormat::Wav => Writer::Wav(WavSink::open(path, settings.depth, rate, limit)?),
-            RecordFormat::Flac => Writer::Flac(Box::new(FlacSink::open(path, settings.depth, rate)?)),
+        let (writer, downsampler) = match settings.format {
+            RecordFormat::Wav => (Writer::Wav(WavSink::open(path, settings.depth, rate, limit)?), None),
+            RecordFormat::Flac => {
+                let file_rate = flac_rate(rate)?;
+                // 先建降采样器：失败时不留下空文件
+                let downsampler = (file_rate != rate)
+                    .then(|| Downsampler::new(rate, file_rate))
+                    .transpose()?;
+                let sink = FlacSink::open(path, settings.depth, file_rate)?;
+                (Writer::Flac(Box::new(sink)), downsampler)
+            }
         };
-        Ok(Self { writer, frames: 0 })
+        Ok(Self {
+            writer,
+            downsampler,
+            frames: 0,
+        })
     }
 
     pub fn write(&mut self, stereo: &[f32]) -> io::Result<()> {
-        match &mut self.writer {
-            Writer::Wav(sink) => sink.write(stereo)?,
-            Writer::Flac(sink) => sink.write(stereo)?,
+        match (&mut self.writer, &mut self.downsampler) {
+            (Writer::Wav(sink), _) => sink.write(stereo)?,
+            (Writer::Flac(sink), Some(downsampler)) => sink.write(downsampler.convert(stereo)?)?,
+            (Writer::Flac(sink), None) => sink.write(stereo)?,
         }
         self.frames += (stereo.len() / STEREO) as u64;
         Ok(())
@@ -296,7 +386,12 @@ impl RecordingFile {
     pub fn finish(mut self) -> io::Result<()> {
         match &mut self.writer {
             Writer::Wav(sink) => sink.close_part(),
-            Writer::Flac(sink) => sink.finish(),
+            Writer::Flac(sink) => {
+                if let Some(downsampler) = &mut self.downsampler {
+                    sink.write(downsampler.flush()?)?;
+                }
+                sink.finish()
+            }
         }
     }
 
@@ -439,6 +534,90 @@ mod tests {
         let decoded: Vec<i32> = reader.samples().map(Result::unwrap).collect();
         let expected: Vec<i32> = samples.iter().map(|sample| quantize(*sample, 24)).collect();
         assert_eq!(decoded, expected);
+    }
+
+    /// 1 秒 1 kHz 正弦（幅度 0.5），分成不规则的块写入，返回解码出的 (采样率, 左声道)
+    fn record_flac_at(engine_hz: u32) -> (u32, Vec<f32>) {
+        let dir = temp_dir(&format!("flac-{engine_hz}"));
+        let base = dir.join("take.flac");
+        let frames = engine_hz as usize;
+        let samples: Vec<f32> = (0..frames)
+            .flat_map(|frame| {
+                let phase = std::f64::consts::TAU * 1000.0 * frame as f64 / f64::from(engine_hz);
+                let value = (phase.sin() * 0.5) as f32;
+                [value, value]
+            })
+            .collect();
+        let mut file = RecordingFile::open(
+            &base,
+            settings(RecordFormat::Flac, RecordDepth::Int24),
+            SampleRate::new(engine_hz).unwrap(),
+            WAV_SEGMENT_LIMIT,
+        )
+        .unwrap();
+        for chunk in samples.chunks(1234) {
+            file.write(chunk).unwrap();
+        }
+        assert_eq!(file.frames(), frames as u64, "the duration counts engine frames");
+        file.finish().unwrap();
+        let mut reader = claxon::FlacReader::open(&base).unwrap();
+        let rate = reader.streaminfo().sample_rate;
+        let full_scale = (1i64 << 23) as f32;
+        let left = reader
+            .samples()
+            .map(|sample| sample.unwrap() as f32 / full_scale)
+            .step_by(STEREO)
+            .collect();
+        (rate, left)
+    }
+
+    #[test]
+    fn flac_above_the_encoder_limit_is_downsampled() {
+        for (engine_hz, expected_hz) in [
+            (192_000, 96_000),
+            (176_400, 88_200),
+            (768_000, 96_000),
+            (705_600, 88_200),
+        ] {
+            let (rate, left) = record_flac_at(engine_hz);
+            assert_eq!(rate, expected_hz, "{engine_hz}");
+            let frames = expected_hz as usize;
+            assert!(
+                left.len() >= frames && left.len() <= frames + frames / 10,
+                "{engine_hz}: {} frames",
+                left.len()
+            );
+            // 跳过开头滤波器的建立时间，只看稳定段
+            let peak = left[frames / 4..frames * 3 / 4]
+                .iter()
+                .fold(0.0f32, |peak, sample| peak.max(sample.abs()));
+            assert!((peak - 0.5).abs() < 0.01, "{engine_hz}: peak {peak}");
+        }
+    }
+
+    #[test]
+    fn flac_up_to_the_limit_keeps_the_engine_rate() {
+        let (rate, left) = record_flac_at(96_000);
+        assert_eq!(rate, 96_000);
+        assert_eq!(left.len(), 96_000);
+    }
+
+    #[test]
+    fn wav_keeps_a_rate_flac_cannot_store() {
+        let dir = temp_dir("wav-192k");
+        let base = dir.join("take.wav");
+        let mut file = RecordingFile::open(
+            &base,
+            settings(RecordFormat::Wav, RecordDepth::Int24),
+            SampleRate::new(192_000).unwrap(),
+            WAV_SEGMENT_LIMIT,
+        )
+        .unwrap();
+        file.write(&ramp(1000)).unwrap();
+        file.finish().unwrap();
+        let reader = hound::WavReader::open(&base).unwrap();
+        assert_eq!(reader.spec().sample_rate, 192_000);
+        assert_eq!(reader.duration(), 1000);
     }
 
     #[test]

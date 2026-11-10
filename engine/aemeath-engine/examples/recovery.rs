@@ -1,8 +1,8 @@
 //! 设备拔插自恢复测试：外部设备被拔出、重新连接后，引擎不需要重启就能自动恢复出声。
 //!
 //! 为了不动真实的设备，用第二个引擎 B 的开发槽位扮演"外部设备"：
-//! - 引擎 B（端口 3243）：`Aemeath Dev In 2` → `Aemeath Dev Out 2` 直通。
-//! - 引擎 A（端口 3242，被测）：`Dev In 1` → 外部输出 `Dev In 2`；外部输入 `Dev Out 2` → `Dev Out 1`。
+//! - 引擎 B（端口 32412）：`Aemeath Dev In 2` → `Aemeath Dev Out 2` 直通。
+//! - 引擎 A（端口 32411，被测）：`Dev In 1` → 外部输出 `Dev In 2`；外部输入 `Dev Out 2` → `Dev Out 1`。
 //!
 //! 测试应用往 Dev In 1 播放正弦波、从 Dev Out 1 录音。中途卸下引擎 B 的两个槽位（相当于拔出），
 //! 几秒后重新挂载（相当于重新连接）：引擎 A 的两个外部设备流会收到 `AUDCLNT_E_DEVICE_INVALIDATED`
@@ -32,7 +32,7 @@ use common::{
 };
 
 /// 扮演外部设备的引擎 B 的端口
-const DEVICE_PORT: u16 = 3243;
+const DEVICE_PORT: u16 = 32412;
 const ENGINE_BUS_IDS: [&str; 2] = ["1-1", "1-9"];
 const DEVICE_BUS_IDS: [&str; 2] = ["1-2", "1-10"];
 const RENDER_SLOT: &str = "Aemeath Dev In 1";
@@ -248,6 +248,7 @@ fn node(id: NodeId, kind: NodeKind) -> TopologyNode {
         id,
         kind,
         strip: Strip::default(),
+        slot_settings: None,
         io: None,
     }
 }
@@ -308,6 +309,7 @@ fn engine_topology(fake_output: EndpointId, fake_input: EndpointId) -> Result<Ro
             // 因为测试还要以共享方式直接录这台"外部设备"（第一跳），独占时它打不开
             node(external_output, NodeKind::ExternalOutput { device: fake_output }),
             TopologyNode {
+                slot_settings: None,
                 io: Some(DeviceSettings {
                     access: DeviceAccess::Shared,
                     resampler: None,

@@ -33,6 +33,13 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const store = useAppStore()
 const pinOnly = ref(false)
+const pane = ref<HTMLElement | null>(null)
+/** 打开"仅固定节点"前的面板宽度：开关只筛选内容，不改变面板宽度 */
+const unfilteredWidth = ref<number | null>(null)
+// 默认的 pre 时机在 DOM 更新之前，量到的还是筛选前的宽度
+watch(pinOnly, (only) => {
+  unfilteredWidth.value = only ? (pane.value?.offsetWidth ?? null) : null
+})
 const verdicts = ref(new Map<string, Rejection>())
 const hovered = ref<RoutePair | null>(null)
 /** 键盘焦点所在的格子（行、列下标），整个矩阵只有它可以用 Tab 进入 */
@@ -265,7 +272,8 @@ function isHot(node: NodeView, axis: 'from' | 'to'): boolean {
 </script>
 
 <template>
-  <section class="matrix-pane" :aria-label="t('mx.title')">
+  <section ref="pane" class="matrix-pane" :aria-label="t('mx.title')">
+    <div v-if="unfilteredWidth !== null" class="width-holder" :style="{ width: `${unfilteredWidth}px` }"></div>
     <div class="pane-head">
       <h2>{{ t('mx.title') }}</h2>
       <div class="spacer"></div>
@@ -380,6 +388,12 @@ function isHot(node: NodeView, axis: 'from' | 'to'): boolean {
   min-height: 0;
 }
 
+/* 只占宽度不占高度；放在面板这层，窗口变窄、列宽封顶时不会让 .matrix-wrap 多出滚动条 */
+.width-holder {
+  flex: none;
+  height: 0;
+}
+
 .pane-head {
   display: flex;
   align-items: center;
@@ -400,62 +414,6 @@ function isHot(node: NodeView, axis: 'from' | 'to'): boolean {
   flex: 1;
 }
 
-/* Fluent 2 的开关 */
-.switch {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  font-size: var(--fontSizeBase200);
-  cursor: pointer;
-}
-
-.switch input {
-  position: absolute;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.track {
-  position: relative;
-  flex: none;
-  width: 40px;
-  height: 20px;
-  border-radius: 10px;
-  border: 1px solid var(--colorNeutralStrokeAccessible);
-  transition:
-    background var(--dur-fast) var(--ease),
-    border-color var(--dur-fast) var(--ease);
-}
-
-.thumb {
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--text-2);
-  transition:
-    transform var(--dur) var(--ease),
-    background var(--dur-fast) var(--ease);
-}
-
-.switch input:checked + .track {
-  background: var(--accent);
-  border-color: transparent;
-}
-
-.switch input:checked + .track .thumb {
-  transform: translateX(20px);
-  background: var(--on-accent);
-}
-
-.switch input:focus-visible + .track {
-  outline: 2px solid var(--text);
-  outline-offset: 1px;
-}
-
 .matrix-wrap {
   flex: 1;
   min-height: 0;
@@ -465,7 +423,9 @@ function isHot(node: NodeView, axis: 'from' | 'to'): boolean {
   padding: 8px 8px 12px;
 }
 
+/* 提示文字不决定面板宽度，否则矩阵一空面板就被撑长 */
 .empty {
+  contain: inline-size;
   margin: 12px 8px;
 }
 

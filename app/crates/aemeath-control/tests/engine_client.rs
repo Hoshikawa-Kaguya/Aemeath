@@ -52,6 +52,7 @@ fn topology(bus: u32) -> RouteTopology {
             id: NodeId(bus),
             kind: NodeKind::Bus,
             strip: Strip::default(),
+            slot_settings: None,
             io: None,
         }],
         routes: Vec::new(),
@@ -112,10 +113,13 @@ impl FakeEngine {
             protocol: PROTOCOL_VERSION,
             engine_version: "fake".to_owned(),
             restored_topology: None,
+            usbip_port: FAKE_USBIP_PORT,
         })
         .await;
     }
 }
+
+const FAKE_USBIP_PORT: u16 = 4000;
 
 async fn next_event(events: &mut mpsc::UnboundedReceiver<ClientEvent>) -> ClientEvent {
     tokio::time::timeout(EVENT_TIMEOUT, events.recv())
@@ -149,7 +153,8 @@ async fn sends_the_latest_topology_after_the_handshake_and_reports_the_result() 
     assert_eq!(
         next_event(&mut events).await,
         ClientEvent::Connected {
-            restored_topology: None
+            restored_topology: None,
+            usbip_port: FAKE_USBIP_PORT,
         }
     );
     assert_eq!(

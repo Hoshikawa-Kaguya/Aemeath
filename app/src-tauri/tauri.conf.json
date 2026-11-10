@@ -1,9 +1,9 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Aemeath",
-  "version": "0.1.0",
   "identifier": "io.github.aemeath",
-  "mainBinaryName": "aemeath",
+  "version": "../../scripts/version.json",
+  "mainBinaryName": "aemeath-app",
   "build": {
     "devUrl": "http://localhost:21364",
     "frontendDist": "../dist",
@@ -14,6 +14,7 @@
     "windows": [
       {
         "label": "main",
+        "create": false,
         "title": "Aemeath",
         "width": 1280,
         "height": 800,
@@ -21,18 +22,18 @@
         "minHeight": 600,
         "center": true,
         "visible": false,
-        "decorations": false,
-        "transparent": true,
-        "windowEffects": {
-          "effects": ["mica"]
-        }
+        "decorations": false
       }
     ],
     "security": {
+      "assetProtocol": {
+        "enable": true,
+        "scope": []
+      },
       "csp": {
         "default-src": "'self'",
         "connect-src": "'self' ipc: http://ipc.localhost",
-        "img-src": "'self' data:",
+        "img-src": "'self' data: asset: http://asset.localhost",
         "style-src": "'self' 'unsafe-inline'"
       }
     }

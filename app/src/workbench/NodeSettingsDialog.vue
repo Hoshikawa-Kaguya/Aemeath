@@ -4,11 +4,14 @@ import { useI18n } from 'vue-i18n'
 import { backend } from '@/api/backend'
 import {
   DEFAULT_DEVICE_SETTINGS,
+  DEFAULT_SLOT_SETTINGS,
+  FLAC_MAX_HZ,
   roleOf,
   type DeviceSettings,
   type NodeView,
   type RecorderSettingsView,
-  type ResamplerKind,
+  type Resampler,
+  type SlotSettings,
 } from '@/api/types'
 import { formatThreshold } from '@/format/format'
 import { useAppStore } from '@/stores/app'
@@ -18,6 +21,7 @@ import { GATE_MAX_DB, GATE_OFF_POSITION, gateToPosition, positionToGate } from '
 import HotkeyField from './HotkeyField.vue'
 import { pickProgram } from './pickProgram'
 import ResamplerField from './ResamplerField.vue'
+import SlotSettingsFields from './SlotSettingsFields.vue'
 
 // 节点设置（M2 计划 2.2）：从节点的"⋯"按钮或右键菜单打开，尺寸固定，点"确定"才生效。
 // 内容随节点类型而定：名称；虚拟节点改选槽位；输入节点的门限；外部设备的独占、格式、缓冲与重采样算法（ADR-0014）；
@@ -41,7 +45,8 @@ const pinned = ref(false)
 const io = ref<DeviceSettings>({ ...DEFAULT_DEVICE_SETTINGS })
 /** 多个同名候选中选中的端点 ID */
 const candidate = ref('')
-const appResampler = ref<ResamplerKind | null>(null)
+const appResampler = ref<Resampler | null>(null)
+const slotSettings = ref<SlotSettings>({ ...DEFAULT_SLOT_SETTINGS })
 const recorder = ref<RecorderSettingsView>({ format: 'flac', depth: 'int24' })
 
 const node = computed(() => (nodeId.value === null ? undefined : store.nodeById.get(nodeId.value)))
@@ -95,6 +100,7 @@ function open(target: NodeView): void {
   io.value = { ...(target.io ?? DEFAULT_DEVICE_SETTINGS) }
   candidate.value = target.candidates[0]?.endpointId ?? ''
   appResampler.value = target.resampler
+  slotSettings.value = { ...(target.slotSettings ?? DEFAULT_SLOT_SETTINGS) }
   if (target.recorder !== null) {
     recorder.value = { ...target.recorder.settings }
   }
@@ -115,6 +121,17 @@ async function confirm(): Promise<void> {
   if (current === undefined) {
     return
   }
+  // 改格式会让端点上已有的流作废，正在使用这个设备的应用要重新打开（S2）
+  const formatChanged =
+    current.slotSettings !== null &&
+    JSON.stringify(slotSettings.value.format) !== JSON.stringify(current.slotSettings.format)
+  if (
+    formatChanged &&
+    current.status.state === 'ok' &&
+    !(await store.confirm(t('slot.changeConfirm'), t('slot.changeAction')))
+  ) {
+    return
+  }
   const trimmed = name.value.trim()
   const steps: (() => Promise<boolean>)[] = []
   if (trimmed !== current.name) {
@@ -132,7 +149,11 @@ async function confirm(): Promise<void> {
     const settings = io.value
     steps.push(() => store.run(() => backend.setDeviceSettings(current.id, settings)))
   }
-  if (current.program !== null && appResampler.value !== current.resampler) {
+  if (current.slotSettings !== null && JSON.stringify(slotSettings.value) !== JSON.stringify(current.slotSettings)) {
+    const settings = slotSettings.value
+    steps.push(() => store.run(() => backend.setSlotSettings(current.id, settings)))
+  }
+  if (current.program !== null && JSON.stringify(appResampler.value) !== JSON.stringify(current.resampler)) {
     const resampler = appResampler.value
     steps.push(() => store.run(() => backend.setAppResampler(current.id, resampler)))
   }
@@ -260,6 +281,11 @@ defineExpose({ open })
 
         <ResamplerField v-if="node.program" v-model="appResampler" />
 
+        <template v-if="node.slotSettings">
+          <b v-if="node.kind === 'externalInsert'">{{ t('slot.sendTitle') }}</b>
+          <SlotSettingsFields v-model="slotSettings" />
+        </template>
+
         <template v-if="node.recorder">
           <label class="field">
             <span>{{ t('rec.defaultFormat') }}</span>
@@ -276,6 +302,12 @@ defineExpose({ open })
               <option value="float32" :disabled="recorder.format === 'flac'">{{ t('rec.depth.float32') }}</option>
             </select>
             <span class="caption">{{ t('rec.settingsHint') }}</span>
+            <span
+              v-if="recorder.format === 'flac' && (store.state?.engine.sampleRate ?? 0) > FLAC_MAX_HZ"
+              class="caption"
+            >
+              {{ t('rec.flacRateHint') }}
+            </span>
           </label>
         </template>
 
@@ -290,7 +322,10 @@ defineExpose({ open })
         </div>
 
         <label class="check">
-          <input v-model="pinned" type="checkbox" />
+          <span class="switch">
+            <input v-model="pinned" type="checkbox" role="switch" />
+            <span class="track" aria-hidden="true"><span class="thumb"></span></span>
+          </span>
           <span>{{ t('menu.pin') }}</span>
         </label>
       </div>
@@ -318,13 +353,6 @@ defineExpose({ open })
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.check input {
-  width: 16px;
-  height: 16px;
-  margin: 0;
-  accent-color: var(--accent);
 }
 
 .candidates {

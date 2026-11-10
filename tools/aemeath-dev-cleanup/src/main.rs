@@ -68,10 +68,17 @@ fn main() -> ExitCode {
         }
     }
 
+    let removals = match remove_all() {
+        Ok(removals) => removals,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::FAILURE;
+        }
+    };
     let mut failures = 0;
-    for instance in &instances {
-        match uninstall::remove(instance) {
-            Ok(()) => println!("removed  {}", instance.instance_id),
+    for removal in &removals {
+        match &removal.result {
+            Ok(()) => println!("removed  {}", removal.instance.instance_id),
             Err(error) => {
                 failures += 1;
                 eprintln!("FAILED   {error}");
@@ -102,7 +109,19 @@ fn print_plan(instances: &[SlotInstance]) {
     }
 }
 
-/// 指向 Aemeath 服务端口的已挂载设备数（引擎还在运行时不为 0）
+fn remove_all() -> Result<Vec<uninstall::Removal>, String> {
+    let program = UsbipCli::default_program().ok_or("%ProgramFiles% is not set")?;
+    let cli = UsbipCli::new(program, DEFAULT_USBIP_PORT);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| error.to_string())?;
+    runtime
+        .block_on(uninstall::detach_and_remove(IdentityProfile::Development, &cli))
+        .map_err(|error| error.to_string())
+}
+
+/// 开发身份的已挂载设备数（引擎还在运行时不为 0）
 fn attached_aemeath_devices() -> Result<usize, String> {
     let program = UsbipCli::default_program().ok_or("%ProgramFiles% is not set")?;
     let cli = UsbipCli::new(program, DEFAULT_USBIP_PORT);
@@ -111,8 +130,6 @@ fn attached_aemeath_devices() -> Result<usize, String> {
         .build()
         .map_err(|error| error.to_string())?;
     let devices = runtime.block_on(cli.imported()).map_err(|error| error.to_string())?;
-    Ok(devices
-        .iter()
-        .filter(|device| device.is_served_by(DEFAULT_USBIP_PORT))
-        .count())
+    let identities = IdentityProfile::Development.all().map_err(|error| error.to_string())?;
+    Ok(devices.iter().filter(|device| device.belongs_to(&identities)).count())
 }

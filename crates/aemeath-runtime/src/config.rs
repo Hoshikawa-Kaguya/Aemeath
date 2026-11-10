@@ -10,15 +10,20 @@ pub use aemeath_usbip::identity::DEFAULT_USBIP_PORT;
 use aemeath_usbip::identity::IdentityProfile;
 use thiserror::Error;
 
+use crate::autostart::ARGUMENT;
+
 #[derive(Debug, Clone)]
 pub struct RuntimeConfig {
-    /// 数据目录：日志在 `logs\`，拓扑缓存在 `engine\`（ADR-0012：安装版 `%APPDATA%\Aemeath`，便携版程序目录下的 `data\`）
+    /// 数据目录：日志在 `logs\`，拓扑缓存在 `engine\`（ADR-0012：安装版和便携版都是 `%APPDATA%\Aemeath`）
     pub data_dir: PathBuf,
+    /// USB/IP 端口；经守护进程启动时由它决定（guardian 的 `usbip_port` 模块）
     pub usbip_port: u16,
     pub identity: IdentityProfile,
     pub pipe_name: String,
     /// 电平共享内存的名称（与主程序共用，见 `aemeath_protocol::meters`）
     pub meter_memory_name: String,
+    /// 由开机自启动拉起：主程序只留在托盘，不弹出窗口
+    pub autostart: bool,
 }
 
 #[derive(Debug, Error)]
@@ -37,14 +42,14 @@ pub enum ConfigError {
 
 impl RuntimeConfig {
     /// 解析命令行参数：`--data-dir <目录>`、`--usbip-port <端口>`、`--pipe <管道名>`、
-    /// `--meters <共享内存名>`，都可以省略。
+    /// `--meters <共享内存名>`、`--autostart`，都可以省略。
     pub fn from_args(args: impl IntoIterator<Item = String>) -> Result<Self, ConfigError> {
-        // 正式身份要等向 pid.codes 申请到正式 PID 后加入（M4）；在那之前一律使用开发身份（ADR-0009）
-        let identity = IdentityProfile::Development;
+        let identity = IdentityProfile::current();
         let mut data_dir = None;
         let mut usbip_port = DEFAULT_USBIP_PORT;
         let mut pipe_name = None;
         let mut meter_memory_name = None;
+        let mut autostart = false;
         let mut args = args.into_iter();
         while let Some(arg) = args.next() {
             let mut value = || args.next().ok_or_else(|| ConfigError::MissingValue(arg.clone()));
@@ -55,6 +60,7 @@ impl RuntimeConfig {
                 }
                 "--pipe" => pipe_name = Some(value()?),
                 "--meters" => meter_memory_name = Some(value()?),
+                ARGUMENT => autostart = true,
                 _ => return Err(ConfigError::UnknownArgument(arg)),
             }
         }
@@ -76,6 +82,7 @@ impl RuntimeConfig {
             identity,
             pipe_name,
             meter_memory_name,
+            autostart,
         })
     }
 }
@@ -102,6 +109,12 @@ mod tests {
         assert_eq!(config.data_dir, PathBuf::from(r"C:\data"));
         assert_eq!(config.usbip_port, 3300);
         assert_eq!(config.pipe_name, r"\\.\pipe\test");
+    }
+
+    #[test]
+    fn only_the_autostart_launch_stays_in_the_tray() {
+        assert!(RuntimeConfig::from_args(args(&["--autostart"])).unwrap().autostart);
+        assert!(!RuntimeConfig::from_args(Vec::new()).unwrap().autostart);
     }
 
     #[test]

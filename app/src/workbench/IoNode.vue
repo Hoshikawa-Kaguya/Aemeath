@@ -268,7 +268,7 @@ function onKeyDown(event: KeyboardEvent): void {
   position: relative;
   width: 236px;
   border-radius: var(--r-card);
-  background: var(--card-solid);
+  background: var(--card);
   border: 1px solid var(--stroke-strong);
   box-shadow: var(--shadow);
   user-select: none;

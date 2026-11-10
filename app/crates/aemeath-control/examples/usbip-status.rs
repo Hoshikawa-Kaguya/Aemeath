@@ -7,7 +7,7 @@
 use aemeath_control::usbip_cli::UsbipCli;
 
 /// 开发版引擎的默认 USB/IP 端口（aemeath-host 的默认值）
-const DEFAULT_SERVER_PORT: u16 = 3241;
+const DEFAULT_SERVER_PORT: u16 = aemeath_usbip::identity::DEFAULT_USBIP_PORT;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

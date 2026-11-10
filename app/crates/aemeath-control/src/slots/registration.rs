@@ -37,6 +37,7 @@ pub fn registration_topology(rate: SampleRate) -> RouteTopology {
                 SlotDirection::Out => NodeKind::VirtualOutput { slot },
             },
             strip: Strip::default(),
+            slot_settings: None,
             io: None,
         })
         .collect();

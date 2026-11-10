@@ -1,4 +1,4 @@
-# usbip.exe -t 3241 attach -r 127.0.0.1 -b 1-1 --once --terse
+# usbip.exe -t 32410 attach -r 127.0.0.1 -b 1-1 --once --terse
 # exit=1  elapsed_ms=18  captured=2026-11-07T16:41:56
 ## stdout
 

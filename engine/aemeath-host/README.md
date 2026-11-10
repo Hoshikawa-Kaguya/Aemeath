@@ -13,7 +13,7 @@ aemeath-host [--data-dir <目录>] [--usbip-port <端口>] [--pipe <管道名>] 
 | 项 | 默认 |
 |---|---|
 | 数据目录 | `%APPDATA%\Aemeath Dev`（M4 加入正式身份后，正式版为 `%APPDATA%\Aemeath`；便携版由守护进程传入 `data\`） |
-| USB/IP 端口 | 3241（usbip-win2 的默认端口） |
+| USB/IP 端口 | 32410（经守护进程启动时由它决定） |
 | 管道名 | `\\.\pipe\Aemeath.Dev.Engine.<当前用户 SID>` |
 | 电平共享内存 | `Local\Aemeath.Dev.Meters.<当前用户 SID>` |
 
@@ -37,6 +37,6 @@ aemeath-host [--data-dir <目录>] [--usbip-port <端口>] [--pipe <管道名>] 
 
 | 路径 | 内容 |
 |---|---|
-| `logs\engine.<日期>.log` | 按天轮转，保留 14 天；非阻塞写入，实时线程不会被磁盘 IO 拖慢 |
-| `logs\engine.panic.log` | panic 时同步追加（发布构建 `panic = "abort"`，进程随即中止并由守护进程拉起） |
+| `logs\engine.<日期>.log` | 按天轮转，保留 15 天；非阻塞写入，实时线程不会被磁盘 IO 拖慢 |
+| `logs\panic.engine.log` | panic 时同步追加（发布构建 `panic = "abort"`，进程随即中止并由守护进程拉起）；最后一次写入超过 15 天后清理 |
 | `engine\topology.json` | 最近一份成功应用的路由拓扑。先写临时文件再改名；启动时读取并重新校验 |

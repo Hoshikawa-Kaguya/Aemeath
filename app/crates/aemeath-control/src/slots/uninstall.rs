@@ -14,6 +14,9 @@ use aemeath_sys::com::ComApartment;
 use aemeath_sys::devices;
 use aemeath_usbip::identity::{IdentityProfile, SlotIdentity};
 use thiserror::Error;
+use tracing::warn;
+
+use crate::usbip_cli::UsbipCli;
 
 const USB_ENUMERATOR: &str = "USB";
 const ENDPOINT_PREFIX: &str = r"SWD\MMDEVAPI\";
@@ -88,6 +91,61 @@ pub fn find_instances(identity: IdentityProfile) -> Result<Vec<SlotInstance>, Un
     instances.extend(endpoint_instances(&identities)?);
     instances.sort_by(|a, b| a.stage.cmp(&b.stage).then_with(|| a.instance_id.cmp(&b.instance_id)));
     Ok(instances)
+}
+
+/// 让提权的守护进程移除虚拟设备的命令行参数（M4 计划 C1、C4）
+pub const REMOVE_ARGUMENT: &str = "--remove-virtual-devices";
+
+/// 一个实例的卸载结果。
+#[derive(Debug)]
+pub struct Removal {
+    pub instance: SlotInstance,
+    pub result: Result<(), UninstallError>,
+}
+
+/// 卸下自己身份的挂载（只碰指向 Aemeath 服务端口、或 VID:PID 属于自己的条目），再按顺序卸载全部设备实例（需要管理员权限）。
+/// 开发工具、卸载钩子、便携版的"移除虚拟设备"共用（M4 计划 2.7 节）。
+pub async fn detach_and_remove(identity: IdentityProfile, cli: &UsbipCli) -> Result<Vec<Removal>, UninstallError> {
+    let identities = identity
+        .all()
+        .map_err(|error| UninstallError::Devices(error.to_string()))?;
+    match cli.imported().await {
+        Ok(devices) => {
+            for device in devices
+                .iter()
+                .filter(|device| device.is_served_by(cli.server_port()) || device.belongs_to(&identities))
+            {
+                if let Some(owner) = identities.iter().find(|own| own.busid.as_str() == device.busid)
+                    && let Err(error) = cli.stop_retry(&owner.busid).await
+                {
+                    warn!(%error, busid = %device.busid, "cannot stop the pending retry");
+                }
+                if let Err(error) = cli.detach(device.port).await {
+                    warn!(%error, port = %device.port, "cannot detach");
+                }
+            }
+        }
+        Err(error) => warn!(%error, "cannot list the attached devices"),
+    }
+    Ok(find_instances(identity)?
+        .into_iter()
+        .map(|instance| {
+            let result = remove(&instance);
+            Removal { instance, result }
+        })
+        .collect())
+}
+
+/// 这套身份的 16 个复合设备实例是否都存在（包括不在线的）。只查 USB 枚举器，不需要管理员权限（M4 计划 D5）。
+pub fn all_slots_registered(identity: IdentityProfile) -> Result<bool, UninstallError> {
+    let identities = identity
+        .all()
+        .map_err(|error| UninstallError::Devices(error.to_string()))?;
+    let usb = devices::instance_ids(USB_ENUMERATOR).map_err(|error| UninstallError::Devices(error.to_string()))?;
+    Ok(identities.iter().all(|identity| {
+        usb.iter()
+            .any(|id| composite_of(id, std::slice::from_ref(identity)).is_some())
+    }))
 }
 
 /// 卸载一个实例（需要管理员权限）。
@@ -181,6 +239,22 @@ mod tests {
         assert!(composite_of(r"USB\VID_1209&PID_0001\AEMPROBE01", &identities).is_none());
         assert!(composite_of(r"USB\VID_1209&PID_0003\AEMDEVIN01", &identities).is_none());
         assert!(composite_of(r"USB\VID_046D&PID_0001\AEMDEVIN01", &identities).is_none());
+    }
+
+    #[test]
+    fn production_composites_share_a_pid_and_match_by_serial() {
+        let identities = IdentityProfile::Production.all().unwrap();
+        assert_eq!(
+            composite_of(r"USB\VID_1209&PID_AEEE\AEMIN01", &identities).map(|identity| identity.product_name.as_str()),
+            Some("Aemeath In 1")
+        );
+        assert_eq!(
+            composite_of(r"USB\VID_1209&PID_AEEE\AEMOUT08", &identities).map(|identity| identity.product_name.as_str()),
+            Some("Aemeath Out 8")
+        );
+        // 开发身份的实例不属于正式身份，反过来也一样
+        assert!(composite_of(r"USB\VID_1209&PID_0001\AEMDEVIN01", &identities).is_none());
+        assert!(composite_of(r"USB\VID_1209&PID_AEEE\AEMIN01", &self::identities()).is_none());
     }
 
     #[test]

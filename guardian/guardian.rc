@@ -1,2 +1,4 @@
 // 嵌入清单：资源 ID 1（CREATEPROCESS_MANIFEST_RESOURCE_ID），类型 24（RT_MANIFEST）
 1 24 "guardian.manifest"
+// 程序图标：开始菜单快捷方式、开机启动项和 Velopack 的启动器都显示它（与主程序共用）
+1 ICON "../app/src-tauri/icons/icon.ico"

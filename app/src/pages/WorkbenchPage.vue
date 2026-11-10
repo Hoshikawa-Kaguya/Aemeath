@@ -547,6 +547,7 @@ onBeforeUnmount(() => {
           :min-zoom="MIN_ZOOM"
           :max-zoom="MAX_ZOOM"
           :delete-key-code="null"
+          :zoom-on-double-click="false"
           :connection-mode="ConnectionMode.Strict"
           :default-viewport="INITIAL_VIEWPORT"
           :connect-on-click="false"
@@ -586,7 +587,7 @@ onBeforeUnmount(() => {
         >
           {{ dragTip.text }}
         </div>
-        <!-- 工作台为空时的引导（GLOSSARY：预设）：添加了任何节点后消失 -->
+        <!-- 工作台为空时的引导（GLOSSARY：工作台预设）：添加了任何节点后消失 -->
         <div v-if="store.state !== null && store.nodes.length === 0" class="empty-guide" role="region">
           <h3>{{ t('preset.title') }}</h3>
           <p class="caption">{{ t('preset.body') }}</p>

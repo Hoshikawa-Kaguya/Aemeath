@@ -15,7 +15,7 @@ use aemeath_dsp::gain::{SmoothedGain, db_to_linear};
 use aemeath_dsp::gate::Gate;
 use aemeath_protocol::graph;
 use aemeath_protocol::ids::{EndpointId, NodeId, ProgramPath, SlotDirection, SlotId, TopologyRevision};
-use aemeath_protocol::topology::{NodeKind, NodeRole, RouteTopology};
+use aemeath_protocol::topology::{NodeKind, NodeRole, Resampler, RouteTopology};
 use aemeath_protocol::units::{GateThreshold, SampleRate};
 
 use crate::STEREO;
@@ -109,9 +109,20 @@ pub struct Mixer {
     inherit_ports: Vec<Option<usize>>,
     slot_inputs: Vec<(usize, SlotId)>,
     slot_outputs: Vec<(usize, SlotId)>,
+    /// 槽位的重采样算法（节点覆盖或全局默认，R9）
+    slot_resamplers: HashMap<SlotId, Resampler>,
+    default_resampler: Resampler,
 }
 
 impl Mixer {
+    /// 槽位应使用的重采样算法。没有节点占用的槽位用全局默认。
+    pub fn slot_resampler(&self, slot: SlotId) -> Resampler {
+        self.slot_resamplers
+            .get(&slot)
+            .copied()
+            .unwrap_or(self.default_resampler)
+    }
+
     /// 从已通过校验的拓扑构建混音器。`previous` 是上一份拓扑的布局（第一份拓扑为 None）。
     pub fn build(
         topology: &RouteTopology,
@@ -243,6 +254,14 @@ impl Mixer {
 
         let slot_inputs = slot_nodes(&nodes, SlotDirection::In);
         let slot_outputs = slot_nodes(&nodes, SlotDirection::Out);
+        let slot_resamplers = topology
+            .nodes
+            .iter()
+            .filter_map(|node| {
+                let resampler = node.slot_settings.and_then(|settings| settings.resampler);
+                Some((node.kind.slot()?, resampler.unwrap_or(topology.resampler)))
+            })
+            .collect();
         let layout = MixerLayout {
             node_ids: topology.nodes.iter().map(|node| node.id).collect(),
             routes: current_routes,
@@ -262,6 +281,8 @@ impl Mixer {
             inherit_ports,
             slot_inputs,
             slot_outputs,
+            slot_resamplers,
+            default_resampler: topology.resampler,
         };
         (mixer, layout)
     }
@@ -493,6 +514,7 @@ mod tests {
             id,
             kind,
             strip: Strip::default(),
+            slot_settings: None,
             io: None,
         }
     }

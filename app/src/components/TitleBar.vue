@@ -63,10 +63,6 @@ onUnmounted(() => {
 
 <template>
   <header class="title-bar" data-tauri-drag-region>
-    <div class="brand" data-tauri-drag-region>
-      <AppIcon name="logo" class="logo" />
-      <b data-tauri-drag-region>{{ t('app.title') }}</b>
-    </div>
     <div class="chips" data-tauri-drag-region :aria-label="t('titleBar.statusAria')">
       <span class="chip" :class="{ warn: engine !== 'running' }">
         <span class="dot" :class="engine" aria-hidden="true"></span>{{ engineText }}
@@ -91,7 +87,9 @@ onUnmounted(() => {
         <span class="dot" :class="store.state?.usbipVersion ? 'running' : 'unresponsive'" aria-hidden="true"></span>
         <AppIcon name="slots" />{{ t('chip.slots', { used: slotsUsed }) }}
       </button>
-      <span class="chip">{{ rate }}</span>
+      <button type="button" class="chip chip-btn" :title="t('chip.rateTip')" @click="store.rateDialogOpen = true">
+        {{ store.rateSwitching ? t('chip.rateSwitching') : rate }}
+      </button>
     </div>
     <div class="spacer" data-tauri-drag-region></div>
     <div class="caption-buttons">
@@ -131,25 +129,7 @@ onUnmounted(() => {
   gap: 12px;
   height: 48px;
   flex: none;
-  padding-left: 16px;
-}
-
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: var(--fontSizeBase200);
-}
-
-.brand b {
-  font-weight: var(--fontWeightSemibold);
-  font-size: var(--fontSizeBase300);
-}
-
-.logo {
-  width: 20px;
-  height: 20px;
-  color: var(--accent-text);
+  padding-left: 24px;
 }
 
 /* 窗口变窄时整块隐藏放不下的标签，不截断文字 */
@@ -163,7 +143,6 @@ onUnmounted(() => {
   height: 26px;
   overflow: hidden;
   min-width: 0;
-  margin-left: 12px;
 }
 
 .chip {

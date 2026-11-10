@@ -3,9 +3,10 @@
 
 import { defineStore } from 'pinia'
 import { computed, ref, shallowRef, watch } from 'vue'
-import { backend, onStateChanged } from '@/api/backend'
-import type { CommandError, HotkeyTargetView, NodeView, ViewState } from '@/api/types'
+import { backend, onStateChanged, onUpdateChanged } from '@/api/backend'
+import type { CommandError, HotkeyTargetView, NodeView, UpdateView, ViewState } from '@/api/types'
 import { i18n, localeFor, setLocale } from '@/i18n'
+import { applyAppearance } from '@/theme/theme'
 import { describeTarget } from '@/workbench/hotkeyLabels'
 
 const PAGES = ['workbench', 'devices', 'apps', 'recordings', 'hotkeys', 'tools', 'settings'] as const
@@ -26,6 +27,10 @@ export interface Confirmation {
 
 /** 提示条自动消失的时间 */
 const TOAST_MS = 5000
+/** 切换引擎采样率时，最多等这么久（M4 计划 E3）；超时就解除，界面显示实际格式 */
+const RATE_SWITCH_TIMEOUT_MS = 10_000
+/** 共享模式下跟随引擎的采样率上限（SLOT_FORMAT_MAX_HZ） */
+export const SLOT_FORMAT_MAX_HZ = 384_000
 
 export const useAppStore = defineStore('app', () => {
   const state = shallowRef<ViewState | null>(null)
@@ -35,6 +40,12 @@ export const useAppStore = defineStore('app', () => {
   let toastTimer = 0
   /** 已经显示过的最大提示编号 */
   let lastNotice = 0
+  /** 引擎采样率对话框是否打开（标题栏和设置页共用） */
+  const rateDialogOpen = ref(false)
+  /** 正在切换引擎采样率：等"跟随引擎"的节点读回新格式 */
+  const rateSwitching = ref(false)
+  let rateSwitchTimer = 0
+  const update = shallowRef<UpdateView | null>(null)
 
   const nodes = computed(() => state.value?.nodes ?? [])
   const routes = computed(() => state.value?.routes ?? [])
@@ -79,6 +90,47 @@ export const useAppStore = defineStore('app', () => {
       applyLocale(localeFor(next.language))
     }
     showNotices(next, previous === null)
+    if (
+      previous === null ||
+      previous.appearance.themeMode !== next.appearance.themeMode ||
+      previous.appearance.accent !== next.appearance.accent
+    ) {
+      applyAppearance(next.appearance)
+    }
+    if (previous === null) {
+      // 主题已应用，这时显示窗口不会闪默认色
+      backend.windowReady().catch(() => {})
+    }
+    if (rateSwitching.value && followersAtEngineRate(next)) {
+      endRateSwitch()
+    }
+  }
+
+  /** 在线的"跟随引擎"节点是否都已读回新采样率 */
+  function followersAtEngineRate(snapshot: ViewState): boolean {
+    const wanted = Math.min(snapshot.engine.sampleRate, SLOT_FORMAT_MAX_HZ)
+    return snapshot.nodes.every((node) => {
+      if (node.slot === null || node.slotSettings?.format !== null) {
+        return true
+      }
+      const { direction, number } = node.slot
+      const row = snapshot.slots.find((slot) => slot.slot.direction === direction && slot.slot.number === number)
+      return row?.health.state !== 'healthy' || row.format?.sampleRate === wanted
+    })
+  }
+
+  function endRateSwitch(): void {
+    window.clearTimeout(rateSwitchTimer)
+    rateSwitching.value = false
+  }
+
+  async function setEngineRate(hz: number): Promise<void> {
+    rateSwitching.value = true
+    window.clearTimeout(rateSwitchTimer)
+    rateSwitchTimer = window.setTimeout(endRateSwitch, RATE_SWITCH_TIMEOUT_MS)
+    if (!(await run(() => backend.setEngineRate(hz)))) {
+      endRateSwitch()
+    }
   }
 
   /** 后端的一次性提示：只显示没见过的；界面刚打开时，之前的提示都算见过（不重放） */
@@ -128,7 +180,9 @@ export const useAppStore = defineStore('app', () => {
 
   async function start(): Promise<void> {
     await onStateChanged(receive)
+    await onUpdateChanged((next) => (update.value = next))
     receive(await backend.getState())
+    update.value = await backend.getUpdateState()
   }
 
   async function undo(): Promise<void> {
@@ -191,7 +245,12 @@ export const useAppStore = defineStore('app', () => {
     toggleRecording,
     disconnect,
     confirmation,
+    confirm,
     answerConfirmation,
+    rateDialogOpen,
+    rateSwitching,
+    setEngineRate,
+    update,
     showToast,
     hideToast,
     errorText,

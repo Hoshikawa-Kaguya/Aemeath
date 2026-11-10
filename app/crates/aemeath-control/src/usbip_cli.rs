@@ -14,6 +14,7 @@ use std::process::Stdio;
 use std::str::FromStr;
 use std::time::{Duration, Instant};
 
+use aemeath_usbip::identity::SlotIdentity;
 use aemeath_usbip::wire::BusId;
 use thiserror::Error;
 use tracing::{debug, warn};
@@ -46,12 +47,23 @@ pub struct ImportedDevice {
     pub host: String,
     pub server_port: u16,
     pub busid: String,
+    /// (VID, PID)；`usbip port` 没有输出这一行时为 None
+    pub device_ids: Option<(u16, u16)>,
 }
 
 impl ImportedDevice {
     /// 是否指向 Aemeath 的服务端。其他条目属于别的软件（如 DS4Windows、VIIPER），一律不碰。
     pub fn is_served_by(&self, server_port: u16) -> bool {
         self.host == SERVER_HOST && self.server_port == server_port
+    }
+
+    /// 是否是这些槽位之一的挂载。引擎每次启动的端口可能不同，上次留下的挂载只能靠 VID:PID 认出来；
+    /// 不能只看本机地址和 busid，本机上别的 USB/IP 软件也可能用 `1-1` 这样的 busid。
+    pub fn belongs_to(&self, identities: &[SlotIdentity]) -> bool {
+        self.host == SERVER_HOST
+            && identities
+                .iter()
+                .any(|own| own.busid.as_str() == self.busid && self.device_ids == Some((own.vendor_id, own.product_id)))
     }
 }
 
@@ -157,6 +169,11 @@ impl UsbipCli {
     pub fn default_program() -> Option<PathBuf> {
         let program_files = std::env::var_os(PROGRAM_FILES_VARIABLE)?;
         Some(Path::new(&program_files).join(DEFAULT_INSTALL_DIR).join(EXECUTABLE))
+    }
+
+    /// 换成引擎实际监听的端口（握手时得知）。
+    pub fn set_server_port(&mut self, server_port: u16) {
+        self.server_port = server_port;
     }
 
     pub fn server_port(&self) -> u16 {
@@ -289,15 +306,16 @@ pub fn parse_attach_terse(stdout: &str) -> Option<VhciPort> {
 /// ```text
 /// Port 01: device in use at High Speed(480Mbps)
 ///          Generic : pid.codes Test PID (1209:0001)
-///            -> usbip://127.0.0.1:3241/1-1
+///            -> usbip://127.0.0.1:32410/1-1
 ///            -> remote bus/dev: 001/001
 /// ```
 ///
-/// 只认 `Port NN:` 和 `-> usbip://主机:端口/busid` 两种行，其余行（速度、厂商名、serial、mode）不解析。
+/// 只认 `Port NN:`、`厂商 : 产品 (VID:PID)` 和 `-> usbip://主机:端口/busid` 三种行，其余行（速度、厂商名、serial、mode）不解析。
 pub fn parse_port_list(stdout: &str) -> Vec<ImportedDevice> {
     let mut devices = Vec::new();
     let mut current: Option<VhciPort> = None;
     let mut found_url = false;
+    let mut device_ids = None;
     for line in stdout.lines().map(str::trim) {
         if let Some(port) = parse_port_header(line) {
             if let Some(previous) = current
@@ -307,6 +325,12 @@ pub fn parse_port_list(stdout: &str) -> Vec<ImportedDevice> {
             }
             current = Some(port);
             found_url = false;
+            device_ids = None;
+        } else if current.is_some()
+            && !found_url
+            && let Some(ids) = parse_device_ids(line)
+        {
+            device_ids = Some(ids);
         } else if let Some(port) = current
             && !found_url
             && let Some((host, server_port, busid)) = parse_url_line(line)
@@ -316,6 +340,7 @@ pub fn parse_port_list(stdout: &str) -> Vec<ImportedDevice> {
                 host,
                 server_port,
                 busid,
+                device_ids,
             });
             found_url = true;
         }
@@ -326,6 +351,16 @@ pub fn parse_port_list(stdout: &str) -> Vec<ImportedDevice> {
         debug!(%previous, "usbip port entry without a usbip:// line ignored");
     }
     devices
+}
+
+/// `Generic : pid.codes Test PID (1209:0001)` → (VID, PID)
+fn parse_device_ids(line: &str) -> Option<(u16, u16)> {
+    let (_, ids) = line.strip_suffix(')')?.rsplit_once('(')?;
+    let (vendor, product) = ids.split_once(':')?;
+    Some((
+        u16::from_str_radix(vendor, 16).ok()?,
+        u16::from_str_radix(product, 16).ok()?,
+    ))
 }
 
 /// `Port 01: ...` → 端口号（有前导零）
@@ -339,7 +374,7 @@ fn parse_port_header(line: &str) -> Option<VhciPort> {
     number.parse().ok().map(VhciPort)
 }
 
-/// `-> usbip://127.0.0.1:3241/1-1` → (主机, 端口, busid)
+/// `-> usbip://127.0.0.1:32410/1-1` → (主机, 端口, busid)
 fn parse_url_line(line: &str) -> Option<(String, u16, String)> {
     let url = line.strip_prefix("->")?.trim().strip_prefix("usbip://")?;
     let (authority, busid) = url.split_once('/')?;
@@ -376,7 +411,7 @@ mod tests {
         };
     }
 
-    const AEMEATH_PORT: u16 = 3241;
+    const AEMEATH_PORT: u16 = 32410;
 
     #[test]
     fn samples_keep_their_crlf_line_endings() {
@@ -405,9 +440,27 @@ mod tests {
                 host: SERVER_HOST.to_owned(),
                 server_port: AEMEATH_PORT,
                 busid: "1-1".to_owned(),
+                device_ids: Some((0x1209, 0x0001)),
             }]
         );
         assert!(parse_port_list(stdout_of(sample!("detached-port-all"))).is_empty());
+    }
+
+    #[test]
+    fn own_devices_are_recognized_whatever_the_port() {
+        let identities = aemeath_usbip::identity::IdentityProfile::Development.all().unwrap();
+        let device = |host: &str, ids| ImportedDevice {
+            port: VhciPort(1),
+            host: host.to_owned(),
+            server_port: 13_982,
+            busid: "1-1".to_owned(),
+            device_ids: ids,
+        };
+        assert!(device(SERVER_HOST, Some((0x1209, 0x0001))).belongs_to(&identities));
+        // 本机别的软件恰好用了同样的 busid
+        assert!(!device(SERVER_HOST, Some((0x054c, 0x09cc))).belongs_to(&identities));
+        assert!(!device(SERVER_HOST, None).belongs_to(&identities));
+        assert!(!device("192.168.1.20", Some((0x1209, 0x0001))).belongs_to(&identities));
     }
 
     #[test]
@@ -417,7 +470,7 @@ mod tests {
             \x20        Sony : DualShock 4 (054c:09cc)\n\
             \x20          -> usbip://192.168.1.20:3240/1-4\n\
             Port 07: device in use at High Speed(480Mbps)\n\
-            \x20          -> usbip://127.0.0.1:3241/1-10\n";
+            \x20          -> usbip://127.0.0.1:32410/1-10\n";
         let devices = parse_port_list(stdout);
         assert_eq!(devices.len(), 2);
         assert!(!devices[0].is_served_by(AEMEATH_PORT));
@@ -429,7 +482,7 @@ mod tests {
     #[test]
     fn ignores_entries_without_a_url_and_unknown_lines() {
         let stdout = "Port 01: device in use\r\n   -> remote bus/dev: 001/001\r\n\
-            something new\r\nPort xx: odd\r\nPort 02: ok\r\n  -> usbip://127.0.0.1:3241/1-2\r\n";
+            something new\r\nPort xx: odd\r\nPort 02: ok\r\n  -> usbip://127.0.0.1:32410/1-2\r\n";
         let devices = parse_port_list(stdout);
         assert_eq!(devices.len(), 1);
         assert_eq!(devices[0].port, VhciPort(2));

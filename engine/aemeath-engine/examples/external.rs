@@ -7,8 +7,10 @@
 //! 往 Dev In 1 播放 1 kHz 正弦波，用 WASAPI 环回录下外部输出实际收到的声音，逐样本检查连续性；
 //! 外部输入的内容无法预知，只确认 Dev Out 1 上有信号，稳定性看引擎日志里的桥接状态（每分钟一条）。
 //!
-//! 用法：`cargo run -p aemeath-engine --example external --release -- [秒数] [--output 名称] [--input 名称] [--exclusive]`
+//! 用法：`cargo run -p aemeath-engine --example external --release -- [秒数] [--output 名称] [--input 名称] [--exclusive]
+//! [--output-rate 采样率] [--resampler poly|sinc|fft]`
 //! 默认两台外部设备都以共享方式打开（为了环回检查）；`--exclusive` 时独占打开，不做环回检查。
+//! `--output-rate` 让外部输出独占并固定在这个采样率（高采样率断音的复现，M4 计划 1.2 节），外部输入不受影响。
 //! 不指定名称时用系统默认的播放和录音设备。外部输出会发出很轻的 1 kHz 提示音。agent 执行时不超过 5 分钟。
 
 mod common;
@@ -22,7 +24,8 @@ use aemeath_io::IoDirection;
 use aemeath_protocol::ids::{NodeId, SlotDirection, TopologyRevision};
 use aemeath_protocol::message::EndpointStatus;
 use aemeath_protocol::topology::{
-    DeviceAccess, DeviceSettings, NodeKind, Resampler, RouteTopology, Strip, TopologyNode, TopologyRoute,
+    BufferChoice, DeviceAccess, DeviceSettings, FftPreset, FormatChoice, NodeKind, PolyPreset, Resampler,
+    RouteTopology, SincPreset, Strip, TopologyNode, TopologyRoute,
 };
 use aemeath_protocol::units::{GainDb, SampleRate};
 use aemeath_usbip::identity::IdentityProfile;
@@ -49,6 +52,23 @@ struct Options {
     /// 两台外部设备都以独占方式打开（ADR-0014）。独占的流不经过 Windows 混音器，环回录不到，
     /// 所以这时不做环回检查，只检查两台设备都在线、没有离线
     exclusive: bool,
+    output_rate: Option<u32>,
+    resampler: Resampler,
+}
+
+fn parse_resampler(name: Option<String>) -> Result<Resampler> {
+    match name.as_deref() {
+        Some("poly") => Ok(Resampler::PolyAsync {
+            preset: PolyPreset::default(),
+        }),
+        Some("sinc") => Ok(Resampler::SincAsync {
+            preset: SincPreset::default(),
+        }),
+        Some("fft") => Ok(Resampler::FftSync {
+            preset: FftPreset::default(),
+        }),
+        other => Err(format!("unknown resampler: {other:?}").into()),
+    }
 }
 
 fn main() -> ExitCode {
@@ -68,6 +88,8 @@ fn parse() -> Result<Options> {
         output: None,
         input: None,
         exclusive: false,
+        output_rate: None,
+        resampler: Resampler::default(),
     };
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -75,6 +97,8 @@ fn parse() -> Result<Options> {
             "--output" => options.output = args.next(),
             "--input" => options.input = args.next(),
             "--exclusive" => options.exclusive = true,
+            "--output-rate" => options.output_rate = args.next().map(|rate| rate.parse()).transpose()?,
+            "--resampler" => options.resampler = parse_resampler(args.next())?,
             seconds => options.seconds = seconds.parse()?,
         }
     }
@@ -104,10 +128,31 @@ fn run() -> Result<bool> {
         },
         resampler: None,
     };
+    let output_settings = match options.output_rate {
+        Some(rate) => {
+            let capabilities = aemeath_io::capabilities::probe_device(&output_device)?;
+            println!("exclusive formats: {:?}", capabilities.exclusive_formats);
+            let format = capabilities
+                .recommended(SampleRate::new(rate)?)
+                .filter(|format| format.sample_rate.hz() == rate)
+                .ok_or_else(|| format!("{output_name} has no exclusive format at {rate} Hz"))?;
+            println!("exclusive output format: {format:?}");
+            DeviceSettings {
+                access: DeviceAccess::Exclusive {
+                    format: FormatChoice::Fixed { format },
+                    buffer: BufferChoice::default(),
+                },
+                resampler: None,
+            }
+        }
+        None => settings,
+    };
     engine.apply_topology(&topology(
         endpoint_id(&output_device)?,
         endpoint_id(&input_device)?,
+        output_settings,
         settings,
+        options.resampler,
     )?)?;
     let _attachment = Attachment::attach(PORT, &BUS_IDS);
     let started = Instant::now();
@@ -116,7 +161,7 @@ fn run() -> Result<bool> {
     let expected = AMPLITUDE * 10f64.powf(f64::from(OUTPUT_GAIN_DB) / DECIBELS_PER_DECADE);
     let window = seconds - TAIL_SECONDS - SETTLE_SECONDS;
     let output_for_loopback = options.output.clone();
-    let exclusive = options.exclusive;
+    let exclusive = options.exclusive || options.output_rate.is_some();
     let loopback = thread::spawn(move || -> Result<Option<common::Analysis>> {
         if exclusive {
             return Ok(None);
@@ -186,7 +231,9 @@ fn run() -> Result<bool> {
 fn topology(
     output: aemeath_protocol::ids::EndpointId,
     input: aemeath_protocol::ids::EndpointId,
-    settings: DeviceSettings,
+    output_settings: DeviceSettings,
+    input_settings: DeviceSettings,
+    resampler: Resampler,
 ) -> Result<RouteTopology> {
     let slot_input = NodeId(1);
     let external_output = NodeId(2);
@@ -194,7 +241,12 @@ fn topology(
     let slot_output = NodeId(4);
     let node = |id, kind: NodeKind| TopologyNode {
         id,
-        io: kind.is_external().then_some(settings),
+        slot_settings: None,
+        io: kind.is_external().then_some(if id == external_output {
+            output_settings
+        } else {
+            input_settings
+        }),
         kind,
         strip: Strip::default(),
     };
@@ -202,7 +254,7 @@ fn topology(
         revision: TopologyRevision(1),
         engine_sample_rate: SampleRate::new(ENGINE_RATE)?,
         clock_master: Some(external_output),
-        resampler: Resampler::default(),
+        resampler,
         nodes: vec![
             node(
                 slot_input,

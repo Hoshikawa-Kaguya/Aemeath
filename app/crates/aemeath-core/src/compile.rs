@@ -23,6 +23,7 @@ impl Workspace {
                     id: node.id,
                     kind: node.kind.map_device(|device| device.endpoint.clone()),
                     strip: node.strip,
+                    slot_settings: node.slot_settings(),
                     io: node.device_settings(),
                 })
                 .collect(),

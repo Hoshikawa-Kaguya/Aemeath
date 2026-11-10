@@ -4,7 +4,10 @@
 //! 所以在这里换算，并在换算时校验取值。
 
 use aemeath_protocol::message::{DeviceCapabilities, DeviceFormat};
-use aemeath_protocol::topology::{BufferChoice, DeviceAccess, DeviceSettings, FormatChoice, Resampler};
+use aemeath_protocol::topology::{
+    BufferChoice, DeviceAccess, DeviceSettings, FftPreset, FormatChoice, PolyPreset, Resampler, SincPreset,
+    SlotFormatChoice, SlotNodeSettings,
+};
 use aemeath_protocol::units::{BufferMs, SampleRate};
 use serde::{Deserialize, Serialize};
 
@@ -30,21 +33,63 @@ pub enum BufferView {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(tag = "algorithm", rename_all = "camelCase")]
 pub enum ResamplerView {
-    SincHigh,
-    SincStandard,
-    Polynomial,
-    Linear,
+    PolyAsync { preset: PolyPresetView },
+    SincAsync { preset: SincPresetView },
+    FftSync { preset: FftPresetView },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PolyPresetView {
+    Fastest,
+    Smooth,
+    Fine,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SincPresetView {
+    VeryFast,
+    Fast,
+    Balanced,
+    Accurate,
+    Ultra,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FftPresetView {
+    LowLatency,
+    Balanced,
 }
 
 impl From<Resampler> for ResamplerView {
     fn from(resampler: Resampler) -> Self {
         match resampler {
-            Resampler::SincHigh => Self::SincHigh,
-            Resampler::SincStandard => Self::SincStandard,
-            Resampler::Polynomial => Self::Polynomial,
-            Resampler::Linear => Self::Linear,
+            Resampler::PolyAsync { preset } => Self::PolyAsync {
+                preset: match preset {
+                    PolyPreset::Fastest => PolyPresetView::Fastest,
+                    PolyPreset::Smooth => PolyPresetView::Smooth,
+                    PolyPreset::Fine => PolyPresetView::Fine,
+                },
+            },
+            Resampler::SincAsync { preset } => Self::SincAsync {
+                preset: match preset {
+                    SincPreset::VeryFast => SincPresetView::VeryFast,
+                    SincPreset::Fast => SincPresetView::Fast,
+                    SincPreset::Balanced => SincPresetView::Balanced,
+                    SincPreset::Accurate => SincPresetView::Accurate,
+                    SincPreset::Ultra => SincPresetView::Ultra,
+                },
+            },
+            Resampler::FftSync { preset } => Self::FftSync {
+                preset: match preset {
+                    FftPreset::LowLatency => FftPresetView::LowLatency,
+                    FftPreset::Balanced => FftPresetView::Balanced,
+                },
+            },
         }
     }
 }
@@ -52,10 +97,28 @@ impl From<Resampler> for ResamplerView {
 impl From<ResamplerView> for Resampler {
     fn from(resampler: ResamplerView) -> Self {
         match resampler {
-            ResamplerView::SincHigh => Self::SincHigh,
-            ResamplerView::SincStandard => Self::SincStandard,
-            ResamplerView::Polynomial => Self::Polynomial,
-            ResamplerView::Linear => Self::Linear,
+            ResamplerView::PolyAsync { preset } => Self::PolyAsync {
+                preset: match preset {
+                    PolyPresetView::Fastest => PolyPreset::Fastest,
+                    PolyPresetView::Smooth => PolyPreset::Smooth,
+                    PolyPresetView::Fine => PolyPreset::Fine,
+                },
+            },
+            ResamplerView::SincAsync { preset } => Self::SincAsync {
+                preset: match preset {
+                    SincPresetView::VeryFast => SincPreset::VeryFast,
+                    SincPresetView::Fast => SincPreset::Fast,
+                    SincPresetView::Balanced => SincPreset::Balanced,
+                    SincPresetView::Accurate => SincPreset::Accurate,
+                    SincPresetView::Ultra => SincPreset::Ultra,
+                },
+            },
+            ResamplerView::FftSync { preset } => Self::FftSync {
+                preset: match preset {
+                    FftPresetView::LowLatency => FftPreset::LowLatency,
+                    FftPresetView::Balanced => FftPreset::Balanced,
+                },
+            },
         }
     }
 }
@@ -120,6 +183,62 @@ impl TryFrom<DeviceSettingsView> for DeviceSettings {
     }
 }
 
+/// 占用槽位的节点的设置在界面上的表示。
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SlotSettingsView {
+    /// None 表示跟随引擎
+    pub format: Option<FormatView>,
+    /// None 表示跟随全局默认
+    pub resampler: Option<ResamplerView>,
+}
+
+/// 槽位都是立体声；界面的格式带声道数，这里只用于显示
+const SLOT_CHANNELS: u16 = 2;
+
+impl From<SlotNodeSettings> for SlotSettingsView {
+    fn from(settings: SlotNodeSettings) -> Self {
+        Self {
+            format: match settings.format {
+                SlotFormatChoice::FollowEngine => None,
+                SlotFormatChoice::Fixed {
+                    sample_rate,
+                    sample_format,
+                } => Some(FormatView::from(DeviceFormat {
+                    sample_rate,
+                    sample_format,
+                    channels: SLOT_CHANNELS,
+                })),
+            },
+            resampler: settings.resampler.map(ResamplerView::from),
+        }
+    }
+}
+
+impl TryFrom<SlotSettingsView> for SlotNodeSettings {
+    type Error = InvalidSettings;
+
+    fn try_from(view: SlotSettingsView) -> Result<Self, Self::Error> {
+        let format = match view.format {
+            None => SlotFormatChoice::FollowEngine,
+            Some(format) => {
+                let format = DeviceFormat::try_from(format).map_err(|error| InvalidSettings(error.to_string()))?;
+                SlotFormatChoice::Fixed {
+                    sample_rate: format.sample_rate,
+                    sample_format: format.sample_format,
+                }
+            }
+        };
+        if !format.is_valid() {
+            return Err(InvalidSettings("the virtual device cannot use this format".to_owned()));
+        }
+        Ok(Self {
+            format,
+            resampler: view.resampler.map(Resampler::from),
+        })
+    }
+}
+
 /// 设备能力在界面上的表示（添加节点与节点设置里的格式、缓冲选项）。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -171,13 +290,15 @@ mod tests {
                     ms: BufferMs::new(3.0).unwrap(),
                 },
             },
-            resampler: Some(Resampler::Polynomial),
+            resampler: Some(Resampler::FftSync {
+                preset: FftPreset::LowLatency,
+            }),
         };
         let view = DeviceSettingsView::from(settings);
         assert_eq!(DeviceSettings::try_from(view), Ok(settings));
         assert_eq!(
             serde_json::to_string(&view).unwrap(),
-            r#"{"exclusive":true,"format":{"sampleRate":48000,"sampleFormat":"int24In32","channels":2},"buffer":{"choice":"milliseconds","ms":3.0},"resampler":"polynomial"}"#
+            r#"{"exclusive":true,"format":{"sampleRate":48000,"sampleFormat":"int24In32","channels":2},"buffer":{"choice":"milliseconds","ms":3.0},"resampler":{"algorithm":"fftSync","preset":"lowLatency"}}"#
         );
     }
 

@@ -82,7 +82,6 @@ const dedicated = computed(() => rows.value.filter((row) => !isGlobal(row.target
 
 .page-sub {
   margin: 0 24px 8px;
-  max-width: 900px;
   color: var(--text-2);
 }
 
@@ -99,7 +98,6 @@ const dedicated = computed(() => rows.value.filter((row) => !isGlobal(row.target
   display: flex;
   flex-direction: column;
   gap: 4px;
-  max-width: 1000px;
 }
 
 /* 列宽固定，长节点名截断 */
@@ -109,7 +107,7 @@ const dedicated = computed(() => rows.value.filter((row) => !isGlobal(row.target
   align-items: center;
   gap: 12px;
   min-height: 52px;
-  padding: 8px 16px;
+  padding: 8px var(--card-padding-end) 8px 16px;
   border-radius: var(--r-card);
   background: var(--card);
   border: 1px solid var(--stroke);
@@ -120,7 +118,6 @@ const dedicated = computed(() => rows.value.filter((row) => !isGlobal(row.target
 }
 
 .note {
-  max-width: 900px;
   margin-top: 16px;
 }
 </style>

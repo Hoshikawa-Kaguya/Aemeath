@@ -22,6 +22,7 @@ use aemeath_usbip::wire::{Direction, Submit, UrbStatus, encode_ret_unlink};
 
 use crate::mixer::{MAX_BLOCK_FRAMES, Mixer};
 use crate::port::PortIssues;
+use crate::resampler_worker::ResamplerWorker;
 use crate::slot::SlotStream;
 use crate::timeline::{MICROFRAMES_PER_MS, Timeline};
 use crate::{EngineEvent, STEREO};
@@ -70,6 +71,7 @@ pub struct Scheduler {
     /// 外部设备端口自上次记录以来的问题
     port_issues: PortIssues,
     last_port_log: i64,
+    resamplers: ResamplerWorker,
 }
 
 impl Scheduler {
@@ -79,6 +81,7 @@ impl Scheduler {
         server_events: Receiver<ServerEvent>,
         retired: Sender<Box<Mixer>>,
         events: Sender<EngineEvent>,
+        resamplers: ResamplerWorker,
     ) -> Self {
         Self {
             timeline,
@@ -95,6 +98,7 @@ impl Scheduler {
             block_pacer: CapturePacer::default(),
             port_issues: PortIssues::default(),
             last_port_log: 0,
+            resamplers,
         }
     }
 
@@ -113,6 +117,7 @@ impl Scheduler {
                 break;
             }
             self.handle_server_events();
+            self.install_built_resamplers();
             let now = now_hns();
             if now - last_iteration > LOOP_GAP_WARNING_HNS {
                 tracing::warn!(
@@ -128,6 +133,19 @@ impl Scheduler {
         tracing::info!("scheduler stopped");
     }
 
+    /// 装上辅助线程构建好的重采样器；连接已经关了或结果已过期的，交回辅助线程释放。
+    fn install_built_resamplers(&mut self) {
+        while let Some((connection, built)) = self.resamplers.try_receive() {
+            let unused = match self.streams.get_mut(&connection) {
+                Some(stream) => stream.install(built),
+                None => Some(built),
+            };
+            if let Some(unused) = unused {
+                self.resamplers.retire(unused);
+            }
+        }
+    }
+
     /// 返回 false 表示应退出。
     fn handle_commands(&mut self) -> bool {
         loop {
@@ -141,8 +159,9 @@ impl Scheduler {
                         self.next_block = None;
                         self.block_pacer.reset();
                     }
-                    for stream in self.streams.values_mut() {
-                        stream.set_engine_rate(Some(rate));
+                    for (connection, stream) in &mut self.streams {
+                        let work = stream.set_processing(Some(rate), mixer.slot_resampler(stream.slot()));
+                        self.resamplers.submit(*connection, work);
                     }
                     tracing::info!(revision = mixer.revision().0, rate = rate.hz(), "topology applied");
                     if let Some(old) = self.mixer.replace(mixer) {
@@ -164,7 +183,10 @@ impl Scheduler {
                     writer,
                 } => {
                     let mut stream = SlotStream::new(slot, writer);
-                    stream.set_engine_rate(self.mixer.as_ref().map(|mixer| mixer.sample_rate()));
+                    if let Some(mixer) = &self.mixer {
+                        // 流还没开始，这里不会产生构建工作
+                        let _ = stream.set_processing(Some(mixer.sample_rate()), mixer.slot_resampler(slot));
+                    }
                     self.streams.insert(connection, stream);
                     self.slots.insert(slot, connection);
                     let _ = self.events.send(EngineEvent::SlotConnection { slot, connected: true });
@@ -177,19 +199,8 @@ impl Scheduler {
                     change,
                 } => {
                     if let Some(stream) = self.streams.get_mut(&connection) {
-                        stream.apply_change(change);
-                        let engine_rate = self.mixer.as_ref().map(|mixer| mixer.sample_rate());
-                        if let (Some(format), Some(engine_rate)) = (stream.format(), engine_rate)
-                            && format.sample_rate != engine_rate
-                        {
-                            // 固定比率重采样在 M4 与设备页的格式设置一起加入；在那之前这个槽位是静音
-                            tracing::warn!(
-                                %slot,
-                                slot_rate = format.sample_rate.hz(),
-                                engine_rate = engine_rate.hz(),
-                                "slot sample rate differs from the engine rate; the slot is silent until they match"
-                            );
-                        }
+                        let work = stream.apply_change(change);
+                        self.resamplers.submit(connection, work);
                         let format = stream.format().map(|format| DeviceFormat {
                             sample_rate: format.sample_rate,
                             sample_format: format.wire.sample_format,
@@ -370,7 +381,10 @@ impl Scheduler {
     }
 
     fn drop_connection(&mut self, connection: ConnectionId, slot: SlotId) {
-        if let Some(stream) = self.streams.remove(&connection) {
+        if let Some(mut stream) = self.streams.remove(&connection) {
+            if let Some(resampler) = stream.take_resampler() {
+                self.resamplers.retire(resampler);
+            }
             let stats = stream.stats;
             tracing::info!(
                 %slot,

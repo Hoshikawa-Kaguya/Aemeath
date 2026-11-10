@@ -164,6 +164,7 @@ mod tests {
                 id: MIC,
                 kind: NodeKind::ExternalInput { device: microphone() },
                 strip: Strip::default(),
+                slot_settings: None,
                 io: None,
             }],
             routes: vec![],

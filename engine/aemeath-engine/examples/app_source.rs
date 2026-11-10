@@ -162,6 +162,7 @@ fn topology(program: ProgramPath) -> Result<RouteTopology> {
         id,
         kind,
         strip: Strip::default(),
+        slot_settings: None,
         io: None,
     };
     Ok(RouteTopology {

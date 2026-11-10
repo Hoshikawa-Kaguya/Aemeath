@@ -1,6 +1,6 @@
-# aemeath-guardian
+# aemeath-guardian（Aemeath.exe）
 
-守护进程（`aemeath-guardian.exe`），是第一个启动的进程（ADR-0003、ADR-0011）：
+守护进程（`Aemeath.exe`），是第一个启动的进程（ADR-0003、ADR-0011）：
 
 1. **单实例**：每个用户只运行一个（互斥体名带用户 SID）。已有实例时直接退出。
 2. **检查 usbip-win2 驱动**（集成文档第 5、7 节）：
@@ -11,7 +11,7 @@
    - `usbip.exe port` 自检：输出要么为空，要么至少能解析出一个条目。
 
    任何一项不满足：显示原生 TaskDialog 说明原因（中文或英文，按配置里的语言偏好，否则按系统界面语言），以退出码 2 退出，不拉起引擎和主程序。M1 只做说明，引导安装附带的驱动在 M4 加入。比附带版本更新的驱动正常使用，只记日志。
-3. **拉起并监视**引擎（`aemeath-host.exe`）与主程序（`aemeath.exe`）：
+3. **拉起并监视**引擎（`aemeath-host.exe`）与主程序（`aemeath-app.exe`）：
    - 两者与守护进程放在同一目录，收到与守护进程相同的参数（数据目录、端口、管道名、共享内存名）。
    - 先拉起引擎，再拉起主程序。
    - 异常退出时按 1、2、4、8、16、30 s 退避重新拉起；连续运行 60 s 后退避清零。
@@ -21,7 +21,7 @@
 子进程不放进作业对象：守护进程自己异常退出时，引擎和主程序继续运行，音频不中断。
 
 ```
-aemeath-guardian [--data-dir <目录>] [--usbip-port <端口>] [--pipe <管道名>] [--meters <共享内存名>]
+Aemeath [--data-dir <目录>] [--usbip-port <端口>] [--pipe <管道名>] [--meters <共享内存名>]
 ```
 
 TaskDialog 需要 Common Controls 6，清单（`guardian.manifest`）由 `build.rs` 嵌入。日志写在数据目录的 `logs\guardian.<日期>.log`。

@@ -7,6 +7,7 @@
 //! - [`audio_policy`]：应用会话与按应用指派、Windows 默认设备。
 
 pub mod audio_policy;
+pub mod crash_dumps;
 pub mod engine_client;
 pub mod hotkeys;
 pub mod meters;

@@ -8,10 +8,10 @@ import '@fluentui/web-components/progress-bar/define.js'
 import '@vue-flow/core/dist/style.css'
 import App from './App.vue'
 import { i18n } from './i18n'
-import { followSystemTheme } from './theme/theme'
+import { initTheme } from './theme/theme'
 import './styles/base.css'
 import './styles/tokens.css'
 
-followSystemTheme()
+initTheme()
 
 createApp(App).use(createPinia()).use(i18n).mount('#app')

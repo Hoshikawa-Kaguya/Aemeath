@@ -21,7 +21,8 @@ use crate::workspace::Workspace;
 /// 2（M2）：新增控制台的固定顺序、通道条的门限。新字段都有默认值，版本 1 的文件可以直接读入；
 /// 提升版本是为了让 M1 的程序明确拒绝新文件，而不是因为不认识的字段把它当作损坏的配置。
 /// 3（M3）：新增应用源、外部插入、录音节点与热键。规则同上。
-pub const CONFIG_VERSION: u32 = 3;
+/// 4（M4）：重采样算法的表示改变，不做迁移（M4 计划 D7），版本 3 的配置解析失败后备份并从空配置开始。
+pub const CONFIG_VERSION: u32 = 4;
 const CONFIG_FILE: &str = "workspace.json";
 const TEMP_SUFFIX: &str = "tmp";
 const BACKUP_INFIX: &str = "corrupt";
@@ -214,7 +215,6 @@ mod tests {
                 language: crate::preferences::LanguagePreference::Fixed {
                     locale: "zh-CN".to_owned(),
                 },
-                slots_registered: true,
                 app_landings: std::collections::BTreeMap::from([(
                     r"C:\Games\game.exe".to_owned(),
                     crate::preferences::LandingRecord::Endpoint(aemeath_protocol::ids::EndpointId(

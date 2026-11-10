@@ -24,9 +24,9 @@ pub enum LanguagePreference {
 pub struct Preferences {
     #[serde(default)]
     pub language: LanguagePreference,
-    /// 16 个槽位是否已完成首次注册（ADR-0009）。完成前每次启动都会重新注册。
-    #[serde(default)]
-    pub slots_registered: bool,
+    /// 关闭"启动时检查更新"（M4 计划 U4）。写成否定形式，默认值就是开启
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub no_update_check_on_start: bool,
     /// Aemeath 做过的按应用指派：可执行文件的完整路径 → 记录（选型报告 5.5 节）。
     /// Windows 按可执行文件持久保存指派，读写都要求该程序正有音频会话，所以记下来，等它下次出现时纠正或撤销。
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -46,6 +46,48 @@ pub struct Preferences {
     /// 全局热键（GLOSSARY：全局热键）
     #[serde(default)]
     pub global_hotkeys: GlobalHotkeys,
+    /// 深浅色、主题色和背景图（M4 计划 1.11 节）
+    #[serde(default)]
+    pub appearance: Appearance,
+}
+
+/// 深浅色模式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThemeMode {
+    #[default]
+    System,
+    Dark,
+    Light,
+}
+
+/// 界面外观。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Appearance {
+    pub theme_mode: ThemeMode,
+    /// 主题色 `#rrggbb`；None 表示默认的 Fluent 蓝
+    pub accent: Option<String>,
+    /// 数据目录 `background\` 下的文件名；None 表示没有背景图
+    pub background_file: Option<String>,
+    /// 背景遮罩的强度，0–[`Self::MAX_OVERLAY_PERCENT`]
+    pub overlay_percent: u8,
+}
+
+impl Appearance {
+    pub const MAX_OVERLAY_PERCENT: u8 = 90;
+    const DEFAULT_OVERLAY_PERCENT: u8 = 60;
+}
+
+impl Default for Appearance {
+    fn default() -> Self {
+        Self {
+            theme_mode: ThemeMode::default(),
+            accent: None,
+            background_file: None,
+            overlay_percent: Self::DEFAULT_OVERLAY_PERCENT,
+        }
+    }
 }
 
 /// 一条按应用指派的记录。untagged：指派写成端点 ID 字符串（与 M2 的配置相同，不需要迁移），待清除写成 null。
@@ -108,6 +150,6 @@ mod tests {
     fn missing_fields_take_their_defaults() {
         let preferences: Preferences = serde_json::from_str("{}").unwrap();
         assert_eq!(preferences, Preferences::default());
-        assert!(!preferences.slots_registered);
+        assert_eq!(preferences.appearance.overlay_percent, 60);
     }
 }

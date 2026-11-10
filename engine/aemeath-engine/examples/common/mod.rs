@@ -16,8 +16,8 @@ use wasapi::{DeviceEnumerator, SampleType, StreamMode};
 pub type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
 pub const USBIP: &str = r"C:\Program Files\USBip\usbip.exe";
-/// 避开 3241 上残留的后台重连
-pub const PORT: u16 = 3242;
+/// 避开默认端口上残留的后台重连
+pub const PORT: u16 = 32411;
 pub const SINE_HZ: f64 = 1_000.0;
 /// 残差超过"幅度 × 这个比例"算一次中断（f32 直通时残差约 1e-6，重采样后约 1e-5 量级）
 const GLITCH_RATIO: f64 = 0.04;

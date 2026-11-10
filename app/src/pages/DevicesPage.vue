@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, useTemplateRef } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { backend } from '@/api/backend'
 import { roleOf, type Direction, type NodeView, type SlotView } from '@/api/types'
@@ -7,10 +7,15 @@ import AppIcon, { type IconName } from '@/components/AppIcon.vue'
 import { formatKhz } from '@/format/format'
 import { useAppStore } from '@/stores/app'
 import { slotName } from '@/stores/nodeLabels'
+import NodeSettingsDialog from '@/workbench/NodeSettingsDialog.vue'
 
-// 设备页（M1 只读）：16 个槽位的占用者、挂载状态和设备格式（ADR-0009）。格式设置在 M4 加入。
+// 设备页：16 个槽位的占用者、挂载状态和设备格式（ADR-0009）。
+// 格式是占用节点的配置，这里用同一个节点设置对话框修改；空槽位没有可改的设置（M4 计划 F3）。
 const { t } = useI18n()
 const store = useAppStore()
+const settingsDialog = useTemplateRef<InstanceType<typeof NodeSettingsDialog>>('settingsDialog')
+/** 共享模式下跟随引擎的采样率上限（SLOT_FORMAT_MAX_HZ） */
+const SLOT_FORMAT_MAX_HZ = 384_000
 
 const slots = computed(() => store.state?.slots ?? [])
 const used = computed(() => slots.value.filter((slot) => slot.occupant !== null).length)
@@ -68,19 +73,36 @@ function stateOf(slot: SlotView): StateDisplay {
   return { icon: 'unplug', tone: 'off', text: t('dev.stOff') }
 }
 
-function formatText(slot: SlotView): string {
-  if (slot.format === null) {
+/** 空槽位没有格式设置，显示"跟随引擎"：Windows 里留着的是上一个节点的格式，下一个占用者挂上时会被改掉 */
+function formatText(slot: SlotView, occupant: NodeView | undefined): string {
+  const sampleRate = occupant ? slot.format?.sampleRate : Math.min(engineRate.value, SLOT_FORMAT_MAX_HZ)
+  const sampleFormat = occupant ? slot.format?.sampleFormat : 'int32'
+  if (sampleRate === undefined || sampleFormat === undefined) {
     return t('dev.fmtUnknown')
   }
-  return t('dev.fmt', {
-    rate: formatKhz(slot.format.sampleRate),
-    format: t(`sampleFormat.${slot.format.sampleFormat}`),
-  })
+  return t('dev.fmt', { rate: formatKhz(sampleRate), format: t(`sampleFormat.${sampleFormat}`) })
 }
 
-function formatHint(slot: SlotView): string {
+/** 槽位读回的格式是否与占用节点的设置一致；设定是异步的，刚修改时可能暂时不一致 */
+function matchesSettings(slot: SlotView, occupant: NodeView | undefined): boolean {
+  if (slot.format === null || occupant?.slotSettings === null || occupant === undefined) {
+    return true
+  }
+  const wanted = occupant.slotSettings.format
+  if (wanted === null) {
+    return (
+      slot.format.sampleRate === Math.min(engineRate.value, SLOT_FORMAT_MAX_HZ) && slot.format.sampleFormat === 'int32'
+    )
+  }
+  return slot.format.sampleRate === wanted.sampleRate && slot.format.sampleFormat === wanted.sampleFormat
+}
+
+function formatHint(slot: SlotView, occupant: NodeView | undefined): string {
   if (!plugged(slot)) {
     return t('dev.fmtOff')
+  }
+  if (!matchesSettings(slot, occupant)) {
+    return t('dev.fmtMismatch')
   }
   return slot.format?.sampleRate === engineRate.value ? t('dev.fmtSame') : t('dev.fmtDiff')
 }
@@ -144,7 +166,8 @@ const healthText = computed(() => {
           <span>{{ t('dev.colSlot') }}</span
           ><span>{{ t('dev.colName') }}</span
           ><span>{{ t('dev.colOcc') }}</span> <span>{{ t('dev.colState') }}</span
-          ><span>{{ t('dev.colFmt') }}</span>
+          ><span>{{ t('dev.colFmt') }}</span
+          ><span></span>
         </div>
         <div class="slot-rows">
           <div
@@ -177,9 +200,13 @@ const healthText = computed(() => {
               <AppIcon :name="stateOf(slot).icon" /><span class="ellipsis">{{ stateOf(slot).text }}</span>
             </span>
             <div class="cell fmt">
-              <span class="ellipsis">{{ formatText(slot) }}</span>
-              <span class="caption ellipsis" :title="formatHint(slot)">{{ formatHint(slot) }}</span>
+              <span class="ellipsis">{{ formatText(slot, occupant) }}</span>
+              <span class="caption ellipsis" :title="formatHint(slot, occupant)">{{ formatHint(slot, occupant) }}</span>
             </div>
+            <fluent-button v-if="occupant?.slotSettings" size="small" @click="settingsDialog?.open(occupant)">
+              {{ t('dev.edit') }}
+            </fluent-button>
+            <span v-else></span>
           </div>
         </div>
       </section>
@@ -187,6 +214,7 @@ const healthText = computed(() => {
         <AppIcon name="info" /><span>{{ t('dev.note') }}</span>
       </p>
     </div>
+    <NodeSettingsDialog ref="settingsDialog" />
   </section>
 </template>
 
@@ -205,7 +233,6 @@ const healthText = computed(() => {
 .page-sub {
   margin: 0 24px 8px;
   color: var(--text-2);
-  max-width: 900px;
 }
 
 .body {
@@ -217,8 +244,7 @@ const healthText = computed(() => {
   grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
   gap: 16px;
   align-items: center;
-  max-width: 1000px;
-  padding: 14px 16px;
+  padding: 14px var(--card-padding-end) 14px 16px;
   border-radius: var(--r-card);
   background: var(--card);
   border: 1px solid var(--stroke);
@@ -246,7 +272,6 @@ const healthText = computed(() => {
 }
 
 .slot-section {
-  max-width: 1000px;
   margin-top: 20px;
 }
 
@@ -265,13 +290,13 @@ const healthText = computed(() => {
 /* 列宽固定：长的节点名、设备名截断，不会把某一列撑宽 */
 .slot-grid {
   display: grid;
-  grid-template-columns: 76px minmax(0, 1.25fr) minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 200px);
+  grid-template-columns: 76px minmax(0, 1.25fr) minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 200px) 72px;
   column-gap: 12px;
   align-items: center;
 }
 
 .slot-head {
-  padding: 0 16px;
+  padding: 0 var(--card-padding-end) 0 16px;
   height: 28px;
   font-size: var(--fontSizeBase200);
   color: var(--text-3);
@@ -285,7 +310,7 @@ const healthText = computed(() => {
 
 .slot-row {
   height: 56px;
-  padding: 0 16px;
+  padding: 0 var(--card-padding-end) 0 16px;
   border-radius: var(--r-card);
   background: var(--card);
   border: 1px solid var(--stroke);
@@ -358,7 +383,6 @@ const healthText = computed(() => {
 }
 
 .footnote {
-  max-width: 1000px;
   margin-top: 16px;
   display: flex;
   gap: 8px;

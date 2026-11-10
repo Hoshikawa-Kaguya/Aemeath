@@ -5,7 +5,7 @@ Imported USB devices
 ====================
 Port 01: device in use at High Speed(480Mbps)
          Generic : pid.codes Test PID (1209:0001)
-           -> usbip://127.0.0.1:3241/1-1
+           -> usbip://127.0.0.1:32410/1-1
            -> remote bus/dev: 001/001
            -> serial: 
            -> mode: zero-copy

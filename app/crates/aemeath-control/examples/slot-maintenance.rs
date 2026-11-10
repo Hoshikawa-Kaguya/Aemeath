@@ -2,6 +2,7 @@
 //!
 //! 1. 注册：16 个槽位全部挂上、端点 ACTIVE、设备格式的采样率为引擎采样率；
 //! 2. 按占用拔出：只占用 In 1，其余 15 个被卸下，In 1 不受影响；
+//! 2. 格式：节点指定的格式生效，Windows 里改的格式被改回来，释放后再被占用的槽位不留上一个节点的格式；
 //! 3. 引擎崩溃恢复：结束引擎进程再重新拉起，挂载维护把 In 1 挂回来（记录恢复用时）；
 //! 4. 清理：全部卸下，请引擎退出。
 //!
@@ -18,8 +19,11 @@ use aemeath_control::slots::registration::{RegistrationProgress, all_slots, regi
 use aemeath_control::slots::{MaintainerConfig, MaintainerTiming, SlotHealth, SlotMaintainer, SlotStatus};
 use aemeath_control::usbip_cli::UsbipCli;
 use aemeath_protocol::ids::{NodeId, SlotDirection, SlotId, SlotNumber, TopologyRevision};
-use aemeath_protocol::topology::{NodeKind, Resampler, RouteTopology, Strip, TopologyNode};
+use aemeath_protocol::message::{DeviceFormat, SampleFormat};
+use aemeath_protocol::topology::{NodeKind, Resampler, RouteTopology, SlotFormatChoice, Strip, TopologyNode};
 use aemeath_protocol::units::SampleRate;
+use aemeath_sys::com::ComApartment;
+use aemeath_sys::policy_config::PolicyConfig;
 use aemeath_usbip::identity::{DEFAULT_USBIP_PORT, IdentityProfile};
 use tokio::process::{Child, Command};
 use tokio::sync::mpsc;
@@ -28,6 +32,7 @@ type Error = Box<dyn std::error::Error>;
 
 const REGISTRATION_TIMEOUT: Duration = Duration::from_secs(150);
 const STEP_TIMEOUT: Duration = Duration::from_secs(30);
+const WINDOWS_POLL: Duration = Duration::from_millis(500);
 const RATE: SampleRate = SampleRate::HZ_48000;
 
 struct Harness {
@@ -72,6 +77,30 @@ impl Harness {
         true
     }
 
+    fn endpoint_id(&self, slot: SlotId) -> Option<String> {
+        Some(self.latest.get(&slot)?.endpoint.as_ref()?.id.clone())
+    }
+
+    /// 处理事件的同时轮询 Windows 里的实际格式，直到等于 `wanted` 或超时。
+    async fn wait_for_windows_format(&mut self, id: String, wanted: (u32, SampleFormat)) -> bool {
+        let deadline = Instant::now() + STEP_TIMEOUT;
+        while Instant::now() < deadline {
+            self.pump_until(WINDOWS_POLL, |_| false).await;
+            let query = id.clone();
+            if let Ok(Ok(format)) = tokio::task::spawn_blocking(move || format_in_windows(query)).await
+                && format == wanted
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn format(&self, slot: SlotId) -> Option<(u32, SampleFormat)> {
+        let format = self.latest.get(&slot)?.endpoint.as_ref()?.format?;
+        Some((format.sample_rate.hz(), format.sample_format))
+    }
+
     fn health(&self, slot: SlotId) -> Option<SlotHealth> {
         self.latest.get(&slot).map(|status| status.health)
     }
@@ -81,32 +110,54 @@ impl Harness {
     }
 }
 
-fn start_host(program: &str, data_dir: &str) -> Result<Child, Error> {
+fn start_host(program: &str, data_dir: &str, usbip_port: u16) -> Result<Child, Error> {
     Ok(Command::new(program)
-        .args(["--data-dir", data_dir])
+        .args(["--data-dir", data_dir, "--usbip-port", &usbip_port.to_string()])
         .kill_on_drop(true)
         .spawn()?)
 }
 
-fn in_one() -> Result<SlotId, Error> {
+fn in_slot(number: u8) -> Result<SlotId, Error> {
     Ok(SlotId {
         direction: SlotDirection::In,
-        number: SlotNumber::new(SlotNumber::FIRST)?,
+        number: SlotNumber::new(number)?,
     })
 }
 
-fn topology_with(slot: SlotId) -> RouteTopology {
+/// Windows 里实际的格式（不经过挂载维护的缓存）
+fn format_in_windows(endpoint_id: String) -> Result<(u32, SampleFormat), String> {
+    let _com = ComApartment::multithreaded().map_err(|error| error.to_string())?;
+    let policy = PolicyConfig::new().map_err(|error| error.to_string())?;
+    let format = policy.device_format(&endpoint_id).map_err(|error| error.to_string())?;
+    Ok((format.sample_rate.hz(), format.sample_format))
+}
+
+/// 模拟用户在 Windows 声音设置里改格式
+fn change_format_in_windows(endpoint_id: String, format: DeviceFormat) -> Result<(), String> {
+    let _com = ComApartment::multithreaded().map_err(|error| error.to_string())?;
+    let policy = PolicyConfig::new().map_err(|error| error.to_string())?;
+    policy
+        .set_device_format(&endpoint_id, format)
+        .map_err(|error| error.to_string())
+}
+
+fn topology_with(slots: &[SlotId]) -> RouteTopology {
     RouteTopology {
         revision: TopologyRevision(0),
         engine_sample_rate: RATE,
         clock_master: None,
         resampler: Resampler::default(),
-        nodes: vec![TopologyNode {
-            id: NodeId(1),
-            kind: NodeKind::VirtualInput { slot },
-            strip: Strip::default(),
-            io: None,
-        }],
+        nodes: slots
+            .iter()
+            .zip(1..)
+            .map(|(slot, id)| TopologyNode {
+                id: NodeId(id),
+                kind: NodeKind::VirtualInput { slot: *slot },
+                strip: Strip::default(),
+                slot_settings: None,
+                io: None,
+            })
+            .collect(),
         routes: Vec::new(),
     }
 }
@@ -133,17 +184,19 @@ async fn main() -> Result<(), Error> {
     let mut args = std::env::args().skip(1);
     let host_program = args
         .next()
-        .ok_or("usage: slot-maintenance <aemeath-host.exe> <data dir>")?;
+        .ok_or("usage: slot-maintenance <aemeath-host.exe> <data dir> [usbip port]")?;
     let data_dir = args
         .next()
-        .ok_or("usage: slot-maintenance <aemeath-host.exe> <data dir>")?;
+        .ok_or("usage: slot-maintenance <aemeath-host.exe> <data dir> [usbip port]")?;
+    let usbip_port: u16 = args.next().map_or(Ok(DEFAULT_USBIP_PORT), |text| text.parse())?;
     let identity = IdentityProfile::Development;
+    let identities = identity.all()?;
     let usbip = UsbipCli::new(
         UsbipCli::default_program().ok_or("%ProgramFiles% is not set")?,
-        DEFAULT_USBIP_PORT,
+        usbip_port,
     );
 
-    let mut host = start_host(&host_program, &data_dir)?;
+    let mut host = start_host(&host_program, &data_dir, usbip_port)?;
     let (client_tx, client_events) = mpsc::unbounded_channel();
     let client = EngineClient::start(
         ClientConfig {
@@ -190,11 +243,50 @@ async fn main() -> Result<(), Error> {
     ));
     results.push(("registration", registered, registration_time));
 
-    // 2. 只占用 In 1
-    let in_one = in_one()?;
-    harness.log("== 2. occupy In 1 only");
+    // 2. 格式由节点决定
+    let in_one = in_slot(SlotNumber::FIRST)?;
+    let in_two = in_slot(SlotNumber::FIRST + 1)?;
+    const FOLLOWING: (u32, SampleFormat) = (48_000, SampleFormat::Int32);
+    const FIXED: (u32, SampleFormat) = (44_100, SampleFormat::Int16);
+    harness.log("== 2a. a node asks In 2 for 44.1 kHz Int16");
     let step = Instant::now();
-    harness.client.apply(topology_with(in_one));
+    harness.maintainer.set_formats(BTreeMap::from([(
+        in_two,
+        SlotFormatChoice::Fixed {
+            sample_rate: SampleRate::new(FIXED.0)?,
+            sample_format: FIXED.1,
+        },
+    )]));
+    let applied = harness
+        .pump_until(STEP_TIMEOUT, |harness| harness.format(in_two) == Some(FIXED))
+        .await;
+    results.push(("fixed format applied", applied, step.elapsed()));
+
+    harness.log("== 2b. change In 1 in Windows, it must come back");
+    let step = Instant::now();
+    let in_one_id = harness.endpoint_id(in_one).ok_or("In 1 has no endpoint")?;
+    let tampered = in_one_id.clone();
+    tokio::task::spawn_blocking(move || {
+        change_format_in_windows(
+            tampered,
+            DeviceFormat {
+                sample_rate: SampleRate::new(96_000).map_err(|error| error.to_string())?,
+                sample_format: SampleFormat::Int16,
+                channels: 2,
+            },
+        )
+    })
+    .await??;
+    let reverted = harness.wait_for_windows_format(in_one_id, FOLLOWING).await;
+    harness.log(&format!("reverted in Windows: {reverted}"));
+    results.push(("windows change reverted", reverted, step.elapsed()));
+
+    // 只占用 In 1：In 2 的节点没了，它的格式要被重置
+    harness.log("== 2c. occupy In 1 only, In 2 is released");
+    let in_two_id = harness.endpoint_id(in_two).ok_or("In 2 has no endpoint")?;
+    let step = Instant::now();
+    harness.maintainer.set_formats(BTreeMap::new());
+    harness.client.apply(topology_with(&[in_one]));
     harness.maintainer.set_occupied(BTreeSet::from([in_one]));
     let others: Vec<SlotId> = all_slots().into_iter().filter(|slot| *slot != in_one).collect();
     let unplugged = harness
@@ -209,7 +301,7 @@ async fn main() -> Result<(), Error> {
         .imported()
         .await?
         .into_iter()
-        .filter(|device| device.is_served_by(DEFAULT_USBIP_PORT))
+        .filter(|device| device.belongs_to(&identities))
         .map(|device| device.busid)
         .collect();
     harness.log(&format!("imported Aemeath devices: {aemeath_entries:?}"));
@@ -218,6 +310,27 @@ async fn main() -> Result<(), Error> {
         unplugged && aemeath_entries == ["1-1"],
         step.elapsed(),
     ));
+
+    // 新节点跟随引擎，占用刚释放的 In 2：上一个节点的 44.1 kHz Int16 不能留下
+    harness.log("== 2d. a following node takes In 2 again");
+    let step = Instant::now();
+    harness.client.apply(topology_with(&[in_one, in_two]));
+    harness.maintainer.set_occupied(BTreeSet::from([in_one, in_two]));
+    let plugged = harness
+        .pump_until(STEP_TIMEOUT, |harness| {
+            harness.health(in_two) == Some(SlotHealth::Healthy)
+        })
+        .await;
+    let reset = harness.wait_for_windows_format(in_two_id, FOLLOWING).await;
+    harness.log(&format!("In 2 follows the engine again in Windows: {reset}"));
+    results.push(("next occupant has no leftover format", plugged && reset, step.elapsed()));
+    harness.client.apply(topology_with(&[in_one]));
+    harness.maintainer.set_occupied(BTreeSet::from([in_one]));
+    harness
+        .pump_until(STEP_TIMEOUT, |harness| {
+            harness.health(in_two) == Some(SlotHealth::Unplugged)
+        })
+        .await;
 
     // 3. 引擎崩溃恢复
     harness.log("== 3. kill the engine and start it again");
@@ -228,7 +341,7 @@ async fn main() -> Result<(), Error> {
         })
         .await;
     let step = Instant::now();
-    host = start_host(&host_program, &data_dir)?;
+    host = start_host(&host_program, &data_dir, usbip_port)?;
     let recovered = harness
         .pump_until(STEP_TIMEOUT, |harness| {
             harness.health(in_one) == Some(SlotHealth::Healthy)

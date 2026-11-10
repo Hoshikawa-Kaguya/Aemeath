@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::sync::mpsc as std_mpsc;
 
 use aemeath_protocol::ids::{SlotDirection, SlotId};
-use aemeath_protocol::message::DeviceFormat;
+use aemeath_protocol::message::{DeviceFormat, SampleFormat};
 use aemeath_protocol::units::SampleRate;
 use aemeath_sys::audio_endpoints::{AudioEndpoints, AudioFlow, EndpointInfo, EndpointState, EndpointWatcher};
 use aemeath_sys::com::{ComApartment, ComError};
@@ -64,10 +64,11 @@ enum Request {
         flow: AudioFlow,
         reply: Reply<Vec<ExternalDevice>>,
     },
-    /// 把设备格式的采样率改成 `rate`，样本格式和声道数保持不变
-    SetRate {
+    /// 改设备格式：采样率改成 `rate`；`sample_format` 为 None 时样本格式不变，声道数总是不变
+    SetFormat {
         endpoint_id: String,
         rate: SampleRate,
+        sample_format: Option<SampleFormat>,
         reply: Reply<DeviceFormat>,
     },
 }
@@ -106,13 +107,19 @@ impl EndpointProbe {
         wait.await.map_err(|_| stopped())?
     }
 
-    /// 把端点的设备格式改成指定的采样率（样本格式不变），返回设定后的格式。
-    /// 端点上已有的流会被作废（S2），所以只在端点刚出现、还没被应用使用时调用。
-    pub async fn set_rate(&self, endpoint_id: String, rate: SampleRate) -> Result<DeviceFormat, ProbeError> {
+    /// 把端点的设备格式改成指定的采样率和样本格式（`sample_format` 为 None 时不变），返回设定后的格式。
+    /// 端点上已有的流会被作废（S2），正在使用这个设备的应用会短暂断开。
+    pub async fn set_format(
+        &self,
+        endpoint_id: String,
+        rate: SampleRate,
+        sample_format: Option<SampleFormat>,
+    ) -> Result<DeviceFormat, ProbeError> {
         let (reply, wait) = oneshot::channel();
-        self.send(Request::SetRate {
+        self.send(Request::SetFormat {
             endpoint_id,
             rate,
+            sample_format,
             reply,
         })?;
         wait.await.map_err(|_| stopped())?
@@ -188,12 +195,13 @@ fn worker(
                 Request::ExternalDevices { flow, reply } => {
                     let _ = reply.send(worker.external_devices(flow));
                 }
-                Request::SetRate {
+                Request::SetFormat {
                     endpoint_id,
                     rate,
+                    sample_format,
                     reply,
                 } => {
-                    let _ = reply.send(worker.set_rate(&endpoint_id, rate));
+                    let _ = reply.send(worker.set_format(&endpoint_id, rate, sample_format));
                 }
             }
         }
@@ -263,13 +271,19 @@ impl Worker {
             .is_some_and(|name| self.slots.iter().any(|identity| identity.product_name == name))
     }
 
-    fn set_rate(&self, endpoint_id: &str, rate: SampleRate) -> Result<DeviceFormat, ProbeError> {
+    fn set_format(
+        &self,
+        endpoint_id: &str,
+        rate: SampleRate,
+        sample_format: Option<SampleFormat>,
+    ) -> Result<DeviceFormat, ProbeError> {
         let current = self
             .policy
             .device_format(endpoint_id)
             .map_err(|error| ProbeError(error.to_string()))?;
         let wanted = DeviceFormat {
             sample_rate: rate,
+            sample_format: sample_format.unwrap_or(current.sample_format),
             ..current
         };
         self.policy
@@ -279,7 +293,8 @@ impl Worker {
             endpoint_id,
             from = current.sample_rate.hz(),
             to = rate.hz(),
-            "slot sample rate set"
+            sample_format = ?wanted.sample_format,
+            "slot format set"
         );
         Ok(wanted)
     }

@@ -2,8 +2,13 @@
 //!
 //! 重采样在生产方（IO 线程）进行，固定每次处理 1 ms 的设备帧；调度线程只按块取数据。
 //! 控制器的反馈量是环形缓冲的水位：水位偏高说明设备时钟比引擎快，就把比率调低、少产出一些。
+//!
+//! FFT 的产出成批到达，水位呈锯齿形：会话开始时先写入"目标水位 + 一批"的静音，引擎的启动门槛不用改，
+//! 锯齿的谷值也不低于目标水位；控制目标取锯齿的平均值。
 
-use aemeath_dsp::resample::{FixedSide, RateController, StereoResampler, relative_ratio};
+use std::time::Instant;
+
+use aemeath_dsp::resample::{BridgeResampler, FixedSide, RateController, relative_ratio};
 use aemeath_protocol::topology::Resampler;
 use aemeath_protocol::units::SampleRate;
 use rtrb::Producer;
@@ -11,7 +16,7 @@ use wasapi::AudioCaptureClient;
 
 use crate::bridge::{BridgeError, BridgeLog, CONTROL_PERIOD};
 use crate::device::{FrameCodec, OpenStream};
-use crate::{STEREO, TARGET_LEVEL_MS, frames_to_ms};
+use crate::{STEREO, TARGET_LEVEL_MS, frames_to_ms, ms_to_frames};
 
 /// 每次重采样处理的设备帧数：1 ms
 const CHUNKS_PER_SECOND: u32 = 1000;
@@ -22,7 +27,7 @@ pub struct CapturePump {
     codec: FrameCodec,
     block_align: usize,
     engine_rate: SampleRate,
-    resampler: StereoResampler,
+    resampler: BridgeResampler,
     bytes: Vec<u8>,
     staging: Vec<f32>,
     produced: Vec<f32>,
@@ -37,13 +42,19 @@ impl CapturePump {
         stream: &OpenStream,
         engine_rate: SampleRate,
         quality: Resampler,
-        producer: &Producer<f32>,
+        producer: &mut Producer<f32>,
         label: &str,
     ) -> Result<Self, BridgeError> {
         let device_rate = stream.sample_rate();
         let chunk_frames = (device_rate.hz() / CHUNKS_PER_SECOND).max(1) as usize;
-        let ratio = f64::from(engine_rate.hz()) / f64::from(device_rate.hz());
-        let resampler = StereoResampler::new(quality, ratio, chunk_frames, FixedSide::Input)?;
+        let resampler = BridgeResampler::new(quality, device_rate, engine_rate, chunk_frames, FixedSide::Input)?;
+        let burst_ms = resampler.burst_ms();
+        if burst_ms > 0.0 {
+            let samples = ms_to_frames(TARGET_LEVEL_MS + burst_ms, engine_rate) * STEREO;
+            if let Ok(chunk) = producer.write_chunk_uninit(samples.min(producer.slots())) {
+                chunk.fill_from_iter(std::iter::repeat(0.0));
+            }
+        }
         let bytes = vec![0u8; stream.block_align * (device_rate.hz() / (1000 / INITIAL_READ_MS)) as usize];
         let staging = Vec::with_capacity(bytes.len() / stream.block_align * STEREO);
         let produced = Vec::with_capacity(resampler.output_frames_max() * STEREO * 8);
@@ -56,7 +67,7 @@ impl CapturePump {
             staging,
             produced,
             capacity: producer.buffer().capacity(),
-            controller: RateController::new(TARGET_LEVEL_MS),
+            controller: RateController::new(TARGET_LEVEL_MS + burst_ms / 2.0),
             log: BridgeLog::new(label),
         })
     }
@@ -90,8 +101,10 @@ impl CapturePump {
             if self.staging.len() - consumed < needed {
                 break;
             }
+            let started = Instant::now();
             self.resampler
                 .process(&self.staging[consumed..consumed + needed], &mut self.produced)?;
+            self.log.block_processed(started.elapsed());
             consumed += needed;
         }
         self.staging.drain(..consumed);

@@ -114,12 +114,16 @@ const sharedFormat = computed(() => capabilities.value?.sharedFormat ?? null)
 <template>
   <div class="device-fields">
     <label class="check">
-      <input
-        type="checkbox"
-        :checked="settings.exclusive"
-        @change="settings = { ...settings, exclusive: ($event.target as HTMLInputElement).checked }"
-      />
-      <span>
+      <span class="switch">
+        <input
+          type="checkbox"
+          role="switch"
+          :checked="settings.exclusive"
+          @change="settings = { ...settings, exclusive: ($event.target as HTMLInputElement).checked }"
+        />
+        <span class="track" aria-hidden="true"><span class="thumb"></span></span>
+      </span>
+      <span class="check-text">
         <b>{{ t('device.exclusive') }}</b>
         <span class="caption">{{ t('device.exclusiveHint') }}</span>
       </span>
@@ -191,14 +195,7 @@ const sharedFormat = computed(() => capabilities.value?.sharedFormat ?? null)
   align-items: start;
 }
 
-.check input {
-  width: 16px;
-  height: 16px;
-  margin: 2px 0 0;
-  accent-color: var(--accent);
-}
-
-.check > span {
+.check-text {
   display: flex;
   flex-direction: column;
   gap: 2px;

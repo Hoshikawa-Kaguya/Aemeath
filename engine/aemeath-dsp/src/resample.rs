@@ -1,12 +1,14 @@
-//! 重采样（rubato，S5）：4 档算法，比率可在运行时微调，用于异步采样率转换（ASRC）和固定比率转换。
+//! 重采样（rubato，S5）：三种算法，各带固定的重采样预设，用于异步采样率转换（ASRC）和固定比率转换。
 //!
-//! 只处理交错立体声 f32。构建时分配内存；[`StereoResampler::process`] 不分配内存
+//! 只处理交错立体声 f32。构建时分配内存；`process` 不分配内存
 //! （输出写进调用方预留好容量的 `Vec`，容量不够时才会增长）。
 
-use aemeath_protocol::topology::Resampler as Quality;
+use aemeath_protocol::topology::{FftPreset, PolyPreset, Resampler as Quality, SincPreset};
+use aemeath_protocol::units::SampleRate;
 use rubato::audioadapter_buffers::direct::InterleavedSlice;
 use rubato::{
-    Async, FixedAsync, PolynomialDegree, Resampler, SincInterpolationParameters, SincInterpolationType, WindowFunction,
+    Async, Fft, FixedAsync, FixedSync, PolynomialDegree, Resampler, SincInterpolationParameters, SincInterpolationType,
+    WindowFunction,
 };
 use thiserror::Error;
 
@@ -14,10 +16,58 @@ use crate::STEREO;
 
 /// 比率可调范围 ±1%，远大于 ±1000 ppm 的设计要求，给控制器的瞬时调整留出余量（S5）
 pub const MAX_RELATIVE_RATIO: f64 = 1.01;
-const SINC_HIGH_TAPS: usize = 256;
-const SINC_HIGH_OVERSAMPLING: usize = 256;
-const SINC_STANDARD_TAPS: usize = 128;
-const SINC_STANDARD_OVERSAMPLING: usize = 128;
+/// FFT 预设的帧数以这个采样率为基准，按实际采样率换算，各采样率下延迟一致
+const FFT_REFERENCE_RATE: usize = 48_000;
+const FFT_LOW_LATENCY_FRAMES: usize = 256;
+const FFT_BALANCED_FRAMES: usize = 1024;
+/// 整块做一次 FFT：分块变大时滤波器随之变长，通带更宽。切成子块则分块大小只增加延迟（M4 计划 1.1 节实测）
+const FFT_SUB_CHUNKS: usize = 1;
+/// FFT 路径上吸收时钟漂移的小比率级（R7），放在引擎采样率一侧，用户不可选
+const DRIFT_STAGE: Quality = Quality::SincAsync {
+    preset: SincPreset::Fast,
+};
+/// 小比率级每块的时长：1 ms
+const DRIFT_CHUNKS_PER_SECOND: u32 = 1000;
+const MILLISECONDS_PER_SECOND: f64 = 1000.0;
+
+fn sinc_parameters(preset: SincPreset) -> SincInterpolationParameters {
+    use SincInterpolationType::{Cubic, Linear, Quadratic};
+    use WindowFunction::{Blackman2, BlackmanHarris2, Hann2};
+    let (sinc_len, oversampling, interpolation, window) = match preset {
+        SincPreset::VeryFast => (64, 1024, Linear, Hann2),
+        SincPreset::Fast => (128, 1024, Linear, Blackman2),
+        SincPreset::Balanced => (192, 512, Quadratic, BlackmanHarris2),
+        SincPreset::Accurate => (256, 256, Cubic, BlackmanHarris2),
+        SincPreset::Ultra => (512, 256, Cubic, BlackmanHarris2),
+    };
+    SincInterpolationParameters::new(sinc_len, window)
+        .oversampling_factor(oversampling)
+        .interpolation(interpolation)
+}
+
+fn poly_degree(preset: PolyPreset) -> PolynomialDegree {
+    match preset {
+        PolyPreset::Fastest => PolynomialDegree::Linear,
+        PolyPreset::Smooth => PolynomialDegree::Cubic,
+        PolyPreset::Fine => PolynomialDegree::Quintic,
+    }
+}
+
+/// FFT 的输入分块。取比率允许的最小块的整数倍：否则 rubato 把内部 FFT 块取整得比分块大，
+/// 有的调用没有产出，两批之间的间隔会达到两个分块。
+fn fft_chunk_frames(preset: FftPreset, input_rate: SampleRate, output_rate: SampleRate) -> usize {
+    let frames = match preset {
+        FftPreset::LowLatency => FFT_LOW_LATENCY_FRAMES,
+        FftPreset::Balanced => FFT_BALANCED_FRAMES,
+    };
+    let scaled = (frames * input_rate.hz() as usize / FFT_REFERENCE_RATE).max(1);
+    let smallest_block = input_rate.hz() as usize / greatest_common_divisor(input_rate.hz(), output_rate.hz()) as usize;
+    scaled.div_ceil(smallest_block) * smallest_block
+}
+
+fn greatest_common_divisor(a: u32, b: u32) -> u32 {
+    if b == 0 { a } else { greatest_common_divisor(b, a % b) }
+}
 
 #[derive(Debug, Error)]
 pub enum ResampleError {
@@ -43,55 +93,54 @@ pub struct StereoResampler {
     scratch: Vec<f32>,
 }
 
+impl std::fmt::Debug for StereoResampler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("StereoResampler")
+    }
+}
+
 impl StereoResampler {
-    /// `ratio` = 输出采样率 / 输入采样率；`chunk_frames` 是固定一侧每块的帧数。
-    pub fn new(quality: Quality, ratio: f64, chunk_frames: usize, fixed: FixedSide) -> Result<Self, ResampleError> {
-        let fixed = match fixed {
+    /// `chunk_frames` 是固定一侧每块的帧数；FFT 的分块由预设决定，忽略这个参数。
+    pub fn new(
+        quality: Quality,
+        input_rate: SampleRate,
+        output_rate: SampleRate,
+        chunk_frames: usize,
+        fixed: FixedSide,
+    ) -> Result<Self, ResampleError> {
+        let ratio = f64::from(output_rate.hz()) / f64::from(input_rate.hz());
+        let fixed_async = match fixed {
             FixedSide::Input => FixedAsync::Input,
             FixedSide::Output => FixedAsync::Output,
         };
         let inner: Box<dyn Resampler<f32>> = match quality {
-            Quality::SincHigh => {
-                let parameters = SincInterpolationParameters::new(SINC_HIGH_TAPS, WindowFunction::BlackmanHarris2)
-                    .oversampling_factor(SINC_HIGH_OVERSAMPLING)
-                    .interpolation(SincInterpolationType::Cubic);
-                Box::new(Async::<f32>::new_sinc(
-                    ratio,
-                    MAX_RELATIVE_RATIO,
-                    &parameters,
-                    chunk_frames,
-                    STEREO,
-                    fixed,
-                )?)
-            }
-            Quality::SincStandard => {
-                let parameters = SincInterpolationParameters::new(SINC_STANDARD_TAPS, WindowFunction::Blackman2)
-                    .oversampling_factor(SINC_STANDARD_OVERSAMPLING)
-                    .interpolation(SincInterpolationType::Cubic);
-                Box::new(Async::<f32>::new_sinc(
-                    ratio,
-                    MAX_RELATIVE_RATIO,
-                    &parameters,
-                    chunk_frames,
-                    STEREO,
-                    fixed,
-                )?)
-            }
-            Quality::Polynomial => Box::new(Async::<f32>::new_poly(
+            Quality::PolyAsync { preset } => Box::new(Async::<f32>::new_poly(
                 ratio,
                 MAX_RELATIVE_RATIO,
-                PolynomialDegree::Quintic,
+                poly_degree(preset),
                 chunk_frames,
                 STEREO,
-                fixed,
+                fixed_async,
             )?),
-            Quality::Linear => Box::new(Async::<f32>::new_poly(
+            Quality::SincAsync { preset } => Box::new(Async::<f32>::new_sinc(
                 ratio,
                 MAX_RELATIVE_RATIO,
-                PolynomialDegree::Linear,
+                &sinc_parameters(preset),
                 chunk_frames,
                 STEREO,
-                fixed,
+                fixed_async,
+            )?),
+            Quality::FftSync { preset } => Box::new(Fft::<f32>::new_custom(
+                input_rate.hz() as usize,
+                output_rate.hz() as usize,
+                fft_chunk_frames(preset, input_rate, output_rate),
+                FFT_SUB_CHUNKS,
+                STEREO,
+                WindowFunction::BlackmanHarris2,
+                match fixed {
+                    FixedSide::Input => FixedSync::Input,
+                    FixedSide::Output => FixedSync::Output,
+                },
             )?),
         };
         let scratch = vec![0.0; inner.output_frames_max() * STEREO];
@@ -131,6 +180,127 @@ impl StereoResampler {
             .map_err(|error| ResampleError::Buffer(error.to_string()))?;
         let (_, produced) = self.inner.process_into_buffer(&input, &mut output, None)?;
         out.extend_from_slice(&self.scratch[..produced * STEREO]);
+        Ok(produced)
+    }
+}
+
+/// 外部设备和应用源的桥接重采样：转换采样率并吸收时钟漂移。
+///
+/// Poly、Sinc 一级完成。FFT 只能做固定比率，采样率不同时分两级：FFT 转换采样率，
+/// 小比率级（[`DRIFT_STAGE`]）在引擎采样率一侧吸收漂移（R7）；采样率相同时跳过 FFT。
+pub struct BridgeResampler {
+    first: StereoResampler,
+    second: Option<StereoResampler>,
+    /// 两级之间尚未处理的样本，都在引擎采样率上
+    pending: Vec<f32>,
+    burst_ms: f64,
+}
+
+impl BridgeResampler {
+    /// `fixed`：`Input` 用于录音方向（输出侧是引擎），`Output` 用于播放方向（输入侧是引擎）。
+    pub fn new(
+        quality: Quality,
+        input_rate: SampleRate,
+        output_rate: SampleRate,
+        chunk_frames: usize,
+        fixed: FixedSide,
+    ) -> Result<Self, ResampleError> {
+        if !matches!(quality, Quality::FftSync { .. }) {
+            return Ok(Self::single(StereoResampler::new(
+                quality,
+                input_rate,
+                output_rate,
+                chunk_frames,
+                fixed,
+            )?));
+        }
+        if input_rate == output_rate {
+            return Ok(Self::single(StereoResampler::new(
+                DRIFT_STAGE,
+                input_rate,
+                output_rate,
+                chunk_frames,
+                fixed,
+            )?));
+        }
+        let fft = StereoResampler::new(quality, input_rate, output_rate, chunk_frames, FixedSide::Input)?;
+        // 按最大单次产出算：rubato 把 FFT 分块取整后，一批可能比输入分块对应的帧数多
+        let burst_ms = fft.output_frames_max() as f64 * MILLISECONDS_PER_SECOND / f64::from(output_rate.hz());
+        let engine_rate = match fixed {
+            FixedSide::Input => output_rate,
+            FixedSide::Output => input_rate,
+        };
+        let drift_frames = (engine_rate.hz() / DRIFT_CHUNKS_PER_SECOND).max(1) as usize;
+        let drift = StereoResampler::new(DRIFT_STAGE, engine_rate, engine_rate, drift_frames, FixedSide::Input)?;
+        let (first, second) = match fixed {
+            FixedSide::Input => (fft, drift),
+            FixedSide::Output => (drift, fft),
+        };
+        let pending = Vec::with_capacity((first.output_frames_max() + second.input_frames_next()) * STEREO * 2);
+        Ok(Self {
+            first,
+            second: Some(second),
+            pending,
+            burst_ms,
+        })
+    }
+
+    fn single(first: StereoResampler) -> Self {
+        Self {
+            first,
+            second: None,
+            pending: Vec::new(),
+            burst_ms: 0.0,
+        }
+    }
+
+    /// 下一次 [`Self::process`] 需要的输入帧数
+    pub fn input_frames_next(&self) -> usize {
+        self.first.input_frames_next()
+    }
+
+    /// 一次处理最多产出的帧数
+    pub fn output_frames_max(&self) -> usize {
+        let second = self.second.as_ref().map_or(0, StereoResampler::output_frames_max);
+        self.first.output_frames_max().max(second) + second
+    }
+
+    /// 成团量：产出按这个时长成批到达（ms）。一级完成时为 0。
+    pub fn burst_ms(&self) -> f64 {
+        self.burst_ms
+    }
+
+    /// 两级之间还没处理的帧数（引擎采样率）
+    pub fn pending_frames(&self) -> usize {
+        self.pending.len() / STEREO
+    }
+
+    /// 相对于构建时比率的微调（1.0 为不调整）。FFT 一级不支持微调，由小比率级承担。
+    pub fn set_relative_ratio(&mut self, relative: f64) -> Result<(), ResampleError> {
+        self.first.set_relative_ratio(relative)?;
+        if let Some(second) = &mut self.second {
+            second.set_relative_ratio(relative)?;
+        }
+        Ok(())
+    }
+
+    /// 处理正好 [`Self::input_frames_next`] 帧的输入，把结果追加到 `out`，返回产出的帧数（FFT 路径上可能为 0）。
+    pub fn process(&mut self, input: &[f32], out: &mut Vec<f32>) -> Result<usize, ResampleError> {
+        let Some(second) = &mut self.second else {
+            return self.first.process(input, out);
+        };
+        self.first.process(input, &mut self.pending)?;
+        let mut consumed = 0;
+        let mut produced = 0;
+        loop {
+            let needed = second.input_frames_next() * STEREO;
+            if self.pending.len() - consumed < needed {
+                break;
+            }
+            produced += second.process(&self.pending[consumed..consumed + needed], out)?;
+            consumed += needed;
+        }
+        self.pending.drain(..consumed);
         Ok(produced)
     }
 }
@@ -209,6 +379,61 @@ mod tests {
     use std::f64::consts::TAU;
 
     const CHUNK: usize = 480;
+    const ALL_PRESETS: [Quality; 10] = [
+        Quality::PolyAsync {
+            preset: PolyPreset::Fastest,
+        },
+        Quality::PolyAsync {
+            preset: PolyPreset::Smooth,
+        },
+        Quality::PolyAsync {
+            preset: PolyPreset::Fine,
+        },
+        Quality::SincAsync {
+            preset: SincPreset::VeryFast,
+        },
+        Quality::SincAsync {
+            preset: SincPreset::Fast,
+        },
+        Quality::SincAsync {
+            preset: SincPreset::Balanced,
+        },
+        Quality::SincAsync {
+            preset: SincPreset::Accurate,
+        },
+        Quality::SincAsync {
+            preset: SincPreset::Ultra,
+        },
+        Quality::FftSync {
+            preset: FftPreset::LowLatency,
+        },
+        Quality::FftSync {
+            preset: FftPreset::Balanced,
+        },
+    ];
+    const FFT_BALANCED: Quality = Quality::FftSync {
+        preset: FftPreset::Balanced,
+    };
+
+    fn rate(hz: u32) -> SampleRate {
+        SampleRate::new(hz).unwrap()
+    }
+
+    /// 把输入按重采样器要的块大小依次送入，返回全部产出和消耗的输入帧数
+    fn run_bridge(resampler: &mut BridgeResampler, input: &[f32]) -> (Vec<f32>, usize) {
+        let mut position = 0;
+        let mut output = Vec::new();
+        loop {
+            let needed = resampler.input_frames_next() * STEREO;
+            if position + needed > input.len() {
+                return (output, position / STEREO);
+            }
+            resampler
+                .process(&input[position..position + needed], &mut output)
+                .unwrap();
+            position += needed;
+        }
+    }
 
     fn sine(rate: f64, frequency: f64, frames: usize) -> Vec<f32> {
         (0..frames)
@@ -227,36 +452,91 @@ mod tests {
     }
 
     #[test]
-    fn converts_44k1_to_48k_without_changing_pitch() {
-        for quality in [
-            Quality::SincHigh,
-            Quality::SincStandard,
-            Quality::Polynomial,
-            Quality::Linear,
-        ] {
-            let mut resampler = StereoResampler::new(quality, 48_000.0 / 44_100.0, CHUNK, FixedSide::Input).unwrap();
-            let input = sine(44_100.0, 1_000.0, CHUNK * 100);
-            let mut output = Vec::new();
-            for chunk in input.chunks(CHUNK * STEREO) {
-                resampler.process(chunk, &mut output).unwrap();
+    fn every_preset_converts_44k1_to_48k_without_changing_pitch() {
+        for quality in ALL_PRESETS {
+            for fixed in [FixedSide::Input, FixedSide::Output] {
+                let mut resampler = BridgeResampler::new(quality, rate(44_100), rate(48_000), CHUNK, fixed).unwrap();
+                let input = sine(44_100.0, 1_000.0, 48_000);
+                let (output, consumed) = run_bridge(&mut resampler, &input);
+                let produced = output.len() / STEREO;
+                // 输出帧数约为输入的 48/44.1，两级路径上最多差一个分块
+                let expected = consumed as f64 * 48_000.0 / 44_100.0;
+                let margin = 3.0 * resampler.input_frames_next().max(CHUNK) as f64 + 48.0 * resampler.burst_ms();
+                assert!((produced as f64 - expected).abs() < margin, "{quality:?}: {produced}");
+                // 跳过启动时的滤波器延迟再测频率
+                let skip = 4_800 * STEREO;
+                let measured = frequency(&output[skip..], 48_000.0);
+                assert!((measured - 1_000.0).abs() < 5.0, "{quality:?} {fixed:?}: {measured} Hz");
             }
-            let produced = output.len() / STEREO;
-            // 输出帧数约为输入的 48/44.1
-            let expected = (CHUNK * 100) as f64 * 48_000.0 / 44_100.0;
-            assert!(
-                (produced as f64 - expected).abs() < 2.0 * CHUNK as f64,
-                "{quality:?}: {produced}"
-            );
-            let skip = resampler.output_delay_frames() * STEREO;
-            let measured = frequency(&output[skip..], 48_000.0);
-            assert!((measured - 1_000.0).abs() < 5.0, "{quality:?}: {measured} Hz");
         }
     }
 
     #[test]
-    fn fixed_output_side_always_produces_the_chunk() {
+    fn fft_converts_in_two_stages_and_reports_its_burst() {
+        for fixed in [FixedSide::Input, FixedSide::Output] {
+            let resampler = BridgeResampler::new(FFT_BALANCED, rate(48_000), rate(192_000), CHUNK, fixed).unwrap();
+            assert!(resampler.second.is_some());
+            assert!((resampler.burst_ms() - 21.33).abs() < 0.1, "{}", resampler.burst_ms());
+        }
+    }
+
+    #[test]
+    fn fft_chunk_scales_with_the_input_rate() {
+        assert_eq!(
+            fft_chunk_frames(FftPreset::LowLatency, rate(48_000), rate(192_000)),
+            256
+        );
+        assert_eq!(fft_chunk_frames(FftPreset::LowLatency, rate(96_000), rate(48_000)), 512);
+        assert_eq!(fft_chunk_frames(FftPreset::Balanced, rate(192_000), rate(48_000)), 4096);
+    }
+
+    #[test]
+    fn fft_chunk_is_a_whole_number_of_ratio_blocks() {
+        // 44.1k→48k 的最小块是 147 帧，48k→44.1k 是 160 帧
+        assert_eq!(fft_chunk_frames(FftPreset::LowLatency, rate(44_100), rate(48_000)), 294);
+        assert_eq!(fft_chunk_frames(FftPreset::Balanced, rate(48_000), rate(44_100)), 1120);
+    }
+
+    #[test]
+    fn every_fft_call_produces_output_when_the_rates_are_not_multiples() {
+        for (input, output) in [(44_100, 48_000), (48_000, 44_100)] {
+            let mut resampler =
+                StereoResampler::new(FFT_BALANCED, rate(input), rate(output), CHUNK, FixedSide::Input).unwrap();
+            let block = vec![0.0; resampler.input_frames_next() * STEREO];
+            let mut out = Vec::new();
+            for _ in 0..8 {
+                assert!(resampler.process(&block, &mut out).unwrap() > 0, "{input} -> {output}");
+            }
+        }
+    }
+
+    #[test]
+    fn fft_is_skipped_when_the_rates_match() {
+        let resampler = BridgeResampler::new(FFT_BALANCED, rate(48_000), rate(48_000), 48, FixedSide::Input).unwrap();
+        assert!(resampler.second.is_none());
+        assert_eq!(resampler.burst_ms(), 0.0);
+    }
+
+    #[test]
+    fn fft_path_follows_the_drift_correction() {
         let mut resampler =
-            StereoResampler::new(Quality::SincStandard, 48_000.0 / 44_100.0, CHUNK, FixedSide::Output).unwrap();
+            BridgeResampler::new(FFT_BALANCED, rate(44_100), rate(48_000), CHUNK, FixedSide::Input).unwrap();
+        let input = sine(44_100.0, 1_000.0, 88_200);
+        let (nominal, _) = run_bridge(&mut resampler, &input);
+        let mut corrected =
+            BridgeResampler::new(FFT_BALANCED, rate(44_100), rate(48_000), CHUNK, FixedSide::Input).unwrap();
+        corrected.set_relative_ratio(relative_ratio(1000.0)).unwrap();
+        let (slower, _) = run_bridge(&mut corrected, &input);
+        // +1000 ppm 的校正少产出约 0.1%（2 秒约 96 帧）
+        let difference = (nominal.len() - slower.len()) / STEREO;
+        assert!((40..=160).contains(&difference), "{difference}");
+    }
+
+    #[test]
+    fn fixed_output_side_always_produces_the_chunk() {
+        let quality = Quality::default();
+        let mut resampler =
+            StereoResampler::new(quality, rate(44_100), rate(48_000), CHUNK, FixedSide::Output).unwrap();
         let input = sine(44_100.0, 440.0, 10_000);
         let mut position = 0;
         let mut output = Vec::new();

@@ -1,27 +1,28 @@
 //! 外部输出（播放端点）的 IO 线程：环形缓冲 → ASRC 到设备采样率 → 设备（S5 的播放线程）。
 //!
-//! 重采样在消费方（本线程）进行，固定每次产出 5 ms 的设备帧，放进一个小队列，再按设备每次要的帧数写出。
-//! 水位 = 环形缓冲中的引擎帧 + 已重采样但尚未写给设备的帧。水位偏高说明引擎比设备快，就把比率调低、多消耗输入。
+//! 重采样在消费方（本线程）进行，固定每次产出 1 ms 的设备帧，放进一个小队列，再按设备每次要的帧数写出。
+//! 水位 = 环形缓冲中的引擎帧 + 两级重采样之间的帧 + 已重采样但尚未写给设备的帧。
+//! 水位偏高说明引擎比设备快，就把比率调低、多消耗输入。FFT 要攒够一批才有产出，目标水位相应加上一批的时长。
 
 use std::collections::VecDeque;
 use std::io;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use aemeath_dsp::resample::{FixedSide, RateController, StereoResampler, relative_ratio};
+use aemeath_dsp::resample::{BridgeResampler, FixedSide, RateController, relative_ratio};
 use rtrb::Consumer;
 
 use crate::bridge::{BridgeError, BridgeLog, CONTROL_PERIOD};
 use crate::clock::{ClockReader, ClockTap};
 use crate::device::{self, EventWatch, IoContext, OpenStream, SessionEnd, Waited};
 use crate::{
-    BridgeConfig, BridgeHandle, IoDirection, STEREO, TARGET_LEVEL_MS, frames_to_ms, skip_backlog, target_frames,
+    BridgeConfig, BridgeHandle, IoDirection, STEREO, TARGET_LEVEL_MS, frames_to_ms, ms_to_frames, skip_backlog,
 };
 
-/// 每次重采样产出的设备帧数：5 ms（S5）
-const CHUNKS_PER_SECOND: u32 = 200;
+/// 每次重采样产出的设备帧数：1 ms（R8）
+const CHUNKS_PER_SECOND: u32 = 1000;
 /// 开流前等待环形缓冲攒够目标水位时的轮询间隔
 const PRIME_POLL: Duration = Duration::from_millis(1);
 
@@ -91,19 +92,26 @@ fn run_session(
     let mut codec = stream.frame_codec();
     let device_rate = stream.sample_rate();
     let chunk_frames = (device_rate.hz() / CHUNKS_PER_SECOND).max(1) as usize;
-    let ratio = f64::from(device_rate.hz()) / f64::from(config.engine_rate.hz());
-    let mut resampler = StereoResampler::new(config.quality, ratio, chunk_frames, FixedSide::Output)?;
+    let mut resampler = BridgeResampler::new(
+        config.quality,
+        config.engine_rate,
+        device_rate,
+        chunk_frames,
+        FixedSide::Output,
+    )?;
     let buffer_frames = stream.client.get_buffer_size()? as usize;
     let mut input = vec![0.0f32; resampler.input_frames_next() * STEREO * 2];
     let mut resampled: Vec<f32> = Vec::with_capacity(resampler.output_frames_max() * STEREO);
-    let mut queue: VecDeque<f32> = VecDeque::with_capacity((buffer_frames + chunk_frames * 2) * STEREO * 2);
+    let mut queue: VecDeque<f32> =
+        VecDeque::with_capacity((buffer_frames + resampler.output_frames_max() * 2) * STEREO * 2);
     let mut stereo: Vec<f32> = Vec::with_capacity(buffer_frames * STEREO);
     let mut bytes: Vec<u8> = Vec::with_capacity(buffer_frames * stream.block_align);
-    let mut controller = RateController::new(TARGET_LEVEL_MS);
+    let target_ms = TARGET_LEVEL_MS + resampler.burst_ms();
+    let mut controller = RateController::new(target_ms);
     let mut log = BridgeLog::new(&config.endpoint.0);
 
     // 先攒够目标水位再开流，控制器从零误差开始
-    let prime_samples = target_frames(config.engine_rate) * STEREO;
+    let prime_samples = ms_to_frames(target_ms, config.engine_rate) * STEREO;
     while consumer.slots() < prime_samples {
         if stop.load(Ordering::Relaxed) || consumer.is_abandoned() {
             return Ok(SessionEnd::Finished);
@@ -158,7 +166,9 @@ fn run_session(
                 chunk.commit_all();
             }
             resampled.clear();
+            let started = Instant::now();
             resampler.process(&input[..needed], &mut resampled)?;
+            log.block_processed(started.elapsed());
             queue.extend(resampled.iter().copied());
         }
 
@@ -168,8 +178,10 @@ fn run_session(
         render.write_to_device(&bytes, None)?;
         clock_reader.poll(clock);
 
-        let level_ms = frames_to_ms(consumer.slots() / STEREO, config.engine_rate)
-            + frames_to_ms(queue.len() / STEREO, device_rate);
+        let level_ms = frames_to_ms(
+            consumer.slots() / STEREO + resampler.pending_frames(),
+            config.engine_rate,
+        ) + frames_to_ms(queue.len() / STEREO, device_rate);
         log.level(level_ms);
         if log.control_due() {
             let update = controller.update(log.take_average(), CONTROL_PERIOD.as_secs_f64());

@@ -32,6 +32,7 @@ fn config(data_dir: PathBuf) -> RuntimeConfig {
         identity: IdentityProfile::Development,
         pipe_name: format!(r"\\.\pipe\aemeath-host-test-{}-{test}", std::process::id()),
         meter_memory_name: format!(r"Local\aemeath-host-test-meters-{}-{test}", std::process::id()),
+        autostart: false,
     }
 }
 
@@ -51,6 +52,7 @@ fn topology(revision: u64) -> RouteTopology {
             id: NodeId(1),
             kind: NodeKind::Bus,
             strip: Strip::default(),
+            slot_settings: None,
             io: None,
         }],
         routes: vec![],

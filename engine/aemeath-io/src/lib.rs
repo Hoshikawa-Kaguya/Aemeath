@@ -134,7 +134,12 @@ pub fn skip_backlog(consumer: &mut Consumer<f32>, target_samples: usize) -> usiz
 
 /// 目标水位对应的帧数。
 pub fn target_frames(rate: SampleRate) -> usize {
-    (f64::from(rate.hz()) * TARGET_LEVEL_MS / MILLISECONDS_PER_SECOND as f64) as usize
+    ms_to_frames(TARGET_LEVEL_MS, rate)
+}
+
+/// 毫秒换算成帧数。
+fn ms_to_frames(ms: f64, rate: SampleRate) -> usize {
+    (f64::from(rate.hz()) * ms / MILLISECONDS_PER_SECOND as f64) as usize
 }
 
 /// 帧数换算成毫秒。

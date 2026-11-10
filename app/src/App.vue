@@ -1,6 +1,11 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { computed, onMounted } from 'vue'
+import { convertFileSrc } from '@tauri-apps/api/core'
+import { useI18n } from 'vue-i18n'
+// 与 exe、托盘共用同一套图标文件，换图标时只改 src-tauri/icons
+import logoUrl from '../src-tauri/icons/128x128.png'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
+import EngineRateDialog from '@/components/EngineRateDialog.vue'
 import IconSprite from '@/components/IconSprite.vue'
 import NavRail from '@/components/NavRail.vue'
 import RegistrationPanel from '@/components/RegistrationPanel.vue'
@@ -16,7 +21,15 @@ import HotkeysPage from '@/pages/HotkeysPage.vue'
 import WorkbenchPage from '@/pages/WorkbenchPage.vue'
 import { useAppStore } from '@/stores/app'
 
+const { t } = useI18n()
 const store = useAppStore()
+
+/** 用户的背景图（M4 计划 V8）：铺满窗口，遮罩的颜色随深浅色变化 */
+const appearance = computed(() => store.state?.appearance)
+const backdrop = computed(() => {
+  const path = appearance.value?.backgroundPath
+  return path ? { backgroundImage: `url("${convertFileSrc(path)}")` } : null
+})
 
 onMounted(() => {
   store.start().catch((error: unknown) => store.showToast(store.errorText(error)))
@@ -25,11 +38,21 @@ onMounted(() => {
 
 <template>
   <IconSprite />
-  <div class="window">
-    <TitleBar />
-    <div class="shell">
+  <template v-if="backdrop">
+    <div class="backdrop" :style="backdrop"></div>
+    <div class="backdrop overlay" :style="{ opacity: (appearance?.overlayPercent ?? 0) / 100 }"></div>
+  </template>
+  <div class="window" :class="{ 'has-backdrop': backdrop }">
+    <!-- 左列从窗口顶部开始，竖分隔线贯穿全高；右列上方是状态区（M4 计划 V3） -->
+    <aside class="side">
+      <div class="brand" data-tauri-drag-region>
+        <img :src="logoUrl" class="logo" alt="" />
+        <b data-tauri-drag-region>{{ t('app.title') }}</b>
+      </div>
       <NavRail />
-      <!-- 内容区是叠在 Mica 上的一层半透明底色，标题栏和导航保持透明，让 Mica 直接透出来 -->
+    </aside>
+    <div class="main">
+      <TitleBar />
       <main class="content">
         <!-- 切换页面时的进入动画（WinUI 的页面进入：上移加淡入） -->
         <!-- 等第一份快照到了再显示，否则上次停留在别的页面时会先闪一下工作台 -->
@@ -49,18 +72,61 @@ onMounted(() => {
   </div>
   <ContextMenu />
   <ConfirmDialog />
+  <EngineRateDialog />
 </template>
 
 <style scoped>
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background-size: cover;
+  background-position: center;
+  pointer-events: none;
+}
+
+.overlay {
+  background: var(--window-bg);
+}
+
 .window {
   display: grid;
-  grid-template-rows: 48px minmax(0, 1fr);
+  grid-template-columns: 216px minmax(0, 1fr);
   height: 100vh;
 }
 
-.shell {
+.side {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--stroke);
+}
+
+.brand {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  height: 48px;
+  padding-left: 16px;
+  font-size: var(--fontSizeBase200);
+}
+
+.brand b {
+  font-weight: var(--fontWeightSemibold);
+  font-size: var(--fontSizeBase300);
+}
+
+.logo {
+  width: 20px;
+  height: 20px;
+  border-radius: var(--borderRadiusSmall);
+}
+
+.main {
   display: grid;
-  grid-template-columns: 216px minmax(0, 1fr);
+  grid-template-rows: 48px minmax(0, 1fr);
+  min-width: 0;
   min-height: 0;
 }
 
@@ -69,11 +135,13 @@ onMounted(() => {
   min-width: 0;
   min-height: 0;
   background: var(--layer);
-  border-top-left-radius: var(--r-card);
-  border: 1px solid var(--stroke);
-  border-right: 0;
-  border-bottom: 0;
+  border-top: 1px solid var(--stroke);
   overflow: hidden;
+}
+
+/* 有背景图时图片的明暗只由遮罩决定，主区域再叠一层底色会让它几乎看不见 */
+.has-backdrop .content {
+  background: transparent;
 }
 
 .page-enter-enter-active {

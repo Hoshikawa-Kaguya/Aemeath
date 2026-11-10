@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { open } from '@tauri-apps/plugin-dialog'
 import { useI18n } from 'vue-i18n'
 import { backend } from '@/api/backend'
-import type { NodeView, RecordDepth, RecordFormat, RecorderSettingsView } from '@/api/types'
+import { FLAC_MAX_HZ, type NodeView, type RecordDepth, type RecordFormat, type RecorderSettingsView } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
 import { formatBytes, formatDuration } from '@/format/format'
 import { useAppStore } from '@/stores/app'
@@ -77,6 +77,7 @@ function isRecording(node: NodeView): boolean {
             <fluent-button @click="chooseFolder">{{ t('rec.chooseFolder') }}</fluent-button>
             <fluent-button @click="openFolder">{{ t('rec.openFolder') }}</fluent-button>
           </div>
+          <span class="caption">{{ t('rec.folderHint') }}</span>
         </div>
         <label class="field">
           <span>{{ t('rec.defaultFormat') }}</span>
@@ -107,6 +108,12 @@ function isRecording(node: NodeView): boolean {
         </label>
       </div>
 
+      <p
+        v-if="recording?.defaults.format === 'flac' && (store.state?.engine.sampleRate ?? 0) > FLAC_MAX_HZ"
+        class="caption"
+      >
+        {{ t('rec.flacRateHint') }}
+      </p>
       <p v-if="recorders.length === 0" class="caption">{{ t('rec.empty') }}</p>
       <div class="cardlist">
         <div v-for="node in recorders" :key="node.id" class="card-row">
@@ -151,7 +158,6 @@ function isRecording(node: NodeView): boolean {
 
 .page-sub {
   margin: 0 24px 8px;
-  max-width: 900px;
   color: var(--text-2);
 }
 
@@ -163,7 +169,6 @@ function isRecording(node: NodeView): boolean {
   display: grid;
   grid-template-columns: 220px 220px;
   gap: 12px;
-  max-width: 1000px;
   margin-bottom: 20px;
 }
 
@@ -187,7 +192,6 @@ function isRecording(node: NodeView): boolean {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  max-width: 1000px;
 }
 
 /* 列宽固定，长名字、长文件名都截断 */
@@ -197,7 +201,7 @@ function isRecording(node: NodeView): boolean {
   align-items: center;
   gap: 12px;
   min-height: 56px;
-  padding: 8px 16px;
+  padding: 8px var(--card-padding-end) 8px 16px;
   border-radius: var(--r-card);
   background: var(--card);
   border: 1px solid var(--stroke);

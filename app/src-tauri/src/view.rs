@@ -6,14 +6,14 @@
 use aemeath_control::engine_client::DisconnectReason;
 use aemeath_control::slots::{SlotHealth, SlotStatus};
 use aemeath_core::model::{Node, NodeKind, Route};
-use aemeath_core::preferences::LanguagePreference;
+use aemeath_core::preferences::{LanguagePreference, ThemeMode};
 use aemeath_protocol::ids::{SlotDirection, SlotId};
 use aemeath_protocol::message::{DeviceFormat, EndpointStatus, OfflineReason, SampleFormat};
 use aemeath_protocol::topology::RouteRejection;
 use aemeath_protocol::units::{SampleRate, SampleRateError};
 use serde::{Deserialize, Serialize};
 
-use crate::device_settings::{DeviceSettingsView, ResamplerView};
+use crate::device_settings::{DeviceSettingsView, ResamplerView, SlotSettingsView};
 use crate::hotkey_views::{HotkeyBindingView, HotkeyRowView};
 use crate::recording::{RecorderView, RecordingFailureView, RecordingView};
 
@@ -26,6 +26,8 @@ pub struct ViewState {
     pub can_undo: bool,
     pub usbip_version: Option<String>,
     pub language: LanguagePreference,
+    pub check_updates_on_start: bool,
+    pub appearance: AppearanceView,
     pub last_page: Option<String>,
     pub nodes: Vec<NodeView>,
     pub routes: Vec<RouteView>,
@@ -95,11 +97,52 @@ impl EngineState {
     }
 }
 
+/// 界面外观（M4 计划 1.11 节）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppearanceView {
+    pub theme_mode: ThemeModeView,
+    pub accent: Option<String>,
+    /// 背景图的完整路径；没有设置或文件已丢失时为 None
+    pub background_path: Option<String>,
+    pub overlay_percent: u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ThemeModeView {
+    System,
+    Dark,
+    Light,
+}
+
+impl From<ThemeMode> for ThemeModeView {
+    fn from(mode: ThemeMode) -> Self {
+        match mode {
+            ThemeMode::System => Self::System,
+            ThemeMode::Dark => Self::Dark,
+            ThemeMode::Light => Self::Light,
+        }
+    }
+}
+
+impl From<ThemeModeView> for ThemeMode {
+    fn from(mode: ThemeModeView) -> Self {
+        match mode {
+            ThemeModeView::System => Self::System,
+            ThemeModeView::Dark => Self::Dark,
+            ThemeModeView::Light => Self::Light,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EngineView {
     pub state: EngineState,
     pub sample_rate: u32,
+    /// 全局默认的重采样算法
+    pub resampler: ResamplerView,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -185,6 +228,8 @@ pub struct NodeView {
     pub gate_db: Option<f32>,
     /// 外部设备节点的设备设置（ADR-0014）
     pub io: Option<DeviceSettingsView>,
+    /// 占用槽位的节点的格式与重采样算法
+    pub slot_settings: Option<SlotSettingsView>,
     /// 外部设备在线时实际使用的设备格式
     pub format: Option<FormatView>,
     /// 设备换了端点、又有多个同名设备时，可以改用的候选（由用户在节点设置里选）

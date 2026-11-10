@@ -15,6 +15,7 @@ pub mod mixer;
 pub mod port;
 pub mod recorder;
 pub mod recording_file;
+pub mod resampler_worker;
 pub mod scheduler;
 pub mod slot;
 pub mod timeline;
@@ -43,6 +44,7 @@ use crate::devices::{ExternalDevices, TimelineClock};
 use crate::meters::MeterBank;
 use crate::mixer::{Mixer, MixerLayout};
 use crate::recorder::Recorders;
+use crate::resampler_worker::ResamplerWorker;
 use crate::scheduler::{Command, Scheduler};
 use crate::timeline::Timeline;
 
@@ -125,6 +127,7 @@ impl Engine {
             server_receiver,
             retired_sender,
             event_sender,
+            ResamplerWorker::start()?,
         );
         let handle = thread::Builder::new()
             .name("aemeath-scheduler".to_owned())

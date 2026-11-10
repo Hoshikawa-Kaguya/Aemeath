@@ -99,7 +99,11 @@ async function addSource(app: AppView): Promise<void> {
   const program = app.executable
   try {
     const name = await backend.describeProgram(program)
-    if (await store.run(() => backend.addNode({ type: 'appSource', program }, name, NEW_NODE_X, NEW_NODE_Y))) {
+    if (
+      await store.run(() =>
+        backend.addNode({ type: 'appSource', program, resampler: null }, name, NEW_NODE_X, NEW_NODE_Y),
+      )
+    ) {
       await refresh()
     }
   } catch (error) {
@@ -190,7 +194,6 @@ async function addSource(app: AppView): Promise<void> {
 
 .page-sub {
   margin: 0 24px 8px;
-  max-width: 900px;
   color: var(--text-2);
 }
 
@@ -202,7 +205,6 @@ async function addSource(app: AppView): Promise<void> {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  max-width: 1000px;
 }
 
 /* 列宽固定，长程序名、长设备名都截断 */
@@ -212,7 +214,7 @@ async function addSource(app: AppView): Promise<void> {
   align-items: center;
   gap: 12px;
   min-height: 64px;
-  padding: 10px 16px;
+  padding: 10px var(--card-padding-end) 10px 16px;
   border-radius: var(--r-card);
   background: var(--card);
   border: 1px solid var(--stroke);
@@ -280,7 +282,6 @@ async function addSource(app: AppView): Promise<void> {
 }
 
 .note {
-  max-width: 900px;
   margin-top: 16px;
 }
 </style>

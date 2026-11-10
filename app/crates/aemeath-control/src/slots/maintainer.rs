@@ -5,14 +5,18 @@
 //! - 修复：只停掉这台设备自己的后台重试（`attach --stop`，不能用 `--stop-all`），卸下指向 Aemeath 的残留和重复条目，
 //!   再以 `--once` 挂载；以服务端实际收到 import 为成功判据。失败后按 1、2、4、8、10 秒退避，
 //!   连续 [`ALERT_AFTER_FAILURES`] 次失败标记为 [`SlotHealth::Failing`]，由界面提示用户。
-//! - 格式：端点首次变为 ACTIVE 时，设备格式的采样率与引擎不同就改成引擎采样率（样本格式不变）。
-//!   槽位的固定比率重采样在 M4 加入，在那之前采样率不同的槽位是静音的。
+//! - 格式：只有占用节点的设置算数（M4 计划 F1），每轮检查都核对，Windows 里改的格式会被改回来。
+//!   "跟随引擎"是引擎采样率（最高 384 kHz）加 32 位整数，"指定格式"是指定的采样率和样本格式。
+//!   Windows 把格式记在设备实例上，而且不允许给已拔出的端点写格式（实测 0x80070003），释放时改不了；
+//!   下一个占用者挂上后按它的设置改掉，上一个节点的格式不会留下来。
 //! - 只碰指向 Aemeath 服务端口的条目，其他软件（DS4Windows、VIIPER 等）的条目一律不碰。
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
 use aemeath_protocol::ids::SlotId;
+use aemeath_protocol::message::{DeviceFormat, SampleFormat};
+use aemeath_protocol::topology::{SLOT_FORMAT_MAX_HZ, SlotFormatChoice};
 use aemeath_protocol::units::SampleRate;
 use aemeath_sys::audio_endpoints::EndpointState;
 use aemeath_usbip::identity::{IdentityProfile, SlotIdentity};
@@ -33,6 +37,8 @@ const RETRY_DELAYS: [Duration; 5] = [
     Duration::from_secs(8),
     Duration::from_secs(10),
 ];
+/// "跟随引擎"的样本格式：Windows 给这些设备的默认值（S2）。写死才不会继承上一个节点或 Windows 里改过的值
+const FOLLOW_SAMPLE_FORMAT: SampleFormat = SampleFormat::Int32;
 /// 连续失败这么多次后提示用户
 pub const ALERT_AFTER_FAILURES: u32 = 3;
 
@@ -108,8 +114,9 @@ pub struct SlotStatus {
 
 enum Input {
     Occupied(BTreeSet<SlotId>),
+    Formats(BTreeMap<SlotId, SlotFormatChoice>),
     EngineRate(SampleRate),
-    EngineUp,
+    EngineUp { usbip_port: u16 },
     EngineDown,
     SlotConnection { slot: SlotId, connected: bool },
     EndpointsChanged,
@@ -147,6 +154,7 @@ impl SlotMaintainer {
             identities,
             timing: config.timing,
             occupied: BTreeSet::new(),
+            formats: BTreeMap::new(),
             engine_up: false,
             rate: config.engine_rate,
             slots,
@@ -166,6 +174,11 @@ impl SlotMaintainer {
         let _ = self.inputs.send(Input::Occupied(slots));
     }
 
+    /// 每个被占用的槽位应有的格式。没有条目的槽位按"跟随引擎"。
+    pub fn set_formats(&self, formats: BTreeMap<SlotId, SlotFormatChoice>) {
+        let _ = self.inputs.send(Input::Formats(formats));
+    }
+
     pub fn set_engine_rate(&self, rate: SampleRate) {
         let _ = self.inputs.send(Input::EngineRate(rate));
     }
@@ -173,7 +186,9 @@ impl SlotMaintainer {
     /// 转交 IPC 客户端的事件（只用到连接状态和槽位连接）。
     pub fn engine_event(&self, event: &ClientEvent) {
         let input = match event {
-            ClientEvent::Connected { .. } => Input::EngineUp,
+            ClientEvent::Connected { usbip_port, .. } => Input::EngineUp {
+                usbip_port: *usbip_port,
+            },
             ClientEvent::Disconnected(_) => Input::EngineDown,
             ClientEvent::SlotConnection { slot, connected } => Input::SlotConnection {
                 slot: *slot,
@@ -203,8 +218,8 @@ struct SlotState {
     failures: u32,
     last_failure: Option<RepairReason>,
     retry_at: Option<Instant>,
-    /// 这次连接是否已经核对过格式
-    format_checked: bool,
+    /// 设置这个格式失败过：同一次连接、同一个目标格式不再重试，否则每轮检查都报错
+    format_failed: bool,
     reported: Option<(SlotHealth, Option<SlotEndpoint>)>,
 }
 
@@ -216,6 +231,7 @@ struct Task {
     identities: Vec<SlotIdentity>,
     timing: MaintainerTiming,
     occupied: BTreeSet<SlotId>,
+    formats: BTreeMap<SlotId, SlotFormatChoice>,
     engine_up: bool,
     rate: SampleRate,
     slots: BTreeMap<SlotId, SlotState>,
@@ -290,16 +306,26 @@ impl Task {
                     self.check_requested = true;
                 }
             }
+            Input::Formats(formats) => {
+                for (slot, state) in &mut self.slots {
+                    if formats.get(slot) != self.formats.get(slot) {
+                        state.format_failed = false;
+                        self.check_requested = true;
+                    }
+                }
+                self.formats = formats;
+            }
             Input::EngineRate(rate) => {
                 if rate != self.rate {
                     self.rate = rate;
                     for state in self.slots.values_mut() {
-                        state.format_checked = false;
+                        state.format_failed = false;
                     }
                     self.check_requested = true;
                 }
             }
-            Input::EngineUp => {
+            Input::EngineUp { usbip_port } => {
+                self.cli.set_server_port(usbip_port);
                 self.engine_up = true;
                 self.check_requested = true;
                 self.check_not_before = now + self.timing.after_engine_up;
@@ -308,7 +334,7 @@ impl Task {
                 self.engine_up = false;
                 for state in self.slots.values_mut() {
                     state.connected_since = None;
-                    state.format_checked = false;
+                    state.format_failed = false;
                 }
                 for slot in self.occupied.clone() {
                     self.report(slot, SlotHealth::EngineOffline, None);
@@ -322,7 +348,7 @@ impl Task {
                     state.connected_since.get_or_insert(now);
                 } else {
                     state.connected_since = None;
-                    state.format_checked = false;
+                    state.format_failed = false;
                     if self.occupied.contains(&slot) {
                         info!(%slot, "occupied slot lost its connection");
                         self.check_requested = true;
@@ -337,7 +363,7 @@ impl Task {
         let imported: Vec<ImportedDevice> = match self.cli.imported().await {
             Ok(devices) => devices
                 .into_iter()
-                .filter(|device| device.is_served_by(self.cli.server_port()))
+                .filter(|device| device.is_served_by(self.cli.server_port()) || device.belongs_to(&self.identities))
                 .collect(),
             Err(error) => {
                 warn!(%error, "cannot list imported devices");
@@ -523,22 +549,34 @@ impl Task {
         }
     }
 
-    /// 端点首次变为 ACTIVE 时核对采样率，与引擎不同就改成引擎采样率。
+    /// 按占用节点的设置核对格式，不一致就改（包括用户在 Windows 里改过的，以及上一个占用者留下的）。
     async fn ensure_format(&mut self, slot: SlotId, endpoint: Option<SlotEndpoint>) -> Option<SlotEndpoint> {
-        let state = self.slots.get_mut(&slot)?;
+        let choice = self.formats.get(&slot).copied().unwrap_or_default();
+        let wanted = desired_format(choice, self.rate);
         let mut endpoint = endpoint?;
-        if state.format_checked {
+        let state = self.slots.get(&slot)?;
+        // 读不到当前格式时留到下一轮
+        if state.format_failed || endpoint.format.is_none() || format_matches(endpoint.format, wanted) {
             return Some(endpoint);
         }
-        state.format_checked = true;
-        let matches = endpoint.format.is_some_and(|format| format.sample_rate == self.rate);
-        if matches {
-            return Some(endpoint);
-        }
-        info!(%slot, current = ?endpoint.format, engine = self.rate.hz(), "setting the slot sample rate");
-        match self.probe.set_rate(endpoint.id.clone(), self.rate).await {
-            Ok(format) => endpoint.format = Some(format),
-            Err(error) => warn!(%slot, %error, "cannot set the slot sample rate"),
+        let (rate, sample_format) = wanted;
+        info!(%slot, current = ?endpoint.format, rate = rate.hz(), ?sample_format, "setting the slot format");
+        match self
+            .probe
+            .set_format(endpoint.id.clone(), rate, Some(sample_format))
+            .await
+        {
+            Ok(format) => {
+                endpoint.format = Some(format);
+                // 这一轮后面会用缓存刷新状态，不更新的话界面会退回旧格式，直到下一轮快照
+                self.known_endpoints.insert(slot, endpoint.clone());
+            }
+            Err(error) => {
+                warn!(%slot, %error, "cannot set the slot format");
+                if let Some(state) = self.slots.get_mut(&slot) {
+                    state.format_failed = true;
+                }
+            }
         }
         Some(endpoint)
     }
@@ -566,5 +604,72 @@ fn health_after_failure(state: &SlotState, reason: RepairReason) -> SlotHealth {
         SlotHealth::Failing { failures, reason }
     } else {
         SlotHealth::Retrying { failures, reason }
+    }
+}
+
+/// 槽位应有的采样率和样本格式。
+fn desired_format(choice: SlotFormatChoice, engine_rate: SampleRate) -> (SampleRate, SampleFormat) {
+    match choice {
+        SlotFormatChoice::FollowEngine if engine_rate.hz() > SLOT_FORMAT_MAX_HZ => (
+            SampleRate::new(SLOT_FORMAT_MAX_HZ).unwrap_or(engine_rate),
+            FOLLOW_SAMPLE_FORMAT,
+        ),
+        SlotFormatChoice::FollowEngine => (engine_rate, FOLLOW_SAMPLE_FORMAT),
+        SlotFormatChoice::Fixed {
+            sample_rate,
+            sample_format,
+        } => (sample_rate, sample_format),
+    }
+}
+
+fn format_matches(current: Option<DeviceFormat>, (rate, sample_format): (SampleRate, SampleFormat)) -> bool {
+    current.is_some_and(|format| format.sample_rate == rate && format.sample_format == sample_format)
+}
+
+#[cfg(test)]
+mod format_tests {
+    use super::*;
+
+    fn rate(hz: u32) -> SampleRate {
+        SampleRate::new(hz).unwrap()
+    }
+
+    #[test]
+    fn following_the_engine_stops_at_the_shared_mode_limit() {
+        assert_eq!(
+            desired_format(SlotFormatChoice::FollowEngine, rate(96_000)),
+            (rate(96_000), SampleFormat::Int32)
+        );
+        assert_eq!(
+            desired_format(SlotFormatChoice::FollowEngine, rate(768_000)),
+            (rate(384_000), SampleFormat::Int32)
+        );
+    }
+
+    #[test]
+    fn a_leftover_sample_format_does_not_count_as_following() {
+        let wanted = desired_format(SlotFormatChoice::FollowEngine, rate(48_000));
+        let format = |sample_format| {
+            Some(DeviceFormat {
+                sample_rate: rate(48_000),
+                sample_format,
+                channels: 2,
+            })
+        };
+        assert!(format_matches(format(SampleFormat::Int32), wanted));
+        assert!(!format_matches(format(SampleFormat::Int16), wanted));
+        assert!(!format_matches(None, wanted));
+    }
+
+    #[test]
+    fn a_fixed_format_ignores_the_engine_rate() {
+        let choice = SlotFormatChoice::Fixed {
+            sample_rate: rate(44_100),
+            sample_format: SampleFormat::Int16,
+        };
+        assert_eq!(
+            desired_format(choice, rate(96_000)),
+            (rate(44_100), SampleFormat::Int16)
+        );
     }
 }

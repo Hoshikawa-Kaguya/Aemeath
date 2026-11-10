@@ -1,6 +1,6 @@
 //! 主程序（ADR-0003、ADR-0013）：Rust 后端负责控制面，前端运行在 WebView2 里，窗口完全由前端绘制。
 //!
-//! 用法与引擎相同：`aemeath [--data-dir <目录>] [--usbip-port <端口>] [--pipe <管道名>] [--meters <共享内存名>]`，
+//! 用法与引擎相同：`aemeath-app [--data-dir <目录>] [--usbip-port <端口>] [--pipe <管道名>] [--meters <共享内存名>]`，
 //! 正式运行时由守护进程拉起并传入与引擎相同的参数。
 //!
 //! 关闭窗口时销毁 WebView，程序留在托盘；从托盘退出时请引擎停止，再正常退出（退出码 0）。
@@ -17,6 +17,7 @@ mod hotkey_views;
 mod meters;
 mod recording;
 mod tray;
+mod updates;
 mod view;
 mod window;
 
@@ -29,6 +30,7 @@ use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 
 use crate::controller::ControllerHandle;
 use crate::meters::MeterHub;
+use crate::updates::UpdateService;
 
 /// 状态快照的事件名（界面监听）
 const STATE_EVENT: &str = "state-changed";
@@ -48,7 +50,7 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    tracing::info!(version = env!("CARGO_PKG_VERSION"), data_dir = %config.data_dir.display(), "app starting");
+    tracing::info!(version = aemeath_runtime::VERSION, data_dir = %config.data_dir.display(), "app starting");
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -70,9 +72,30 @@ fn main() -> ExitCode {
             app.manage(MeterHub::start(config.meter_memory_name.clone()));
             app.manage(tray::create(app.handle())?);
             app.manage(ConfigStore::new(&config.data_dir));
-            if let Some(window) = app.get_webview_window(tray::MAIN_WINDOW) {
-                window::prepare(&window);
+            app.manage(window::DataDir(config.data_dir.clone()));
+            let background = config.data_dir.join(controller::BACKGROUND_FOLDER);
+            let allowed = std::fs::create_dir_all(&background)
+                .map_err(|error| error.to_string())
+                .and_then(|()| {
+                    app.asset_protocol_scope()
+                        .allow_directory(&background, false)
+                        .map_err(|error| error.to_string())
+                });
+            if let Err(error) = allowed {
+                tracing::warn!(%error, "cannot allow the background image folder");
             }
+            app.manage(UpdateService::start(app.handle().clone()));
+            // 开机自启动时只留在托盘，窗口等用户点托盘图标再创建
+            if !config.autostart {
+                tray::show_main_window(app.handle());
+            }
+            let startup = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let wanted = startup.state::<ControllerHandle>().state().await;
+                if wanted.is_ok_and(|state| state.check_updates_on_start) {
+                    startup.state::<UpdateService>().check();
+                }
+            });
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -86,6 +109,26 @@ fn main() -> ExitCode {
             commands::get_state,
             commands::apply_preset,
             commands::add_node,
+            commands::set_global_resampler,
+            commands::set_engine_rate,
+            commands::get_update_state,
+            commands::check_updates,
+            commands::download_update,
+            commands::apply_update,
+            commands::open_releases_page,
+            commands::set_check_updates_on_start,
+            commands::autostart_enabled,
+            commands::set_autostart,
+            commands::crash_dumps_enabled,
+            commands::enable_crash_dumps,
+            commands::remove_virtual_devices,
+            commands::window_ready,
+            commands::set_appearance,
+            commands::set_background_image,
+            commands::remove_background_image,
+            commands::open_data_folder,
+            commands::open_log_folder,
+            commands::set_slot_settings,
             commands::remove_node,
             commands::rename_node,
             commands::move_node,

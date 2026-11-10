@@ -1,10 +1,12 @@
 //! 驱动不可用时对话框的文案（中文、英文）。守护进程没有界面语言包，文案写在这里。
 //!
-//! M1 只说明原因；引导安装附带的驱动在 M4 加入（ADR-0011）。
+//! 未安装或版本过旧时引导安装附带的驱动（ADR-0011，M4 计划 G1–G5）；其余情况只说明原因。
 
 use aemeath_control::usbip_cli::UsbipVersion;
 use aemeath_core::preferences::LanguagePreference;
-use aemeath_sys::task_dialog::ErrorDialog;
+use aemeath_sys::task_dialog::{ChoiceDialog, ErrorDialog, ProgressDialog};
+
+use std::path::Path;
 
 use crate::driver::DriverProblem;
 
@@ -38,7 +40,7 @@ pub fn dialog(problem: &DriverProblem, language: Language) -> ErrorDialog {
             "Aemeath 需要 usbip-win2 驱动".to_owned(),
             format!(
                 "Aemeath 的虚拟设备基于 usbip-win2 驱动实现，这台电脑上还没有安装它。\n\n\
-                 当前版本还不能自动安装驱动。请从 usbip-win2 的官方发布页安装 {bundled} 版，然后重新打开 Aemeath。"
+                 找不到随附的安装程序。请从 usbip-win2 的官方发布页安装 {bundled} 版，然后重新打开 Aemeath。"
             ),
             "https://github.com/vadimgrn/usbip-win2/releases".to_owned(),
         ),
@@ -46,7 +48,7 @@ pub fn dialog(problem: &DriverProblem, language: Language) -> ErrorDialog {
             "Aemeath needs the usbip-win2 driver".to_owned(),
             format!(
                 "Aemeath's virtual devices are built on the usbip-win2 driver, which isn't installed on this PC.\n\n\
-                 This version can't install the driver automatically yet. Install usbip-win2 {bundled} from its official \
+                 The bundled installer can't be found. Install usbip-win2 {bundled} from its official \
                  release page, then open Aemeath again."
             ),
             "https://github.com/vadimgrn/usbip-win2/releases".to_owned(),
@@ -108,6 +110,145 @@ pub fn dialog(problem: &DriverProblem, language: Language) -> ErrorDialog {
     }
 }
 
+/// 第一个对话框：说明需要安装驱动，提供"安装驱动"和"退出"（G1、G4）。
+pub fn install_prompt(problem: &DriverProblem, language: Language) -> ChoiceDialog {
+    let bundled = UsbipVersion::BUNDLED;
+    let upgrading = matches!(problem, DriverProblem::TooOld { .. });
+    let (heading, content, primary, close) = match language {
+        Language::Chinese => (
+            "Aemeath 需要安装 usbip-win2 驱动",
+            if upgrading {
+                format!(
+                    "Aemeath 的虚拟设备基于 usbip-win2 驱动实现。这台电脑上的版本过旧，需要安装随附的 {bundled} 版。\n\n\
+                     这会升级现有的 usbip-win2，其他使用它的软件也会受影响。安装时需要管理员权限。"
+                )
+            } else {
+                format!(
+                    "Aemeath 的虚拟设备基于 usbip-win2 驱动实现，这台电脑上还没有安装它。\n\n\
+                     将安装随附的 {bundled} 版，需要管理员权限。"
+                )
+            },
+            "安装驱动",
+            "退出",
+        ),
+        Language::English => (
+            "Aemeath needs to install the usbip-win2 driver",
+            if upgrading {
+                format!(
+                    "Aemeath's virtual devices are built on the usbip-win2 driver. The version on this PC is too old, so the \
+                     bundled version {bundled} needs to be installed.\n\nThis upgrades the existing usbip-win2 and also \
+                     affects other software that uses it. Administrator rights are required."
+                )
+            } else {
+                format!(
+                    "Aemeath's virtual devices are built on the usbip-win2 driver, which isn't installed on this PC.\n\n\
+                     The bundled version {bundled} will be installed. Administrator rights are required."
+                )
+            },
+            "Install driver",
+            "Exit",
+        ),
+    };
+    ChoiceDialog {
+        title: TITLE.to_owned(),
+        heading: heading.to_owned(),
+        content,
+        footer: String::new(),
+        primary: primary.to_owned(),
+        close: close.to_owned(),
+    }
+}
+
+pub fn installing(language: Language) -> ProgressDialog {
+    let (heading, content) = match language {
+        Language::Chinese => ("正在安装 usbip-win2…", "这可能需要一分钟左右，请不要关闭电脑。"),
+        Language::English => (
+            "Installing usbip-win2…",
+            "This can take about a minute. Don't shut down the PC.",
+        ),
+    };
+    ProgressDialog {
+        title: TITLE.to_owned(),
+        heading: heading.to_owned(),
+        content: content.to_owned(),
+    }
+}
+
+/// 安装失败：显示退出码和日志路径，按钮是"重试"和"退出"（G5）。
+pub fn install_failed(detail: &str, log: &Path, language: Language) -> ChoiceDialog {
+    let log = log.display();
+    let (heading, content, primary, close) = match language {
+        Language::Chinese => (
+            "usbip-win2 安装失败",
+            format!("安装程序返回：{detail}\n\n详细情况见日志：{log}"),
+            "重试",
+            "退出",
+        ),
+        Language::English => (
+            "The usbip-win2 installation failed",
+            format!("The installer returned: {detail}\n\nSee the log for details: {log}"),
+            "Retry",
+            "Exit",
+        ),
+    };
+    ChoiceDialog {
+        title: TITLE.to_owned(),
+        heading: heading.to_owned(),
+        content,
+        footer: String::new(),
+        primary: primary.to_owned(),
+        close: close.to_owned(),
+    }
+}
+
+/// 安装后驱动没有运行：分不清"需要重启"和"真的装不上"，提示重启并附日志路径（G3）。
+pub fn restart_needed(log: &Path, language: Language) -> ErrorDialog {
+    let log = log.display();
+    let (heading, content) = match language {
+        Language::Chinese => (
+            "请重启电脑后再打开 Aemeath",
+            format!(
+                "usbip-win2 已经安装，但驱动还没有运行，通常重启后就会正常。\n\n如果重启后仍然不行，请查看日志：{log}"
+            ),
+        ),
+        Language::English => (
+            "Restart the PC, then open Aemeath again",
+            format!(
+                "usbip-win2 is installed, but its driver isn't running yet. A restart usually fixes this.\n\nIf it still fails after a restart, see the log: {log}"
+            ),
+        ),
+    };
+    ErrorDialog {
+        title: TITLE.to_owned(),
+        heading: heading.to_owned(),
+        content,
+        footer: String::new(),
+    }
+}
+
+/// 移除虚拟设备时有实例卸载失败（C2）。
+pub fn cleanup_failed(failures: usize, log: &Path, language: Language) -> ErrorDialog {
+    let log = log.display();
+    let (heading, content) = match language {
+        Language::Chinese => (
+            "部分虚拟设备没有移除",
+            format!("有 {failures} 项没有移除成功，这些设备不会影响电脑的使用。\n\n详细情况见日志目录：{log}"),
+        ),
+        Language::English => (
+            "Some virtual devices were not removed",
+            format!(
+                "{failures} item(s) could not be removed. They do no harm to this PC.\n\nSee the log folder for details: {log}"
+            ),
+        ),
+    };
+    ErrorDialog {
+        title: TITLE.to_owned(),
+        heading: heading.to_owned(),
+        content,
+        footer: String::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -143,5 +284,42 @@ mod tests {
                 assert!(!text.heading.is_empty() && !text.content.is_empty());
             }
         }
+    }
+
+    #[test]
+    fn the_upgrade_prompt_warns_about_other_software() {
+        let old = DriverProblem::TooOld {
+            found: UsbipVersion::KNOWN_BROKEN,
+        };
+        assert!(
+            install_prompt(&old, Language::Chinese)
+                .content
+                .contains("其他使用它的软件")
+        );
+        assert!(
+            install_prompt(&old, Language::English)
+                .content
+                .contains("other software")
+        );
+        assert!(
+            !install_prompt(&DriverProblem::NotInstalled, Language::English)
+                .content
+                .contains("other software")
+        );
+    }
+
+    #[test]
+    fn failure_dialogs_include_the_log_path() {
+        let log = Path::new(r"C:\data\logs\usbip-install.log");
+        assert!(
+            install_failed("5", log, Language::English)
+                .content
+                .contains("usbip-install.log")
+        );
+        assert!(
+            restart_needed(log, Language::Chinese)
+                .content
+                .contains("usbip-install.log")
+        );
     }
 }

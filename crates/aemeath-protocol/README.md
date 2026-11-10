@@ -13,7 +13,7 @@
 
 ```json
 {"type":"hello","protocol":1,"app_version":"0.1.0"}
-{"type":"apply_topology","request":7,"topology":{"revision":3,"engine_sample_rate":48000,"clock_master":5,"resampler":"sinc_standard","nodes":[...],"routes":[...]}}
+{"type":"apply_topology","request":7,"topology":{"revision":3,"engine_sample_rate":48000,"clock_master":5,"resampler":{"algorithm":"sinc_async","preset":"balanced"},"nodes":[...],"routes":[...]}}
 {"type":"endpoint_status","node":3,"status":{"state":"offline","reason":"in_use_by_other_app"}}
 {"type":"slot_connection","slot":{"direction":"out","number":8},"connected":true}
 ```

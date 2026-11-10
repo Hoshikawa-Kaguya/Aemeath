@@ -6,6 +6,9 @@
 //!
 //! 窗口在 tauri.conf.json 里是隐藏的，摆好位置后才显示，否则会先在屏幕中央闪一下。
 
+use std::path::PathBuf;
+use std::time::Duration;
+
 use aemeath_core::preferences::WindowPlacement;
 use aemeath_core::store::ConfigStore;
 use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, Runtime, WebviewWindow};
@@ -13,6 +16,18 @@ use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, Runtime, Webview
 use crate::controller::{ControllerHandle, Edit};
 use crate::tray::MAIN_WINDOW;
 
+/// 数据目录（Tauri 托管状态）。配置、日志、WebView2 的用户数据都在这里（M4 计划 D1、D6）。
+pub struct DataDir(pub PathBuf);
+
+impl DataDir {
+    pub fn webview(&self) -> PathBuf {
+        self.0.join(WEBVIEW_FOLDER)
+    }
+}
+
+const WEBVIEW_FOLDER: &str = "webview";
+/// 界面没有报告就绪时，最多等这么久就显示窗口
+const SHOW_FALLBACK: Duration = Duration::from_secs(3);
 /// 最小尺寸占主显示器分辨率的比例
 const MIN_SIZE_RATIO: f64 = 0.65;
 /// 判断窗口是否在屏幕内时，取标题栏中央的这一点（标题栏高 48 逻辑像素，这里取一半）
@@ -37,6 +52,16 @@ pub fn prepare<R: Runtime>(window: &WebviewWindow<R>) {
     if let Some(placement) = saved {
         restore(window, placement);
     }
+    // 等界面应用好主题后再显示（window_ready），否则会闪默认色（M4 计划 V4）；页面加载失败时兜底显示，窗口不能一直看不见
+    let fallback = window.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(SHOW_FALLBACK).await;
+        show(&fallback);
+    });
+}
+
+/// 显示主窗口。
+pub fn show<R: Runtime>(window: &WebviewWindow<R>) {
     if let Err(error) = window.show() {
         tracing::warn!(%error, "cannot show the main window");
     }

@@ -75,6 +75,8 @@ onBeforeUnmount(() => window.removeEventListener('resize', placeIndicator))
 <style scoped>
 .rail {
   position: relative;
+  flex: 1;
+  min-height: 0;
   padding: 4px 8px 12px;
   display: flex;
   flex-direction: column;

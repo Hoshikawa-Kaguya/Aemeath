@@ -26,9 +26,9 @@ USB/IP 服务端与 UAC2 设备模型：把 16 个固定槽位（`Aemeath In 1�
 `examples/enumerate.rs` 导出指定的开发槽位、只应答控制请求，用来在真机上检查描述符和设备身份：
 
 ```sh
-cargo run -p aemeath-usbip --example enumerate -- 3242 30 in1 out1
+cargo run -p aemeath-usbip --example enumerate -- 32411 30 in1 out1
 # 另开终端
-"C:\Program Files\USBip\usbip.exe" -t 3242 attach -r 127.0.0.1 -b 1-1 --once
+"C:\Program Files\USBip\usbip.exe" -t 32411 attach -r 127.0.0.1 -b 1-1 --once
 ```
 
 挂载后，设备管理器里应出现已有的 `Aemeath Dev In 1` 实例，名称不带"2- "后缀。

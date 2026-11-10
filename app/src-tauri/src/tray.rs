@@ -8,6 +8,7 @@ use tauri::{AppHandle, Manager, WebviewWindowBuilder, Wry};
 use tracing::{error, info};
 
 use crate::controller::ControllerHandle;
+use crate::window::DataDir;
 
 pub const MAIN_WINDOW: &str = "main";
 const MENU_OPEN: &str = "open";
@@ -97,7 +98,12 @@ pub fn show_main_window(app: &AppHandle) {
         error!("the main window is missing from tauri.conf.json");
         return;
     };
-    match WebviewWindowBuilder::from_config(app, config).and_then(|builder| builder.build()) {
+    // WebView2 的用户数据也放进数据目录，卸载后不在 %LOCALAPPDATA% 留东西（M4 计划 D6）
+    let webview_data = app.state::<DataDir>().webview();
+    let window = WebviewWindowBuilder::from_config(app, config)
+        .map(|builder| builder.data_directory(webview_data))
+        .and_then(|builder| builder.build());
+    match window {
         Ok(window) => {
             crate::window::prepare(&window);
             let _ = window.set_focus();
@@ -117,7 +123,7 @@ pub fn toggle_main_window(app: &AppHandle) {
 }
 
 /// 用户从托盘退出：请引擎停止，然后退出主程序（守护进程见到正常退出就整体停止）。
-fn quit_app(app: &AppHandle) {
+pub fn quit_app(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         crate::window::remember(app.clone(), crate::window::capture(&app)).await;

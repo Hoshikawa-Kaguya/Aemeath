@@ -6,9 +6,12 @@
 //! - 连线规则与路由拓扑校验相同（[`topology::check_route`]）；拒绝时给出原因，供工作台拖线时提示。
 //! - 节点 ID 只增不减、不复用（引擎换拓扑时按 ID 接过旧状态，复用 ID 会让新节点继承旧节点的增益）。
 
+use std::collections::BTreeMap;
+
 use aemeath_protocol::ids::{NodeId, ProgramPath, SlotDirection, SlotId, SlotNumber};
 use aemeath_protocol::topology::{
-    self, DeviceSettings, NodeRole, RecorderSettings, Resampler, RouteCheckError, RouteRejection, Strip,
+    self, DeviceSettings, NodeRole, RecorderSettings, Resampler, RouteCheckError, RouteRejection, SlotFormatChoice,
+    SlotNodeSettings, Strip,
 };
 use aemeath_protocol::units::GainDb;
 use serde::{Deserialize, Serialize};
@@ -68,6 +71,8 @@ pub enum EditError {
     ProgramInUse { by: NodeId },
     #[error("node {0} is not an app source")]
     NotAnAppSource(NodeId),
+    #[error("node {0} does not occupy a slot")]
+    NotASlotNode(NodeId),
     #[error("node {0} is not a recorder")]
     NotARecorder(NodeId),
     #[error("FLAC cannot store floating-point samples")]
@@ -208,12 +213,14 @@ impl Workspace {
         let id = NodeId(self.next_node_id);
         self.next_node_id += 1;
         let io = kind.is_external().then(DeviceSettings::default);
+        let slot_settings = kind.slot().map(|_| SlotNodeSettings::default());
         self.nodes.push(Node {
             id,
             name,
             kind,
             strip: Strip::default(),
             io,
+            slot_settings,
             position,
             mute_hotkey: None,
             record_hotkey: None,
@@ -312,6 +319,24 @@ impl Workspace {
             _ => return Err(EditError::NotAnAppSource(id)),
         }
         Ok(())
+    }
+
+    /// 设定占用槽位的节点的格式与重采样算法（M4 计划 F1）。
+    pub fn set_slot_settings(&mut self, id: NodeId, settings: SlotNodeSettings) -> Result<(), EditError> {
+        let node = self.node_mut(id)?;
+        if node.kind.slot().is_none() {
+            return Err(EditError::NotASlotNode(id));
+        }
+        node.slot_settings = Some(settings);
+        Ok(())
+    }
+
+    /// 每个被占用的槽位应有的格式，由占用它的节点决定。
+    pub fn slot_formats(&self) -> BTreeMap<SlotId, SlotFormatChoice> {
+        self.nodes
+            .iter()
+            .filter_map(|node| Some((node.kind.slot()?, node.slot_settings()?.format)))
+            .collect()
     }
 
     /// 让虚拟节点改占另一个同方向的槽位（节点配置中改选，ADR-0009）。
@@ -597,6 +622,49 @@ mod tests {
     }
 
     #[test]
+    fn slot_settings_belong_to_the_node_not_the_slot() {
+        use aemeath_protocol::message::SampleFormat;
+        use aemeath_protocol::units::SampleRate;
+
+        let mut workspace = Workspace::new(EngineSettings::default());
+        let game = add(&mut workspace, "Game", NodeSpec::VirtualInput(None));
+        let first = slot(SlotDirection::In, 1);
+        let moved = slot(SlotDirection::In, 5);
+        let format = SlotFormatChoice::Fixed {
+            sample_rate: SampleRate::new(44_100).unwrap(),
+            sample_format: SampleFormat::Int16,
+        };
+        let settings = SlotNodeSettings {
+            format,
+            resampler: None,
+        };
+        assert_eq!(
+            workspace.slot_formats().get(&first),
+            Some(&SlotFormatChoice::FollowEngine)
+        );
+        workspace.set_slot_settings(game, settings).unwrap();
+        assert_eq!(workspace.slot_formats().get(&first), Some(&format));
+
+        // 换槽位时带到新槽位，旧槽位不留设置
+        workspace.change_slot(game, SlotNumber::new(5).unwrap()).unwrap();
+        assert_eq!(workspace.slot_formats().get(&moved), Some(&format));
+        assert_eq!(workspace.slot_formats().get(&first), None);
+
+        // 删除后槽位空出，撤销（恢复快照）时设置随节点回来
+        let snapshot = workspace.clone();
+        workspace.remove_node(game).unwrap();
+        assert!(workspace.slot_formats().is_empty());
+        workspace.restore(snapshot);
+        assert_eq!(workspace.slot_formats().get(&moved), Some(&format));
+
+        let bus = add(&mut workspace, "Bus", NodeSpec::Bus);
+        assert_eq!(
+            workspace.set_slot_settings(bus, settings),
+            Err(EditError::NotASlotNode(bus))
+        );
+    }
+
+    #[test]
     fn an_external_device_is_used_once_per_direction() {
         let mut workspace = Workspace::new(EngineSettings::default());
         let mic = add(&mut workspace, "Mic", NodeSpec::ExternalInput(device("mic")));
@@ -646,12 +714,15 @@ mod tests {
             .replace_program(chrome, program(r"C:\Chrome\CHROME.exe"))
             .unwrap();
         workspace.replace_program(game, program(r"D:\new.exe")).unwrap();
-        workspace.set_app_resampler(game, Some(Resampler::Linear)).unwrap();
+        let fastest = Resampler::PolyAsync {
+            preset: topology::PolyPreset::Fastest,
+        };
+        workspace.set_app_resampler(game, Some(fastest)).unwrap();
         assert_eq!(
             workspace.node(game).unwrap().kind,
             NodeKind::AppSource {
                 program: program(r"D:\new.exe"),
-                resampler: Some(Resampler::Linear),
+                resampler: Some(fastest),
             }
         );
         let bus = add(&mut workspace, "Bus", NodeSpec::Bus);

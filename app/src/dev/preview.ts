@@ -5,8 +5,17 @@
 import type { Channel } from '@tauri-apps/api/core'
 import { emit } from '@tauri-apps/api/event'
 import { mockIPC, mockWindows } from '@tauri-apps/api/mocks'
-import type { Capabilities, FormatView, NodeView, RouteView, SlotView, ViewState } from '@/api/types'
-import { DEFAULT_DEVICE_SETTINGS, roleOf } from '@/api/types'
+import type {
+  Capabilities,
+  FormatView,
+  NodeView,
+  Resampler,
+  RouteView,
+  SlotSettings,
+  SlotView,
+  ViewState,
+} from '@/api/types'
+import { DEFAULT_DEVICE_SETTINGS, DEFAULT_SLOT_SETTINGS, roleOf } from '@/api/types'
 
 const LONG_NAME = '直播推流混音输出 · 给 OBS 录制和推流使用的一个非常非常长的节点名称，用来测试截断效果'
 const METER_INTERVAL_MS = 33
@@ -24,6 +33,7 @@ function node(partial: Partial<NodeView> & Pick<NodeView, 'id' | 'name' | 'kind'
     muted: false,
     gateDb: null,
     io: external ? { ...DEFAULT_DEVICE_SETTINGS } : null,
+    slotSettings: partial.slot ? { ...DEFAULT_SLOT_SETTINGS } : null,
     format: external ? INT32_48K : null,
     candidates: [],
     status: { state: 'ok' },
@@ -140,11 +150,13 @@ const nodes: NodeView[] = [
 ]
 
 let state: ViewState = {
-  engine: { state: 'running', sampleRate: 48000 },
+  engine: { state: 'running', sampleRate: 48000, resampler: { algorithm: 'sincAsync', preset: 'balanced' } },
   registration: null,
   canUndo: false,
   usbipVersion: '0.9.8.1',
   language: { mode: 'system' },
+  checkUpdatesOnStart: true,
+  appearance: { themeMode: 'system', accent: null, backgroundPath: null, overlayPercent: 60 },
   lastPage: null,
   nodes,
   routes: [
@@ -404,6 +416,32 @@ mockIPC(
         return commit({ ...state, panicMute: args.active as boolean }, false)
       case 'start_recording':
       case 'stop_recording':
+      case 'get_update_state':
+        return { currentVersion: '0.1.0', supported: true, portable: true, state: 'available', version: '0.2.0' }
+      case 'window_ready':
+        return null
+      case 'set_appearance':
+        return commit(
+          { ...state, appearance: { ...state.appearance, ...(args.appearance as Partial<ViewState['appearance']>) } },
+          false,
+        )
+      case 'set_check_updates_on_start':
+        return commit({ ...state, checkUpdatesOnStart: args.enabled as boolean }, false)
+      case 'autostart_enabled':
+        return false
+      case 'set_autostart':
+        return args.enabled
+      case 'crash_dumps_enabled':
+        return false
+      case 'enable_crash_dumps':
+        return true
+      case 'remove_virtual_devices':
+      case 'check_updates':
+      case 'download_update':
+      case 'apply_update':
+      case 'open_releases_page':
+      case 'open_data_folder':
+      case 'open_log_folder':
       case 'open_recording_folder':
         return null
       case 'set_recording_folder':
@@ -539,6 +577,32 @@ mockIPC(
       }
       case 'set_last_page':
         return commit({ ...state, lastPage: args.page as string }, false)
+      case 'set_slot_settings':
+        return commit(
+          {
+            ...state,
+            nodes: state.nodes.map((item) =>
+              item.id === args.node ? { ...item, slotSettings: args.settings as SlotSettings } : item,
+            ),
+          },
+          true,
+        )
+      case 'set_engine_rate': {
+        const hz = args.hz as number
+        const followed = Math.min(hz, 384000)
+        return commit(
+          {
+            ...state,
+            engine: { ...state.engine, sampleRate: hz },
+            slots: state.slots.map((row) =>
+              row.format === null ? row : { ...row, format: { ...row.format, sampleRate: followed } },
+            ),
+          },
+          false,
+        )
+      }
+      case 'set_global_resampler':
+        return commit({ ...state, engine: { ...state.engine, resampler: args.resampler as Resampler } }, false)
       case 'set_language':
         return commit({ ...state, language: args.language as ViewState['language'] }, false)
       case 'list_devices':

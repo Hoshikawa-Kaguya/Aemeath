@@ -1,11 +1,13 @@
 /*
  * 语义变量：界面原型（agent_tmp/docs/ui-prototype）用到的颜色和尺寸，全部映射到 Fluent 2 设计令牌（ADR-0013）。
  * 组件只引用这里的变量，深浅主题随令牌一起切换（theme/theme.ts）。
- * 半透明的层叠在 Mica 上，所以层、卡片用 color-mix 让 Mica 透出来。
+ * 窗口底色不透明；层、卡片用 color-mix 做成半透明，用户设置的背景图才能透出来（M4 计划 V4）。
  */
 :root {
   --r-ctl: var(--borderRadiusMedium);
   --r-card: var(--borderRadiusXLarge);
+  /* 卡片右边距：左侧有图标列的留白，右侧的控件贴边，要比左边距大才显得对称 */
+  --card-padding-end: 24px;
   /* 动效（M2 计划 2.10）：时长和曲线全部取自 Fluent 2 令牌，参照 WinUI 的用法 */
   --dur-fast: var(--durationFaster);
   --dur: var(--durationNormal);
@@ -21,6 +23,7 @@
   --text-3: var(--colorNeutralForeground3);
   --text-dis: var(--colorNeutralForegroundDisabled);
 
+  --window-bg: var(--colorNeutralBackground3);
   --layer: color-mix(in srgb, var(--colorNeutralBackground2) 70%, transparent);
   --layer-alt: color-mix(in srgb, var(--colorNeutralBackground3) 80%, transparent);
   --card: color-mix(in srgb, var(--colorNeutralBackground1) 72%, transparent);
@@ -52,6 +55,14 @@
   --meter-mid: var(--colorPaletteYellowBackground3);
   --meter-high: var(--colorPaletteRedBackground3);
   --meter-track: color-mix(in srgb, var(--colorNeutralForeground1) 10%, transparent);
+}
+
+/* 工作台以外的页面：内容居中，最宽 1400 px（M4 计划 V1）。滚动条仍占满内容区 */
+.page > header,
+.page > .body {
+  box-sizing: border-box;
+  max-width: 1400px;
+  margin-inline: auto;
 }
 
 svg.i {
@@ -117,6 +128,64 @@ svg.i {
 fluent-button {
   white-space: nowrap;
   flex: none;
+}
+
+/* Fluent 2 的开关：.switch 里放 role="switch" 的复选框，后面紧跟 .track */
+.switch {
+  /* 隐藏的复选框要留在开关内：否则在滚动的页面里它跑到内容区外，获得焦点时把整个内容区滚走 */
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: var(--fontSizeBase200);
+  cursor: pointer;
+}
+
+.switch input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.switch .track {
+  position: relative;
+  flex: none;
+  width: 40px;
+  height: 20px;
+  border-radius: 10px;
+  border: 1px solid var(--colorNeutralStrokeAccessible);
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
+}
+
+.switch .thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text-2);
+  transition:
+    transform var(--dur) var(--ease),
+    background var(--dur-fast) var(--ease);
+}
+
+.switch input:checked + .track {
+  background: var(--accent);
+  border-color: transparent;
+}
+
+.switch input:checked + .track .thumb {
+  transform: translateX(20px);
+  background: var(--on-accent);
+}
+
+.switch input:focus-visible + .track {
+  outline: 2px solid var(--text);
+  outline-offset: 1px;
 }
 
 /* 原生下拉框（原型的样式） */

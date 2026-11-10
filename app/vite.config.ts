@@ -33,5 +33,13 @@ export default defineConfig({
   build: {
     // 只运行在 Windows 11 自带的 WebView2（Chromium）里
     target: 'chrome120',
+    rolldownOptions: {
+      output: {
+        // 第三方库单独成块，界面代码和翻译的增长不会把它推过体积告警线
+        codeSplitting: {
+          groups: [{ name: 'vendor', test: /[\\/]node_modules[\\/]/ }],
+        },
+      },
+    },
   },
 })

@@ -8,6 +8,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::Path;
+use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
 use aemeath_control::audio_policy::{AppSession, AudioPolicy};
@@ -15,18 +16,18 @@ use aemeath_control::engine_client::{ClientConfig, ClientEvent, EngineClient, En
 use aemeath_control::hotkeys::{HotkeyEvent, HotkeyService};
 use aemeath_control::slots::endpoints::{EndpointProbe, ExternalDevice};
 use aemeath_control::slots::registration::{RegistrationProgress, all_slots, registration_topology};
-use aemeath_control::slots::{MaintainerConfig, MaintainerTiming, SlotMaintainer, SlotStatus};
+use aemeath_control::slots::{MaintainerConfig, MaintainerTiming, SlotMaintainer, SlotStatus, uninstall};
 use aemeath_control::usbip_cli::UsbipCli;
 use aemeath_core::duplicates::{DuplicateRoute, duplicate_routes};
 use aemeath_core::hotkeys::{self, HotkeyBinding, HotkeyError, HotkeyOverlay, HotkeyTarget};
 use aemeath_core::model::{DeviceRef, LabelPosition, Node, NodeKind, NodeName, Position};
-use aemeath_core::preferences::{LandingRecord, LanguagePreference, WindowPlacement};
+use aemeath_core::preferences::{Appearance, LandingRecord, LanguagePreference, ThemeMode, WindowPlacement};
 use aemeath_core::store::{Config, ConfigStore, Loaded};
 use aemeath_core::workspace::{EditError, NodeSpec, Workspace};
 use aemeath_protocol::ids::{EndpointId, NodeId, ProgramPath, SlotId, SlotNumber, TopologyRevision};
 use aemeath_protocol::message::{EndpointDirection, EndpointStatus, OfflineReason, RecorderState};
 use aemeath_protocol::topology::{
-    DeviceSettings, NodeRole, RecorderSettings, Resampler, RouteRejection, RouteTopology, Strip,
+    DeviceSettings, NodeRole, RecorderSettings, Resampler, RouteRejection, RouteTopology, SlotNodeSettings, Strip,
 };
 use aemeath_protocol::units::{GainDb, GateThreshold, SampleRate};
 use aemeath_runtime::config::RuntimeConfig;
@@ -40,14 +41,17 @@ use tracing::{error, info, warn};
 
 use crate::apps::{self, AppsView};
 use crate::default_devices::DefaultDevicesView;
-use crate::device_settings::{CapabilitiesView, DeviceSettingsView, ResamplerView};
+use crate::device_settings::{CapabilitiesView, DeviceSettingsView, ResamplerView, SlotSettingsView};
 use crate::hotkey_views::{HotkeyBindingView, HotkeyRowView, HotkeyTargetView};
 use crate::recording::{RecorderStateView, RecorderView, RecordingView, prepare_recording_path, recording_folder};
 use crate::view::{
-    DeviceView, DuplicateView, EngineState, EngineView, FormatView, NodeStatus, NodeView, NoticeKind, NoticeView,
-    PairVerdict, ProgramView, RegistrationView, RouteVerdict, RouteView, SlotRef, SlotView, ViewState, kind_view,
+    AppearanceView, DeviceView, DuplicateView, EngineState, EngineView, FormatView, NodeStatus, NodeView, NoticeKind,
+    NoticeView, PairVerdict, ProgramView, RegistrationView, RouteVerdict, RouteView, SlotRef, SlotView, ThemeModeView,
+    ViewState, kind_view,
 };
 
+/// 数据目录下存放背景图的文件夹（M4 计划 V8）
+pub const BACKGROUND_FOLDER: &str = "background";
 /// 撤销最多保留的步数
 const UNDO_LIMIT: usize = 50;
 /// 端点变化后等这么久再做后备匹配，让成批的变化通知都到齐
@@ -60,7 +64,7 @@ const RESUME_PROBE_INTERVAL: Duration = Duration::from_secs(2);
 const SESSION_POLL_INTERVAL: Duration = Duration::from_secs(2);
 /// 墙上时钟比预期多走这么多，就认为系统刚睡眠过（ADR-0007：唤醒后立即检查挂载）
 const RESUME_GAP: Duration = Duration::from_secs(10);
-const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+const APP_VERSION: &str = aemeath_runtime::VERSION;
 
 /// 命令失败的原因（界面据此显示本地化的提示）。
 #[derive(Debug, Clone, Serialize, Error)]
@@ -122,6 +126,7 @@ impl From<EditError> for CommandError {
             | EditError::GateNotAllowed(_)
             | EditError::NotAnExternalNode(_)
             | EditError::NotAnAppSource(_)
+            | EditError::NotASlotNode(_)
             | EditError::NotARecorder(_)
             | EditError::InvalidRecorderSettings => Self::Failed {
                 message: error.to_string(),
@@ -149,6 +154,8 @@ pub enum NewNodeKind {
     Bus,
     AppSource {
         program: String,
+        /// 按节点覆盖的重采样算法；None 表示跟随全局默认
+        resampler: Option<ResamplerView>,
     },
     Recorder,
     #[serde(rename_all = "camelCase")]
@@ -180,6 +187,13 @@ pub enum Edit {
         position: Position,
         /// 外部设备节点在添加时就设定的设备设置（ADR-0014）；None 表示默认值
         io: Option<DeviceSettings>,
+        /// 占用槽位的节点在添加时就设定的格式与重采样算法；None 表示默认值
+        slot_settings: Option<SlotNodeSettings>,
+    },
+    /// 占用槽位的节点的格式与重采样算法（节点设置、设备页）
+    SetSlotSettings {
+        node: NodeId,
+        settings: SlotNodeSettings,
     },
     /// 外部设备节点的独占、格式、缓冲和重采样算法（节点设置）
     SetDeviceSettings {
@@ -201,6 +215,10 @@ pub enum Edit {
         node: NodeId,
         resampler: Option<Resampler>,
     },
+    /// 全局默认的重采样算法（设置页）
+    SetGlobalResampler(Resampler),
+    /// 引擎采样率（M4 计划 E2）：先停止录音，再下发新拓扑；"跟随引擎"的节点由挂载维护异步改格式
+    SetEngineRate(SampleRate),
     SetRecorderSettings {
         node: NodeId,
         settings: RecorderSettings,
@@ -272,6 +290,15 @@ pub enum Edit {
         index: usize,
     },
     SetLanguage(LanguagePreference),
+    SetCheckUpdatesOnStart(bool),
+    /// 深浅色、主题色、遮罩强度
+    SetAppearance {
+        theme_mode: ThemeMode,
+        accent: Option<String>,
+        overlay_percent: u8,
+    },
+    /// 背景图的文件名（已复制到数据目录）；None 表示移除
+    SetBackgroundFile(Option<String>),
     SetLastPage(String),
     SetWindowPlacement(WindowPlacement),
     Undo,
@@ -291,6 +318,7 @@ impl Edit {
                 | Self::ReplaceDevice { .. }
                 | Self::ReplaceProgram { .. }
                 | Self::SetAppResampler { .. }
+                | Self::SetSlotSettings { .. }
                 | Self::SetRecorderSettings { .. }
                 | Self::Connect { .. }
                 | Self::Disconnect { .. }
@@ -535,6 +563,7 @@ struct Controller {
     engine_state: EngineState,
     endpoint_status: HashMap<NodeId, EndpointStatus>,
     recorder_status: HashMap<NodeId, RecorderState>,
+    background_dir: PathBuf,
     slot_status: BTreeMap<SlotId, SlotStatus>,
     registration: Option<RegistrationProgress>,
     last_topology: Option<RouteTopology>,
@@ -650,8 +679,18 @@ impl Controller {
         })
         .map_err(|error| StartError::Endpoints(error.to_string()))?;
 
-        let registration = (!config.preferences.slots_registered).then(|| {
-            info!("the slots are not registered yet, registering all 16");
+        // 不记在配置里，每次启动都查（M4 计划 D5）：用户卸载过设备实例时才能重新注册。查不了时不打扰，按已注册处理
+        let identity = runtime.identity;
+        let registered = tokio::task::spawn_blocking(move || uninstall::all_slots_registered(identity))
+            .await
+            .map_err(|error| error.to_string())
+            .and_then(|result| result.map_err(|error| error.to_string()))
+            .unwrap_or_else(|error| {
+                warn!(%error, "cannot check the slot device instances");
+                true
+            });
+        let registration = (!registered).then(|| {
+            info!("some slot device instances are missing, registering all 16");
             RegistrationProgress::new(rate)
         });
         let (hotkey_tx, hotkey_events) = mpsc::unbounded_channel();
@@ -663,8 +702,15 @@ impl Controller {
                 .inspect_err(|error| warn!(%error, "the audio policy service cannot start"))
                 .ok()
         };
+        let background_dir = runtime.data_dir.join(BACKGROUND_FOLDER);
+        if let Some(file) = &config.preferences.appearance.background_file
+            && !background_dir.join(file).is_file()
+        {
+            warn!(%file, "the background image is missing, showing none");
+        }
         let mut controller = Self {
             config,
+            background_dir,
             store,
             read_only,
             undo: Vec::new(),
@@ -855,6 +901,11 @@ impl Controller {
     }
 
     fn apply(&mut self, edit: Edit) -> Result<(), CommandError> {
+        if let Edit::SetEngineRate(rate) = edit
+            && rate != self.config.workspace.engine.sample_rate
+        {
+            self.stop_all_recordings();
+        }
         let before = self.config.workspace.clone();
         let undoable = edit.is_undoable();
         let workspace = &mut self.config.workspace;
@@ -891,11 +942,16 @@ impl Controller {
                 name,
                 position,
                 io,
+                slot_settings,
             } => {
                 let name = NodeName::new(&name).map_err(|_| CommandError::InvalidName)?;
                 let device = |endpoint_id: String, device_name: String| DeviceRef {
                     endpoint: EndpointId(endpoint_id),
                     name: device_name,
+                };
+                let app_resampler = match &kind {
+                    NewNodeKind::AppSource { resampler, .. } => resampler.map(Resampler::from),
+                    _ => None,
                 };
                 let spec = match kind {
                     NewNodeKind::ExternalInput {
@@ -909,7 +965,7 @@ impl Controller {
                     NewNodeKind::VirtualInput => NodeSpec::VirtualInput(None),
                     NewNodeKind::VirtualOutput => NodeSpec::VirtualOutput(None),
                     NewNodeKind::Bus => NodeSpec::Bus,
-                    NewNodeKind::AppSource { program } => NodeSpec::AppSource(parse_program(&program)?),
+                    NewNodeKind::AppSource { program, .. } => NodeSpec::AppSource(parse_program(&program)?),
                     NewNodeKind::Recorder => NodeSpec::Recorder(self.config.preferences.recording_defaults),
                     NewNodeKind::ExternalInsert {
                         endpoint_id,
@@ -923,9 +979,18 @@ impl Controller {
                 if let Some(settings) = io {
                     workspace.set_device_settings(node, settings)?;
                 }
+                if app_resampler.is_some() {
+                    workspace.set_app_resampler(node, app_resampler)?;
+                }
+                if let Some(settings) = slot_settings {
+                    workspace.set_slot_settings(node, settings)?;
+                }
             }
             Edit::ReplaceProgram { node, program } => workspace.replace_program(node, parse_program(&program)?)?,
             Edit::SetAppResampler { node, resampler } => workspace.set_app_resampler(node, resampler)?,
+            Edit::SetGlobalResampler(resampler) => workspace.engine.resampler = resampler,
+            Edit::SetEngineRate(rate) => workspace.engine.sample_rate = rate,
+            Edit::SetSlotSettings { node, settings } => workspace.set_slot_settings(node, settings)?,
             Edit::SetRecorderSettings { node, settings } => workspace.set_recorder_settings(node, settings)?,
             Edit::SetHotkey { target, binding } => {
                 hotkeys::set_hotkey(workspace, &mut self.config.preferences, target, binding)?;
@@ -998,6 +1063,18 @@ impl Controller {
             Edit::Unpin(node) => workspace.unpin(node),
             Edit::MovePin { node, index } => workspace.move_pin(node, index)?,
             Edit::SetLanguage(language) => self.config.preferences.language = language,
+            Edit::SetCheckUpdatesOnStart(enabled) => self.config.preferences.no_update_check_on_start = !enabled,
+            Edit::SetAppearance {
+                theme_mode,
+                accent,
+                overlay_percent,
+            } => {
+                let appearance = &mut self.config.preferences.appearance;
+                appearance.theme_mode = theme_mode;
+                appearance.accent = accent;
+                appearance.overlay_percent = overlay_percent.min(Appearance::MAX_OVERLAY_PERCENT);
+            }
+            Edit::SetBackgroundFile(file) => self.config.preferences.appearance.background_file = file,
             Edit::SetLastPage(page) => self.config.preferences.last_page = Some(page),
             Edit::SetWindowPlacement(placement) => {
                 let window = &mut self.config.preferences.window;
@@ -1038,6 +1115,11 @@ impl Controller {
     /// 把当前应执行的路由拓扑和被占用的槽位交给引擎与挂载维护。拓扑没变时不重复下发。
     fn sync_engine(&mut self) {
         let rate = self.config.workspace.engine.sample_rate;
+        let formats = if self.registration.is_some() {
+            BTreeMap::new()
+        } else {
+            self.config.workspace.slot_formats()
+        };
         let (topology, occupied): (RouteTopology, BTreeSet<SlotId>) = if self.registration.is_some() {
             (registration_topology(rate), all_slots())
         } else {
@@ -1052,6 +1134,7 @@ impl Controller {
         }
         if let Some(maintainer) = &self.maintainer {
             maintainer.set_engine_rate(rate);
+            maintainer.set_formats(formats);
             maintainer.set_occupied(occupied);
         }
         self.sync_hotkeys();
@@ -1215,8 +1298,6 @@ impl Controller {
             if progress.is_done() {
                 info!("all 16 slots are registered");
                 self.registration = None;
-                self.config.preferences.slots_registered = true;
-                self.save();
                 self.sync_engine();
             }
         }
@@ -1387,6 +1468,17 @@ impl Controller {
                 Ok(())
             }
             _ => Err(CommandError::NotFound),
+        }
+    }
+
+    /// 停止所有正在录音的节点（改引擎采样率前）。不自动恢复：录音文件的采样率不能中途改变。
+    fn stop_all_recordings(&self) {
+        for (node, state) in &self.recorder_status {
+            if matches!(state, RecorderState::Recording { .. })
+                && let Err(error) = self.stop_recording(*node)
+            {
+                warn!(%error, node = node.0, "cannot stop the recording");
+            }
         }
     }
 
@@ -1646,6 +1738,22 @@ impl Controller {
             .collect()
     }
 
+    fn appearance_view(&self) -> AppearanceView {
+        let appearance = &self.config.preferences.appearance;
+        let background_path = appearance
+            .background_file
+            .as_ref()
+            .map(|file| self.background_dir.join(file))
+            .filter(|path| path.is_file())
+            .map(|path| path.display().to_string());
+        AppearanceView {
+            theme_mode: ThemeModeView::from(appearance.theme_mode),
+            accent: appearance.accent.clone(),
+            background_path,
+            overlay_percent: appearance.overlay_percent,
+        }
+    }
+
     fn view(&self) -> ViewState {
         let workspace = &self.config.workspace;
         let engine_up = self.engine_state == EngineState::Running;
@@ -1680,6 +1788,7 @@ impl Controller {
             engine: EngineView {
                 state: self.engine_state,
                 sample_rate: workspace.engine.sample_rate.hz(),
+                resampler: ResamplerView::from(workspace.engine.resampler),
             },
             registration: self.registration.as_ref().map(|progress| RegistrationView {
                 completed: progress.completed(),
@@ -1689,6 +1798,8 @@ impl Controller {
             can_undo: !self.undo.is_empty(),
             usbip_version: self.usbip_version.clone(),
             language: self.config.preferences.language.clone(),
+            check_updates_on_start: !self.config.preferences.no_update_check_on_start,
+            appearance: self.appearance_view(),
             last_page: self.config.preferences.last_page.clone(),
             duplicates: duplicates
                 .iter()
@@ -1754,6 +1865,7 @@ impl Controller {
             muted: node.strip.muted,
             gate_db: node.strip.gate.map(GateThreshold::db),
             io: node.device_settings().map(DeviceSettingsView::from),
+            slot_settings: node.slot_settings().map(SlotSettingsView::from),
             format: match self.endpoint_status.get(&node.id) {
                 Some(EndpointStatus::Online { format }) if engine_up => Some(FormatView::from(*format)),
                 _ => None,
