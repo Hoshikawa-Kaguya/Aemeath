@@ -46,7 +46,6 @@ defineExpose({ open })
 <style scoped>
 .title {
   margin: 0;
-  max-width: 460px;
   font: var(--fontWeightSemibold) var(--fontSizeBase500) / var(--lineHeightBase500) var(--fontFamilyBase);
 }
 
@@ -54,7 +53,6 @@ defineExpose({ open })
   display: flex;
   flex-direction: column;
   gap: 12px;
-  width: 460px;
 }
 
 .form p {

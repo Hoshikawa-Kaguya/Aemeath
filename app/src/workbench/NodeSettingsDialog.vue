@@ -305,16 +305,13 @@ defineExpose({ open })
 <style scoped>
 .title {
   margin: 0;
-  max-width: 520px;
   font: var(--fontWeightSemibold) var(--fontSizeBase500) / var(--lineHeightBase500) var(--fontFamilyBase);
 }
 
-/* 尺寸固定，长名字不撑开对话框 */
 .form {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  width: 520px;
 }
 
 .check {

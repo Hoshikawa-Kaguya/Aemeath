@@ -34,6 +34,5 @@ watch(
 <style scoped>
 .message {
   margin: 0;
-  width: 420px;
 }
 </style>

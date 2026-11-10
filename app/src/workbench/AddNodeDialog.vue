@@ -303,7 +303,6 @@ defineExpose({ open })
   display: flex;
   flex-direction: column;
   gap: 16px;
-  width: 520px;
 }
 
 .kinds {

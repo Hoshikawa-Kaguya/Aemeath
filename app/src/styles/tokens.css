@@ -148,6 +148,11 @@ fluent-button {
   border-bottom: 2px solid var(--accent);
 }
 
+/* 内容铺满 Fluent 对话框的固定宽度，左右边距才相等；列宽锁定为可用宽度，长名字只能省略，不会撑开对话框 */
+fluent-dialog-body {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 /* 对话框里的"标签 + 控件"一组 */
 .field {
   display: flex;
