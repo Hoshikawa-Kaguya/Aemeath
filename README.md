@@ -38,7 +38,7 @@ pnpm tauri build --no-bundle  # 发布构建；安装包由 Velopack 另行打�
 
 主程序要连上引擎才能出声。守护进程会依次拉起引擎和主程序；开发时也可以手动先运行引擎（`cargo run -p aemeath-host`），再运行主程序。两者不带参数时，按开发身份算出相同的数据目录（`%APPDATA%\Aemeath Dev`）、管道名和共享内存名。
 
-不启动后端、只检查界面时，在 `app/` 下运行 `pnpm dev`，打开 `http://localhost:21364/preview.html`：预览页用 Tauri 的 `mockIPC` 模拟后端（`src/dev/preview.ts`），只由开发服务器提供，不进入发布构建。
+不启动后端、只检查界面时，在 `app/` 下运行 `pnpm preview`，它会启动开发服务器并在浏览器中打开 `http://localhost:21364/preview.html`：预览页用 Tauri 的 `mockIPC` 模拟后端（`src/dev/preview.ts`），只由开发服务器提供，不进入发布构建。
 
 检查（与 CI 相同）：
 

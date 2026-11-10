@@ -9,6 +9,7 @@
   },
   "scripts": {
     "dev": "vite",
+    "preview": "vite --open /preview.html",
     "build": "vue-tsc --build && vite build",
     "typecheck": "vue-tsc --build",
     "lint": "eslint .",
