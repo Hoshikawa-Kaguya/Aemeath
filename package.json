@@ -1,0 +1,21 @@
+{
+  "name": "aemeath",
+  "version": "1.0.0",
+  "description": "Aemeath 是一个 Windows 11 上的虚拟混音台：用节点和连线，把麦克风、应用和其他外部设备的声音路由、调整后，送往耳机和音箱，或者送往供 OBS、Discord 等应用录制的虚拟设备。",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Hoshikawa-Kaguya/Aemeath.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Hoshikawa-Kaguya/Aemeath/issues"
+  },
+  "homepage": "https://github.com/Hoshikawa-Kaguya/Aemeath#readme"
+}
