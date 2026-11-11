@@ -1,0 +1,92 @@
+name: Release
+
+# 推送 v主.次.修订[-后缀] 形式的 tag 后，以正式身份打包并发布到 GitHub Releases。
+# 应用内的检查更新读取 latest release 里的 releases.win.json，所以 vpk 生成的全部产物都要上传。
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  # 创建 release、上传产物
+  contents: write
+
+# 同一个 tag 不会同时发布两次
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # 只支持 Windows 11 x64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 版本号写在 scripts/version.json 和 Cargo.toml 两处，都要与 tag 一致；不一致就不发布
+      - name: Check the version
+        id: version
+        shell: pwsh
+        run: |
+          $tag = '${{ github.ref_name }}'
+          $json = (Get-Content scripts/version.json -Raw | ConvertFrom-Json).version
+          $cargo = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"$' | Select-Object -First 1).Matches[0].Groups[1].Value
+          if ($tag -ne "v$json" -or $json -ne $cargo) {
+            throw "Tag $tag does not match scripts/version.json ($json) and Cargo.toml ($cargo)"
+          }
+          "version=$json" >> $env:GITHUB_OUTPUT
+          # 带预发布后缀的版本标成 prerelease：它不会成为 latest，已安装的用户收不到
+          "prerelease=$($json.Contains('-'))" >> $env:GITHUB_OUTPUT
+
+      # 前端：pnpm 的版本取自 app/package.json 的 packageManager 字段
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: app/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - name: Install frontend dependencies
+        working-directory: app
+        run: pnpm install --frozen-lockfile
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build and package
+        shell: pwsh
+        run: ./scripts/release.ps1 -Identity production
+
+      - name: Upload to GitHub Releases
+        shell: pwsh
+        env:
+          # vpk 针对较早的 .NET 构建，运行器上只有更新的版本时要允许跨主版本运行
+          DOTNET_ROLL_FORWARD: Major
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          $arguments = @(
+            'upload', 'github',
+            '--outputDir', "target\release-package\production\$version\artifacts",
+            '--repoUrl', '${{ github.server_url }}/${{ github.repository }}',
+            '--token', '${{ secrets.GITHUB_TOKEN }}',
+            '--tag', '${{ github.ref_name }}',
+            '--releaseName', "Aemeath $version",
+            '--publish'
+          )
+          if ('${{ steps.version.outputs.prerelease }}' -eq 'True') {
+            $arguments += '--pre'
+          }
+          & target\tools\vpk\vpk.exe @arguments
+          if ($LASTEXITCODE -ne 0) {
+            throw "vpk upload failed with exit code $LASTEXITCODE"
+          }
+
+      # vpk 不能生成发布说明：按上一个 tag 以来的提交和 PR 由 GitHub 生成，之后可以在网页上修改
+      - name: Write release notes
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $tag = '${{ github.ref_name }}'
+          gh api -X POST "repos/${{ github.repository }}/releases/generate-notes" -f tag_name=$tag --jq .body > notes.md
+          gh release edit $tag --notes-file notes.md
