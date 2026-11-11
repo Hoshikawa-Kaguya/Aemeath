@@ -1,7 +1,7 @@
 //! 主程序：Rust 后端负责控制面，前端运行在 WebView2 里，窗口完全由前端绘制。
 //!
 //! 用法与引擎相同：`aemeath-app [--data-dir <目录>] [--usbip-port <端口>] [--pipe <管道名>] [--meters <共享内存名>]`，
-//! 正式运行时由守护进程拉起并传入与引擎相同的参数。
+//! 正式运行时由守护进程拉起并传入与引擎相同的参数；被直接启动或重复启动时的处理见 `instance`。
 //!
 //! 关闭窗口时销毁 WebView，程序留在托盘；从托盘退出时请引擎停止，再正常退出（退出码 0）。
 
@@ -14,6 +14,7 @@ mod controller;
 mod default_devices;
 mod device_settings;
 mod hotkey_views;
+mod instance;
 mod meters;
 mod recording;
 mod tray;
@@ -29,6 +30,7 @@ use aemeath_runtime::logging::{self, Process};
 use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 
 use crate::controller::ControllerHandle;
+use crate::instance::Startup;
 use crate::meters::MeterHub;
 use crate::updates::UpdateService;
 
@@ -36,7 +38,8 @@ use crate::updates::UpdateService;
 const STATE_EVENT: &str = "state-changed";
 
 fn main() -> ExitCode {
-    let config = match RuntimeConfig::from_args(std::env::args().skip(1)) {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let config = match RuntimeConfig::from_args(args.clone()) {
         Ok(config) => config,
         Err(error) => {
             eprintln!("aemeath: {error}");
@@ -51,10 +54,18 @@ fn main() -> ExitCode {
         }
     };
     tracing::info!(version = aemeath_runtime::VERSION, data_dir = %config.data_dir.display(), "app starting");
+    let activation = match instance::claim(&config, &args) {
+        Startup::Run(activation) => activation,
+        Startup::Exit => return ExitCode::SUCCESS,
+    };
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(move |app| {
+            if let Some(event) = activation {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || instance::show_on_activation(&event, &handle));
+            }
             let handle = app.handle().clone();
             let toggle_handle = app.handle().clone();
             let toggle_window = move || {
@@ -163,6 +174,7 @@ fn main() -> ExitCode {
             commands::set_route_enabled,
             commands::set_route_gain,
             commands::set_route_label,
+            commands::set_route_label_visible,
             commands::set_node_gain,
             commands::set_node_muted,
             commands::set_node_gate,

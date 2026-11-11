@@ -22,7 +22,8 @@ use crate::workspace::Workspace;
 /// 提升版本是为了让只认识版本 1 的程序明确拒绝新文件，而不是因为不认识的字段把它当作损坏的配置。
 /// 3：新增应用源、外部插入、录音节点与热键。规则同上。
 /// 4：重采样算法的表示改变，不做迁移，版本 3 的配置解析失败后备份并从空配置开始。
-pub const CONFIG_VERSION: u32 = 4;
+/// 5：连线新增"是否显示连线标签"，默认不显示。版本 4 的文件直接读入，连线标签全部隐藏。
+pub const CONFIG_VERSION: u32 = 5;
 const CONFIG_FILE: &str = "workspace.json";
 const TEMP_SUFFIX: &str = "tmp";
 const BACKUP_INFIX: &str = "corrupt";
@@ -298,6 +299,37 @@ mod tests {
         std::fs::write(store.path(), b"{ not json").unwrap();
         assert_eq!(store.peek_preferences(), None);
         assert!(store.path().exists(), "peeking never backs up or renames the file");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 升级迁移：版本 4 的配置没有 `label_visible`，读入后连线标签全部隐藏，其余内容照常读入
+    #[test]
+    fn version_4_files_load_with_route_labels_hidden() {
+        let dir = temp_dir("v4");
+        let store = ConfigStore::new(&dir);
+        let mut config = sample();
+        let route = config.workspace.routes()[0];
+        config
+            .workspace
+            .set_route_label_visible(route.from, route.to, true)
+            .unwrap();
+        store.save(&config).unwrap();
+        let mut file: serde_json::Value = serde_json::from_slice(&std::fs::read(store.path()).unwrap()).unwrap();
+        assert_eq!(file["workspace"]["routes"][0]["label_visible"], true);
+
+        // 版本 4 的文件没有这个字段
+        file["version"] = 4.into();
+        file["workspace"]["routes"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("label_visible");
+        std::fs::write(store.path(), serde_json::to_vec(&file).unwrap()).unwrap();
+        assert!(matches!(
+            store.load().unwrap(),
+            Loaded::Existing(loaded)
+                if !loaded.workspace.routes().is_empty()
+                    && loaded.workspace.routes().iter().all(|route| !route.label_visible)
+        ));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

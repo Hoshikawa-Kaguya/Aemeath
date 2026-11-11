@@ -73,6 +73,13 @@ impl IdentityProfile {
         Ok(format!(r"Local\{product}.Guardian.{sid}"))
     }
 
+    /// 主程序唤起事件的名称（每个用户、每个登录会话只运行一个主程序），重复启动时用它请已运行的主程序显示窗口。
+    pub fn app_activation_name(self) -> io::Result<String> {
+        let sid = aemeath_sys::pipe::current_user_sid()?;
+        let product = self.name_prefix();
+        Ok(format!(r"Local\{product}.App.{sid}"))
+    }
+
     /// 电平共享内存的名称（`Local\` 命名空间：引擎和主程序在同一个登录会话里），同样带上用户 SID。
     pub fn meter_memory_name(self) -> io::Result<String> {
         let sid = aemeath_sys::pipe::current_user_sid()?;

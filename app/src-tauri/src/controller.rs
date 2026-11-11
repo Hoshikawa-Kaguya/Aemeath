@@ -268,6 +268,12 @@ pub enum Edit {
         to: NodeId,
         position: f32,
     },
+    /// 显示或隐藏连线标签
+    SetRouteLabelVisible {
+        from: NodeId,
+        to: NodeId,
+        visible: bool,
+    },
     SetNodeGain {
         node: NodeId,
         gain_db: f32,
@@ -305,7 +311,7 @@ pub enum Edit {
 }
 
 impl Edit {
-    /// 结构性的修改才进入撤销记录；移动、增益、标签位置这类连续调整不进入
+    /// 结构性的修改才进入撤销记录；移动、增益、标签位置这类连续调整和标签显隐不进入
     fn is_undoable(&self) -> bool {
         matches!(
             self,
@@ -1035,6 +1041,9 @@ impl Controller {
             }
             Edit::SetRouteLabel { from, to, position } => {
                 workspace.set_route_label(from, to, LabelPosition::new(position))?;
+            }
+            Edit::SetRouteLabelVisible { from, to, visible } => {
+                workspace.set_route_label_visible(from, to, visible)?;
             }
             Edit::SetNodeGain { node, gain_db } => {
                 let gain = GainDb::new(gain_db).map_err(|error| CommandError::Failed {

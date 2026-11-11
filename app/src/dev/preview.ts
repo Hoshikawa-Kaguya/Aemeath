@@ -160,17 +160,36 @@ let state: ViewState = {
   lastPage: null,
   nodes,
   routes: [
-    { from: 1, to: 3, gainDb: -3, enabled: true, labelPosition: 0.5, duplicate: null, toggleHotkey: null },
+    {
+      from: 1,
+      to: 3,
+      gainDb: -3,
+      enabled: true,
+      labelPosition: 0.5,
+      labelVisible: false,
+      duplicate: null,
+      toggleHotkey: null,
+    },
     {
       from: 2,
       to: 4,
       gainDb: 0,
       enabled: true,
       labelPosition: 0.5,
+      labelVisible: true,
       duplicate: { program: 'Google Chrome', destination: '监听音箱' },
       toggleHotkey: null,
     },
-    { from: 1, to: 4, gainDb: -6, enabled: false, labelPosition: 0.35, duplicate: null, toggleHotkey: null },
+    {
+      from: 1,
+      to: 4,
+      gainDb: -6,
+      enabled: false,
+      labelPosition: 0.35,
+      labelVisible: true,
+      duplicate: null,
+      toggleHotkey: null,
+    },
   ],
   console: [1, 2, 7, 6, 10, 3, 11],
   hotkeys: [
@@ -311,6 +330,7 @@ mockIPC(
                 gainDb: 0,
                 enabled: true,
                 labelPosition: 0.5,
+                labelVisible: false,
                 duplicate: null,
                 toggleHotkey: null,
               },
@@ -329,6 +349,8 @@ mockIPC(
         return updateRoute(args, { gainDb: args.gainDb as number }, false)
       case 'set_route_label':
         return updateRoute(args, { labelPosition: args.position as number }, false)
+      case 'set_route_label_visible':
+        return updateRoute(args, { labelVisible: args.visible as boolean }, false)
       case 'move_node':
         return commit(
           {

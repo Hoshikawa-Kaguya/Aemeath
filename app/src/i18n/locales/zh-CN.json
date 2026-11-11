@@ -78,7 +78,7 @@
     "recorder": "录音节点"
   },
   "wb": {
-    "hint": "从端口拖动即可连线 · 单击连线选中后按 Del 删除 · 鼠标停在连线标签上滚动滚轮调增益 · 拖动标签可沿连线移动",
+    "hint": "从端口拖动即可连线 · 单击连线选中后按 Del 删除 · 右键连线可显示连线标签，在标签上滚动滚轮调增益",
     "add": "添加节点",
     "fit": "适应窗口",
     "undo": "撤销",
@@ -86,7 +86,6 @@
   },
   "node": {
     "aria": "{kind} {name}",
-    "subtitle": "{kind} · {detail}",
     "slotName": "Aemeath {direction} {number}",
     "directionIn": "In",
     "directionOut": "Out",
@@ -440,6 +439,8 @@
     "routeOn": "开启连线",
     "routeOff": "关闭连线",
     "resetGain": "增益重置为 0 dB",
+    "showLabel": "显示连线标签",
+    "hideLabel": "隐藏连线标签",
     "resetLabel": "标签放回连线中点",
     "deleteRoute": "删除连线",
     "addHere": "在此处添加节点…",

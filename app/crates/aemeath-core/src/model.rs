@@ -162,6 +162,9 @@ pub struct Route {
     pub enabled: bool,
     #[serde(default)]
     pub label_position: LabelPosition,
+    /// 工作台上是否显示连线标签（GLOSSARY：连线标签）；默认不显示，不显示时不写进配置
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub label_visible: bool,
     /// 连线开关的专属热键
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub toggle_hotkey: Option<HotkeyBinding>,

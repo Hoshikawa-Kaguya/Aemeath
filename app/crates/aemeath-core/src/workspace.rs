@@ -385,6 +385,7 @@ impl Workspace {
             gain: GainDb::UNITY,
             enabled: true,
             label_position: LabelPosition::default(),
+            label_visible: false,
             toggle_hotkey: None,
         });
         Ok(())
@@ -422,6 +423,12 @@ impl Workspace {
     /// 设定连线标签在连线上的位置。只影响显示。
     pub fn set_route_label(&mut self, from: NodeId, to: NodeId, position: LabelPosition) -> Result<(), EditError> {
         self.route_mut(from, to)?.label_position = position;
+        Ok(())
+    }
+
+    /// 显示或隐藏连线标签。只影响显示。
+    pub fn set_route_label_visible(&mut self, from: NodeId, to: NodeId, visible: bool) -> Result<(), EditError> {
+        self.route_mut(from, to)?.label_visible = visible;
         Ok(())
     }
 

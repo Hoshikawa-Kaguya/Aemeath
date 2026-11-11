@@ -45,12 +45,20 @@ export function nodeCode(node: NodeView, all: readonly NodeView[]): string {
   return `${prefix}${sameKind.findIndex((other) => other.id === node.id) + 1}`
 }
 
-/** 副标题："外部输入 · Rear Mic"、"虚拟输入 · Aemeath In 1" */
-export function nodeSubtitle(node: NodeView): string {
-  const { t } = i18n.global
+/** 节点卡的副标题，类型和详情分两行显示 */
+export interface NodeSubtitle {
+  /** 例如 "虚拟输入" */
+  kind: string
+  /** 例如 "Aemeath In 1"、"Rear Mic"；没有时为空串 */
+  detail: string
+}
+
+/** 副标题：类型（"外部输入"）和详情（设备名、槽位设备名或程序文件名）。外部插入只显示类型 */
+export function nodeSubtitle(node: NodeView): NodeSubtitle {
+  const kind = i18n.global.t(`kind.${node.kind}`)
   if (node.kind === 'externalInsert') {
-    return t('kind.externalInsert')
+    return { kind, detail: '' }
   }
   const detail = node.slot !== null ? slotName(node.slot) : (node.device?.name ?? node.program?.fileName ?? '')
-  return detail === '' ? t(`kind.${node.kind}`) : t('node.subtitle', { kind: t(`kind.${node.kind}`), detail })
+  return { kind, detail }
 }

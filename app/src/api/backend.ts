@@ -110,6 +110,9 @@ export const backend = {
   /** `position`：标签在连线上的位置（0–1） */
   setRouteLabel: (from: number, to: number, position: number) =>
     invoke<ViewState>('set_route_label', { from, to, position }),
+  /** 显示或隐藏连线标签 */
+  setRouteLabelVisible: (from: number, to: number, visible: boolean) =>
+    invoke<ViewState>('set_route_label_visible', { from, to, visible }),
   setNodeGain: (node: number, gainDb: number) => invoke<ViewState>('set_node_gain', { node, gainDb }),
   setNodeMuted: (node: number, muted: boolean) => invoke<ViewState>('set_node_muted', { node, muted }),
   /** `thresholdDb` 为 null 表示关闭门限 */

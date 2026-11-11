@@ -78,7 +78,7 @@
     "recorder": "Recorder"
   },
   "wb": {
-    "hint": "Drag from a port to connect · Click a route, then press Del to delete · Scroll over a route label to change its gain · Drag a label to slide it along its route",
+    "hint": "Drag from a port to connect · Click a route, then press Del to delete · Right-click a route to show its label, then scroll over the label to change the gain",
     "add": "Add node",
     "fit": "Fit to window",
     "undo": "Undo",
@@ -86,7 +86,6 @@
   },
   "node": {
     "aria": "{kind}: {name}",
-    "subtitle": "{kind} · {detail}",
     "slotName": "Aemeath {direction} {number}",
     "directionIn": "In",
     "directionOut": "Out",
@@ -435,6 +434,8 @@
     "routeOn": "Turn route on",
     "routeOff": "Turn route off",
     "resetGain": "Reset gain to 0 dB",
+    "showLabel": "Show route label",
+    "hideLabel": "Hide route label",
     "resetLabel": "Move the label back to the middle of the route",
     "deleteRoute": "Delete route",
     "addHere": "Add node here…",

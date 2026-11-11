@@ -316,6 +316,7 @@ pub struct RouteView {
     pub gain_db: f32,
     pub enabled: bool,
     pub label_position: f32,
+    pub label_visible: bool,
     /// 这条连线在重复路径上
     pub duplicate: Option<DuplicateView>,
     pub toggle_hotkey: Option<HotkeyBindingView>,
@@ -329,6 +330,7 @@ impl RouteView {
             gain_db: route.gain.db(),
             enabled: route.enabled,
             label_position: route.label_position.get(),
+            label_visible: route.label_visible,
             duplicate,
             toggle_hotkey: route.toggle_hotkey.map(HotkeyBindingView::from),
         }

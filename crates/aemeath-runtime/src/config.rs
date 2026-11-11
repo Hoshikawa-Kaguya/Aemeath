@@ -12,6 +12,9 @@ use thiserror::Error;
 
 use crate::autostart::ARGUMENT;
 
+/// 命名管道名的参数。守护进程拉起引擎和主程序时总会带上它，主程序据此判断自己是不是被直接启动的。
+pub const PIPE_ARGUMENT: &str = "--pipe";
+
 /// 三个进程共用的运行参数。守护进程把同一组值传给引擎和主程序，两边才能找到对方。
 #[derive(Debug, Clone)]
 pub struct RuntimeConfig {
@@ -59,7 +62,7 @@ impl RuntimeConfig {
                 "--usbip-port" => {
                     usbip_port = value()?.parse().map_err(|_| ConfigError::InvalidValue(arg.clone()))?;
                 }
-                "--pipe" => pipe_name = Some(value()?),
+                PIPE_ARGUMENT => pipe_name = Some(value()?),
                 "--meters" => meter_memory_name = Some(value()?),
                 ARGUMENT => autostart = true,
                 _ => return Err(ConfigError::UnknownArgument(arg)),

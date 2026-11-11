@@ -33,7 +33,7 @@ use crate::window::DataDir;
 type Reply<T> = Result<T, CommandError>;
 
 /// 守护进程的文件名
-const GUARDIAN_EXE: &str = "Aemeath.exe";
+pub const GUARDIAN_EXE: &str = "Aemeath.exe";
 /// `#rrggbb` 的长度
 const HEX_COLOR_LENGTH: usize = 7;
 const IMAGE_EXTENSIONS: [&str; 4] = ["png", "jpg", "jpeg", "webp"];
@@ -665,6 +665,23 @@ pub async fn set_route_label(
             from: NodeId(from),
             to: NodeId(to),
             position,
+        })
+        .await
+}
+
+/// 显示或隐藏连线标签（连线右键菜单）。只影响显示，不进入撤销记录。
+#[tauri::command]
+pub async fn set_route_label_visible(
+    controller: State<'_, ControllerHandle>,
+    from: u32,
+    to: u32,
+    visible: bool,
+) -> Reply<ViewState> {
+    controller
+        .edit(Edit::SetRouteLabelVisible {
+            from: NodeId(from),
+            to: NodeId(to),
+            visible,
         })
         .await
 }

@@ -2,6 +2,7 @@
 
 import type { InjectionKey } from 'vue'
 import type { NodeView, RouteView } from '@/api/types'
+import type { NodeSubtitle } from '@/stores/nodeLabels'
 import type { Point } from './curve'
 
 export interface WorkbenchActions {
@@ -30,7 +31,7 @@ export const workbenchKey: InjectionKey<WorkbenchActions> = Symbol('workbench')
 export interface NodeData {
   node: NodeView
   code: string
-  subtitle: string
+  subtitle: NodeSubtitle
   selected: boolean
   /** 拖线经过时的校验结果：可以连（ok）、不能连（bad） */
   drop: 'ok' | 'bad' | null

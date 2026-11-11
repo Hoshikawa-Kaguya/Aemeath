@@ -283,8 +283,13 @@ function routeMenu(route: RouteView): MenuItem[] {
     },
     {
       kind: 'action',
+      label: t(route.labelVisible ? 'menu.hideLabel' : 'menu.showLabel'),
+      run: () => void store.run(() => backend.setRouteLabelVisible(route.from, route.to, !route.labelVisible)),
+    },
+    {
+      kind: 'action',
       label: t('menu.resetLabel'),
-      disabled: route.labelPosition === LABEL_MIDDLE,
+      disabled: !route.labelVisible || route.labelPosition === LABEL_MIDDLE,
       run: () => actions.moveLabel(route, LABEL_MIDDLE),
     },
     SEPARATOR,
@@ -486,7 +491,7 @@ function onKeyDown(event: KeyboardEvent): void {
     return
   }
   const route = selectedRoute.value
-  if (route !== undefined && event.altKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+  if (route?.labelVisible === true && event.altKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
     event.preventDefault()
     actions.moveLabel(route, route.labelPosition + (event.key === 'ArrowRight' ? LABEL_STEP : -LABEL_STEP))
     return

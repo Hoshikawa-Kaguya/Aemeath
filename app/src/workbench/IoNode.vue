@@ -178,7 +178,10 @@ function onKeyDown(event: KeyboardEvent): void {
         <b v-else class="ellipsis" :title="t('node.rename', { name: node.name })" @dblclick="startRename">{{
           node.name
         }}</b>
-        <span :title="data.subtitle">{{ data.subtitle }}</span>
+        <span class="ellipsis">{{ data.subtitle.kind }}</span>
+        <span v-if="data.subtitle.detail" class="ellipsis" :title="data.subtitle.detail">{{
+          data.subtitle.detail
+        }}</span>
       </div>
       <span
         v-if="node.duplicate"
@@ -376,15 +379,12 @@ function onKeyDown(event: KeyboardEvent): void {
   font: var(--fontWeightSemibold) var(--fontSizeBase300) / 18px var(--fontFamilyBase);
 }
 
+/* 类型和详情各占一行，不随中英文长度折行 */
 .node-title span {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  display: block;
   font-size: var(--fontSizeBase100);
   line-height: 14px;
   color: var(--text-3);
-  overflow: hidden;
-  overflow-wrap: anywhere;
 }
 
 .rename {

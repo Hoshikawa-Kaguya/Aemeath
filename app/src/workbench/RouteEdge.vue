@@ -134,7 +134,8 @@ onBeforeUnmount(() => release?.())
     class="route-path"
     :class="{ on: route.enabled, off: !route.enabled, sel: data.selected, hot: data.highlighted }"
   />
-  <EdgeLabelRenderer>
+  <!-- 连线标签默认隐藏，从连线右键菜单显示 -->
+  <EdgeLabelRenderer v-if="route.labelVisible">
     <div
       class="wire-label nodrag nopan"
       :class="{

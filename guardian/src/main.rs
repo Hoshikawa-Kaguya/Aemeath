@@ -1,6 +1,6 @@
 //! 守护进程：第一个启动的进程。
 //!
-//! 1. 每个用户只运行一个（已有实例时直接退出）。
+//! 1. 每个用户只运行一个。已有实例时请已运行的主程序显示窗口，然后退出。
 //! 2. 检查 usbip-win2 驱动；不可用时显示说明对话框并退出，不拉起引擎和主程序。
 //! 3. 拉起并监视引擎（`aemeath-host.exe`）与主程序（`aemeath-app.exe`），两者与守护进程放在同一目录，
 //!    并收到与守护进程相同的参数（数据目录、端口、管道名、共享内存名）。
@@ -29,8 +29,9 @@ use std::process::{Child, Command, ExitCode};
 use aemeath_control::usbip_cli::UsbipCli;
 use aemeath_core::store::ConfigStore;
 use aemeath_runtime::autostart;
-use aemeath_runtime::config::RuntimeConfig;
+use aemeath_runtime::config::{PIPE_ARGUMENT, RuntimeConfig};
 use aemeath_runtime::logging::{self, Process};
+use aemeath_sys::activation;
 use aemeath_sys::single_instance::SingleInstance;
 use aemeath_sys::ui_language;
 use tracing::{error, info};
@@ -76,6 +77,10 @@ fn main() -> ExitCode {
         Ok(Some(instance)) => instance,
         Ok(None) => {
             info!("another guardian is already running, exiting");
+            // 开机自启动重复时只退出，不弹窗口
+            if !config.autostart {
+                activate_app(&config);
+            }
             return ExitCode::SUCCESS;
         }
         Err(error) => {
@@ -124,6 +129,20 @@ fn single_instance(config: &RuntimeConfig) -> io::Result<Option<SingleInstance>>
     SingleInstance::acquire(&config.identity.guardian_instance_name()?)
 }
 
+/// 请已在运行的主程序显示窗口（用户从开始菜单等入口重复启动时）。
+/// 主程序正在被重新拉起、还没开始等待时，这次启动没有效果。
+fn activate_app(config: &RuntimeConfig) {
+    let requested = config
+        .identity
+        .app_activation_name()
+        .and_then(|name| activation::request_activation(&name));
+    match requested {
+        Ok(true) => info!("asked the running app to show its window"),
+        Ok(false) => info!("no app is running to show"),
+        Err(error) => error!(%error, "cannot ask the running app to show its window"),
+    }
+}
+
 /// 收集驱动的各项观测并判定能否启动。
 fn check_driver(config: &RuntimeConfig) -> Result<(), driver::DriverProblem> {
     let cli = UsbipCli::default_program()
@@ -149,7 +168,7 @@ fn forwarded_arguments(config: &RuntimeConfig, usbip_port: u16) -> Vec<OsString>
         config.data_dir.clone().into_os_string(),
         "--usbip-port".into(),
         usbip_port.to_string().into(),
-        "--pipe".into(),
+        PIPE_ARGUMENT.into(),
         config.pipe_name.clone().into(),
         "--meters".into(),
         config.meter_memory_name.clone().into(),

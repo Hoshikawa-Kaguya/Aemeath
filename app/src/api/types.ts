@@ -247,6 +247,8 @@ export interface RouteView {
   enabled: boolean
   /** 标签在连线上的位置，0.1–0.9 */
   labelPosition: number
+  /** 工作台上是否显示连线标签，默认不显示 */
+  labelVisible: boolean
   /** 这条连线在重复路径上 */
   duplicate: DuplicateView | null
   toggleHotkey: HotkeyBindingView | null
