@@ -1,8 +1,14 @@
 # 构建产物一律锚定到具体位置（以 / 开头），避免误伤源码里的同名目录，
 # 例如 Cargo 约定的 src/bin/、前端的 src/debug/
 
-# Cargo（workspace 只有一个 target 目录）
+# Cargo（主 workspace 只有一个 target 目录）
 /target/
+
+# cargo-fuzz 是单独的 workspace：构建产物、本地语料和发现的崩溃输入都不提交
+/fuzz/target/
+/fuzz/corpus/
+/fuzz/artifacts/
+/fuzz/coverage/
 
 # 前端构建产物与依赖
 /app/dist/

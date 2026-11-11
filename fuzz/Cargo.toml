@@ -1,0 +1,47 @@
+[package]
+name = "aemeath-fuzz"
+description = "cargo-fuzz targets for the USB/IP parser of aemeath-usbip"
+version = "0.0.0"
+edition = "2024"
+license = "AGPL-3.0-only"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+aemeath-protocol = { path = "../crates/aemeath-protocol" }
+aemeath-usbip = { path = "../engine/aemeath-usbip" }
+
+# 单独的 workspace：需要 nightly 和 libFuzzer，不进主 workspace 的构建、检查和发布
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "op_header"
+path = "fuzz_targets/op_header.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "busid"
+path = "fuzz_targets/busid.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "urb_stream"
+path = "fuzz_targets/urb_stream.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "control"
+path = "fuzz_targets/control.rs"
+test = false
+doc = false
+bench = false

@@ -11,4 +11,4 @@ Aemeath 以 [AGPL-3.0-only](LICENSE) 发布。发布包附带或链接了以下�
 - Rust 依赖：每次打包时由 `scripts/release.ps1` 生成完整清单（名称、版本、许可证），放在发布包的 `licenses\rust-dependencies.txt`。
 - 前端依赖：见 `app/package.json`。
 
-其中 `ring`（经 Velopack 的 HTTPS 下载引入）包含 C 和汇编代码，其余 Rust 依赖不含 C 代码。
+依赖的许可证由 `cargo deny check licenses` 检查（配置见 `deny.toml`），只允许与 AGPL-3.0-only 兼容的许可证。

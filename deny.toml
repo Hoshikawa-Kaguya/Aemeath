@@ -1,0 +1,52 @@
+# cargo-deny：检查依赖的许可证、安全公告和来源（CI 中运行 `cargo deny check`）。
+
+[graph]
+# 只发布 Windows x64 版，其他平台才会引入的依赖不参与检查
+targets = ["x86_64-pc-windows-msvc"]
+# 正式身份的 feature 只由打包脚本打开，也要一起检查
+all-features = true
+
+[advisories]
+# RustSec 公告：有漏洞或已撤回的版本报错，不再维护的 crate 只提示
+unmaintained = "workspace"
+yanked = "deny"
+# 以下 4 条都在 zip 8.x（经 velopack 1.2.161 引入；修复在 zip 9，velopack 1.2 不接受）。
+# 它们都出在 `ZipArchive::extract` / `ZipStreamReader::extract` 整体解压接口，velopack 只用
+# `by_index` 逐个读取条目再自己写文件，不调用这些接口。升级 velopack 时重新评估并删除这些条目
+ignore = [
+    { id = "RUSTSEC-2026-0367", reason = "extract() 保留 SUID/SGID 位：只影响 Unix，velopack 不调用 extract()" },
+    { id = "RUSTSEC-2026-0368", reason = "extract() 创建指向目标目录外的符号链接：velopack 不调用 extract()" },
+    { id = "RUSTSEC-2026-0369", reason = "extract() 经符号链接设置 Unix 权限：只影响 Unix，velopack 不调用 extract()" },
+    { id = "RUSTSEC-2026-0429", reason = "extract() 遇到声明尺寸极大的符号链接时中止：velopack 不调用 extract()" },
+]
+
+[licenses]
+# 都与 AGPL-3.0-only 兼容。新依赖带来清单外的许可证时，确认兼容后再加进来
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "BSD-3-Clause",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+confidence-threshold = 0.9
+
+[licenses.private]
+# 自己的 crate 都不发布到 crates.io，许可证见仓库根目录的 LICENSE
+ignore = true
+
+[bans]
+# 重复版本都来自上游依赖之间的版本差异，这里管不了，不逐条提示
+multiple-versions = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

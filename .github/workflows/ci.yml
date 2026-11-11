@@ -2,13 +2,21 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   pull_request:
 
 permissions:
   contents: read
 
 jobs:
+  # 依赖的许可证、安全公告和来源（配置见 deny.toml）。这个 action 只能在 Linux 上运行；
+  # deny.toml 限定了只按 Windows 目标检查，所以结果与在 Windows 上运行相同
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+
   build:
     # 只支持 Windows 11 x64
     runs-on: windows-latest
