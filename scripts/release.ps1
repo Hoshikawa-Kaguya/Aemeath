@@ -1,7 +1,9 @@
-# 本地打包脚本：按指定身份构建，放入 usbip-win2 安装程序和许可声明，调用 vpk 生成安装版和便携版。
-# `vpk upload` 和打 tag 由维护者手动执行。用 pwsh 运行：
+# 打包脚本：按指定身份构建，放入 usbip-win2 安装程序和许可声明，调用 vpk 生成安装版和便携版。
+# 推送 v* tag 后由 CI（.github/workflows/release.yml）以正式身份运行并上传到 GitHub Releases；
+# 本机运行只打包，不上传。用 pwsh 运行：
 #   pwsh scripts/release.ps1 [-Identity production|development]
 # 版本号取自同目录的 version.json，程序里显示的版本也来自它（构建时读取），两边不会对不上。
+# 产物在 target\release-package\<身份>\<版本>\artifacts，vpk 装在 target\tools\vpk；release.yml 依赖这两个位置。
 [CmdletBinding()]
 param(
     [ValidateSet('production', 'development')][string]$Identity = 'production'
@@ -15,7 +17,7 @@ $Version = (Get-Content (Join-Path $PSScriptRoot 'version.json') -Raw | ConvertF
 $Stage = Join-Path $Root "target\release-package\$Identity\$Version"
 $Publish = Join-Path $Stage 'publish'
 $Output = Join-Path $Stage 'artifacts'
-$VpkDir = Join-Path $Root 'agent_tmp\tmp\vpk'
+$VpkDir = Join-Path $Root 'target\tools\vpk'
 $VpkVersion = '1.2.161'
 $UsbipVersion = '0.9.8.1'
 $UsbipInstaller = "USBip-$UsbipVersion-x64.exe"
