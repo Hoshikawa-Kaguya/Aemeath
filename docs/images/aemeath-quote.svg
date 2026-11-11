@@ -1,0 +1,160 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="176" viewBox="0 0 880 176" role="img" aria-labelledby="quoteTitle quoteDesc">
+  <title id="quoteTitle">爱弥斯在调音台前的一句话</title>
+  <desc id="quoteDesc">爱弥斯：把走散的声音，都唤回同一段频率。都调好啦。让我唱首只属于你的歌，好不好？</desc>
+
+  <defs>
+    <linearGradient id="card" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0a0f1e"/>
+      <stop offset="0.55" stop-color="#121a36"/>
+      <stop offset="1" stop-color="#1b1a3d"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#ff85b6" stop-opacity="0.26"/>
+      <stop offset="1" stop-color="#ff85b6" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="edge" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ff85b6" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#ff85b6" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#ff85b6" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="wave" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#7fe7ff" stop-opacity="0.18"/>
+      <stop offset="0.5" stop-color="#ff85b6" stop-opacity="0.62"/>
+      <stop offset="1" stop-color="#7fe7ff" stop-opacity="0.18"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="0.75" y="0.75" width="878.5" height="174.5" rx="26" fill="url(#card)" stroke="#ff85b6" stroke-opacity="0.32" stroke-width="1.5"/>
+  <ellipse cx="440" cy="88" rx="340" ry="66" fill="url(#glow)"/>
+  <rect x="24" y="0.75" width="832" height="1" fill="url(#edge)"/>
+
+  <!-- LIVE -->
+  <g font-family="'Consolas', 'Cascadia Mono', monospace">
+    <circle cx="40" cy="30" r="4" fill="#ff5c8a"/>
+    <circle cx="40" cy="30" r="7" fill="#ff5c8a" opacity="0.25"/>
+    <text x="54" y="34" font-size="10" letter-spacing="3" fill="#ff9dbb">LIVE</text>
+  </g>
+
+  <!-- 四角星 -->
+  <g fill="#ffd9e9">
+    <path d="M72 84 L75 95 L86 98 L75 101 L72 112 L69 101 L58 98 L69 95 Z"/>
+    <path d="M810 72 L812.4 80.6 L821 83 L812.4 85.4 L810 94 L807.6 85.4 L799 83 L807.6 80.6 Z" fill="#bfeaff"/>
+    <path d="M104 58 L105.6 63 L110.6 64.6 L105.6 66.2 L104 71.2 L102.4 66.2 L97.4 64.6 L102.4 63 Z" fill="#ffb3d3" opacity="0.9"/>
+    <path d="M780 116 L781.6 121 L786.6 122.6 L781.6 124.2 L780 129.2 L778.4 124.2 L773.4 122.6 L778.4 121 Z" fill="#ffb3d3" opacity="0.85"/>
+  </g>
+  <g fill="#8fe8ff" opacity="0.5">
+    <rect x="124" y="112" width="4" height="4"/>
+    <rect x="748" y="56" width="4" height="4"/>
+    <rect x="760" y="44" width="3" height="3"/>
+  </g>
+  <g fill="#ff85b6" opacity="0.45">
+    <rect x="134" y="66" width="4" height="4"/>
+    <rect x="736" y="104" width="4" height="4"/>
+  </g>
+
+  <g font-family="'Microsoft YaHei', 'PingFang SC', 'Noto Sans SC', 'Source Han Sans SC', sans-serif" text-anchor="middle">
+    <text x="440" y="76" font-size="27" font-weight="700" fill="#fff1f7" letter-spacing="1.5">把走散的声音，都唤回同一段频率。</text>
+    <text x="440" y="112" font-size="21" fill="#c9d4f2" letter-spacing="0.5">都调好啦。让我唱首只属于你的歌，好不好？</text>
+    <text x="440" y="142" font-size="13" fill="#ff85b6" letter-spacing="2.5">—— 爱弥斯 · 飞行雪绒</text>
+  </g>
+
+  <!-- 频谱 -->
+  <g fill="url(#wave)">
+    <rect x="60" y="162" width="3" height="6"/>
+    <rect x="68" y="158" width="3" height="10"/>
+    <rect x="76" y="154" width="3" height="14"/>
+    <rect x="84" y="160" width="3" height="8"/>
+    <rect x="92" y="152" width="3" height="16"/>
+    <rect x="100" y="156" width="3" height="12"/>
+    <rect x="108" y="149" width="3" height="19"/>
+    <rect x="116" y="155" width="3" height="13"/>
+    <rect x="124" y="151" width="3" height="17"/>
+    <rect x="132" y="159" width="3" height="9"/>
+    <rect x="140" y="153" width="3" height="15"/>
+    <rect x="148" y="157" width="3" height="11"/>
+    <rect x="156" y="150" width="3" height="18"/>
+    <rect x="164" y="161" width="3" height="7"/>
+    <rect x="172" y="156" width="3" height="12"/>
+    <rect x="180" y="148" width="3" height="20"/>
+    <rect x="188" y="154" width="3" height="14"/>
+    <rect x="196" y="158" width="3" height="10"/>
+    <rect x="204" y="152" width="3" height="16"/>
+    <rect x="212" y="160" width="3" height="8"/>
+    <rect x="220" y="155" width="3" height="13"/>
+    <rect x="228" y="149" width="3" height="19"/>
+    <rect x="236" y="157" width="3" height="11"/>
+    <rect x="244" y="153" width="3" height="15"/>
+    <rect x="252" y="159" width="3" height="9"/>
+    <rect x="260" y="151" width="3" height="17"/>
+    <rect x="268" y="156" width="3" height="12"/>
+    <rect x="276" y="160" width="3" height="8"/>
+    <rect x="284" y="154" width="3" height="14"/>
+    <rect x="292" y="148" width="3" height="20"/>
+    <rect x="300" y="157" width="3" height="11"/>
+    <rect x="308" y="152" width="3" height="16"/>
+    <rect x="316" y="159" width="3" height="9"/>
+    <rect x="324" y="155" width="3" height="13"/>
+    <rect x="332" y="150" width="3" height="18"/>
+    <rect x="340" y="158" width="3" height="10"/>
+    <rect x="348" y="153" width="3" height="15"/>
+    <rect x="356" y="161" width="3" height="7"/>
+    <rect x="364" y="156" width="3" height="12"/>
+    <rect x="372" y="149" width="3" height="19"/>
+    <rect x="380" y="154" width="3" height="14"/>
+    <rect x="388" y="159" width="3" height="9"/>
+    <rect x="396" y="152" width="3" height="16"/>
+    <rect x="404" y="157" width="3" height="11"/>
+    <rect x="412" y="150" width="3" height="18"/>
+    <rect x="420" y="155" width="3" height="13"/>
+    <rect x="428" y="160" width="3" height="8"/>
+    <rect x="436" y="148" width="3" height="20"/>
+    <rect x="444" y="156" width="3" height="12"/>
+    <rect x="452" y="153" width="3" height="15"/>
+    <rect x="460" y="159" width="3" height="9"/>
+    <rect x="468" y="154" width="3" height="14"/>
+    <rect x="476" y="150" width="3" height="18"/>
+    <rect x="484" y="157" width="3" height="11"/>
+    <rect x="492" y="152" width="3" height="16"/>
+    <rect x="500" y="160" width="3" height="8"/>
+    <rect x="508" y="155" width="3" height="13"/>
+    <rect x="516" y="149" width="3" height="19"/>
+    <rect x="524" y="158" width="3" height="10"/>
+    <rect x="532" y="153" width="3" height="15"/>
+    <rect x="540" y="159" width="3" height="9"/>
+    <rect x="548" y="151" width="3" height="17"/>
+    <rect x="556" y="156" width="3" height="12"/>
+    <rect x="564" y="161" width="3" height="7"/>
+    <rect x="572" y="154" width="3" height="14"/>
+    <rect x="580" y="148" width="3" height="20"/>
+    <rect x="588" y="157" width="3" height="11"/>
+    <rect x="596" y="152" width="3" height="16"/>
+    <rect x="604" y="159" width="3" height="9"/>
+    <rect x="612" y="155" width="3" height="13"/>
+    <rect x="620" y="150" width="3" height="18"/>
+    <rect x="628" y="158" width="3" height="10"/>
+    <rect x="636" y="153" width="3" height="15"/>
+    <rect x="644" y="160" width="3" height="8"/>
+    <rect x="652" y="156" width="3" height="12"/>
+    <rect x="660" y="149" width="3" height="19"/>
+    <rect x="668" y="154" width="3" height="14"/>
+    <rect x="676" y="159" width="3" height="9"/>
+    <rect x="684" y="152" width="3" height="16"/>
+    <rect x="692" y="157" width="3" height="11"/>
+    <rect x="700" y="150" width="3" height="18"/>
+    <rect x="708" y="155" width="3" height="13"/>
+    <rect x="716" y="160" width="3" height="8"/>
+    <rect x="724" y="148" width="3" height="20"/>
+    <rect x="732" y="156" width="3" height="12"/>
+    <rect x="740" y="153" width="3" height="15"/>
+    <rect x="748" y="159" width="3" height="9"/>
+    <rect x="756" y="154" width="3" height="14"/>
+    <rect x="764" y="150" width="3" height="18"/>
+    <rect x="772" y="157" width="3" height="11"/>
+    <rect x="780" y="152" width="3" height="16"/>
+    <rect x="788" y="160" width="3" height="8"/>
+    <rect x="796" y="155" width="3" height="13"/>
+    <rect x="804" y="149" width="3" height="19"/>
+    <rect x="812" y="158" width="3" height="10"/>
+    <rect x="820" y="153" width="3" height="15"/>
+  </g>
+</svg>
