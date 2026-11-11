@@ -8,7 +8,7 @@ import { useAppStore } from '@/stores/app'
 import { usePolling } from './usePolling'
 
 // 工具页（GLOSSARY：工具页）：汇集辅助小功能，只改 Windows 的设置，不改工作台。
-// M2 只有"系统默认设备"：分播放和录音两个方向，每个方向的"默认设备"和"默认通信设备"，选中后立即生效；
+// 工具页目前只有"系统默认设备"：分播放和录音两个方向，每个方向的"默认设备"和"默认通信设备"，选中后立即生效；
 // 不记录、不还原。被 Aemeath 独占的设备不可选（其他程序打不开它）。
 const REFRESH_MS = 3000
 
@@ -40,6 +40,7 @@ function label(device: DefaultDeviceView): string {
   return device.exclusiveByAemeath ? t('tools.exclusive', { name: device.name }) : device.name
 }
 
+/** 立即设为系统默认设备（或默认通信设备），然后刷新列表 */
 async function choose(role: Role, event: Event): Promise<void> {
   const endpointId = (event.target as HTMLSelectElement).value
   if (endpointId === '') {

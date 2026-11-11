@@ -28,6 +28,7 @@ pub fn is_enabled(guardian: &Path) -> io::Result<bool> {
     Ok(stored.as_deref() == Some(command_line(guardian).as_str()))
 }
 
+/// 开启开机自启动：在当前用户的 Run 键里写入守护进程的命令行。
 pub fn enable(guardian: &Path) -> io::Result<()> {
     registry::set_current_user_string(RUN_KEY, value_name(), &command_line(guardian))?;
     // 在任务管理器里禁用过的话，不删这条记录，Run 键写了也不生效

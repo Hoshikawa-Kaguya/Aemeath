@@ -1,10 +1,10 @@
-//! 端到端测试：外部插入（M3 计划 E2E 第 3 项）。
+//! 端到端测试：外部插入。
 //!
 //! 拓扑：`Aemeath Dev In 1` → 外部插入（送出端 Dev Out 2，取回端用真实录音设备代替外部程序的输出）→ `Aemeath Dev Out 1`。
 //! - 送出端：往 In 1 放 1 kHz 正弦，从 Dev Out 2 录音，逐样本检查连续；
 //! - 取回端：确认信号从节点发出到 Dev Out 1（内容无法预知，只看峰值）。
 //!
-//! 经过 NVIDIA Broadcast 的往返由维护者验收。
+//! 经过真实外部程序（例如 NVIDIA Broadcast）的往返要人工试听，这里不覆盖。
 //!
 //! 用法：`cargo run -p aemeath-engine --example external_insert --release -- <录音设备名片段> [秒数]`。
 

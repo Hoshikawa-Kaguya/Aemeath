@@ -19,15 +19,16 @@ pub enum LanguagePreference {
     Fixed { locale: String },
 }
 
+/// 与路由无关的偏好设置，和工作台存在同一个配置文件里。
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Preferences {
     #[serde(default)]
     pub language: LanguagePreference,
-    /// 关闭"启动时检查更新"（M4 计划 U4）。写成否定形式，默认值就是开启
+    /// 关闭"启动时检查更新"。写成否定形式，默认值就是开启
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub no_update_check_on_start: bool,
-    /// Aemeath 做过的按应用指派：可执行文件的完整路径 → 记录（选型报告 5.5 节）。
+    /// Aemeath 做过的按应用指派：可执行文件的完整路径 → 记录。
     /// Windows 按可执行文件持久保存指派，读写都要求该程序正有音频会话，所以记下来，等它下次出现时纠正或撤销。
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub app_landings: BTreeMap<String, LandingRecord>,
@@ -37,7 +38,7 @@ pub struct Preferences {
     /// 上次停留的页面，由界面解释，后端只保存
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_page: Option<String>,
-    /// 录音文件夹；None 表示默认的 `%USERPROFILE%\\Music\\Aemeath`（M3 计划 R6）
+    /// 录音文件夹；None 表示默认的 `%USERPROFILE%\\Music\\Aemeath`
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recording_folder: Option<String>,
     /// 新录音节点的默认格式和位深
@@ -46,7 +47,7 @@ pub struct Preferences {
     /// 全局热键（GLOSSARY：全局热键）
     #[serde(default)]
     pub global_hotkeys: GlobalHotkeys,
-    /// 深浅色、主题色和背景图（M4 计划 1.11 节）
+    /// 深浅色、主题色和背景图
     #[serde(default)]
     pub appearance: Appearance,
 }
@@ -90,13 +91,13 @@ impl Default for Appearance {
     }
 }
 
-/// 一条按应用指派的记录。untagged：指派写成端点 ID 字符串（与 M2 的配置相同，不需要迁移），待清除写成 null。
+/// 一条按应用指派的记录。untagged：指派写成端点 ID 字符串（与早期版本的配置相同，不需要迁移），待清除写成 null。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum LandingRecord {
     /// 这个程序应当落在这个端点上
     Endpoint(EndpointId),
-    /// 落点节点已被删除，等这个程序下次有音频会话时清除它的指派（M3 计划 L3）
+    /// 落点节点已被删除，等这个程序下次有音频会话时清除它的指派
     PendingClear,
 }
 

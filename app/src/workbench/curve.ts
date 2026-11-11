@@ -1,4 +1,4 @@
-// 连线的曲线（沿用原型）：从输出端口水平引出、水平进入输入端口的三次贝塞尔曲线。
+// 连线的曲线：从输出端口水平引出、水平进入输入端口的三次贝塞尔曲线。
 // 连线、拖线中的虚线、标签定位与拖动都用这一份。
 
 /** 控制点离端点的最小水平距离：两端很近时曲线也保持舒展 */
@@ -27,6 +27,7 @@ export interface Curve {
   end: Point
 }
 
+/** 两点间的连线曲线。控制柄长度随水平距离变化，两点靠得很近时也保留最小长度，曲线不会折成直角 */
 export function routeCurve(start: Point, end: Point): Curve {
   const handle = Math.max(MIN_HANDLE, Math.abs(end.x - start.x) * HANDLE_RATIO)
   const control1 = { x: start.x + handle, y: start.y }
@@ -69,6 +70,7 @@ export function nearestT(curve: Curve, target: Point): number {
   return best
 }
 
+/** 把标签位置限制在允许范围内，标签不会盖住两端的端口 */
 export function clampLabel(t: number): number {
   return Math.min(LABEL_MAX, Math.max(LABEL_MIN, t))
 }

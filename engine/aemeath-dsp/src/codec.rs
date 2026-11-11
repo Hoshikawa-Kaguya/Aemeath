@@ -1,4 +1,4 @@
-//! 样本格式与 f32 的互相转换（引擎内部统一用 f32，选型报告 6.3 节）。
+//! 样本格式与 f32 的互相转换（引擎内部统一用 f32）。
 //!
 //! 整数按 2 的幂缩放（例如 16 位除以 32768），再按同样的比例取整编码回去，
 //! 所以 16 位和 24 位整数经过"解码 → 编码"可以逐位还原，直通时没有损失。
@@ -30,6 +30,7 @@ pub fn decode(format: SampleFormat, bytes: &[u8], out: &mut Vec<f32>) {
     out.extend(bytes.chunks_exact(size).map(|sample| decode_one(format, sample)));
 }
 
+/// 把一个小端序样本解码成 −1..1 的浮点数。
 fn decode_one(format: SampleFormat, sample: &[u8]) -> f32 {
     match format {
         SampleFormat::Int16 => f32::from(i16::from_le_bytes([sample[0], sample[1]])) / SCALE_16,

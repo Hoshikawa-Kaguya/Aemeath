@@ -32,12 +32,12 @@ use crate::window::DataDir;
 
 type Reply<T> = Result<T, CommandError>;
 
-/// 守护进程的文件名（M4 计划 P1）
+/// 守护进程的文件名
 const GUARDIAN_EXE: &str = "Aemeath.exe";
 /// `#rrggbb` 的长度
 const HEX_COLOR_LENGTH: usize = 7;
 const IMAGE_EXTENSIONS: [&str; 4] = ["png", "jpg", "jpeg", "webp"];
-/// 背景图的大小上限（M4 计划 V8）
+/// 背景图的大小上限
 const MAX_BACKGROUND_BYTES: u64 = 40 * 1024 * 1024;
 
 #[tauri::command]
@@ -86,7 +86,7 @@ pub async fn add_node(
         .await
 }
 
-/// 占用槽位的节点的格式与重采样算法（M4 计划 F1）。
+/// 占用槽位的节点的格式与重采样算法。
 #[tauri::command]
 pub async fn set_slot_settings(
     controller: State<'_, ControllerHandle>,
@@ -102,7 +102,7 @@ pub async fn set_slot_settings(
         .await
 }
 
-/// 外部设备节点的独占、格式、缓冲与重采样算法（ADR-0014）。
+/// 外部设备节点的独占、格式、缓冲与重采样算法。
 #[tauri::command]
 pub async fn set_device_settings(
     controller: State<'_, ControllerHandle>,
@@ -150,7 +150,7 @@ pub async fn set_app_resampler(
         .await
 }
 
-/// 从同名候选里选定外部设备节点要改用的设备（选型报告 6.5 节）。
+/// 从同名候选里选定外部设备节点要改用的设备。
 #[tauri::command]
 pub async fn replace_device(
     controller: State<'_, ControllerHandle>,
@@ -194,7 +194,7 @@ pub async fn set_landing(
     controller.set_landing(process_id, executable, endpoint_id).await
 }
 
-/// 开始录音（M3 计划 R4）。
+/// 开始录音。
 #[tauri::command]
 pub async fn start_recording(controller: State<'_, ControllerHandle>, node: u32) -> Reply<()> {
     controller.start_recording(NodeId(node)).await
@@ -278,6 +278,7 @@ fn guardian_program() -> Reply<PathBuf> {
     Ok(std::env::current_exe().map_err(invalid)?.with_file_name(GUARDIAN_EXE))
 }
 
+/// 开机自启动是否已开启；查不到时按未开启处理。
 #[tauri::command]
 pub fn autostart_enabled() -> bool {
     guardian_program().is_ok_and(|program| autostart::is_enabled(&program).unwrap_or(false))
@@ -297,7 +298,7 @@ pub fn set_autostart(enabled: bool) -> Reply<bool> {
     Ok(true)
 }
 
-/// 崩溃转储是否已启用（M4 计划 W3）。
+/// 崩溃转储是否已启用。
 #[tauri::command]
 pub fn crash_dumps_enabled() -> bool {
     crash_dumps::is_enabled().unwrap_or(false)
@@ -319,7 +320,7 @@ pub async fn enable_crash_dumps() -> Reply<bool> {
     .map_err(invalid)?
 }
 
-/// 便携版"移除虚拟设备"（M4 计划 C4）：启动提权的清理进程后整体退出。用户在 UAC 里选"否"时什么都不做。
+/// 便携版"移除虚拟设备"：启动提权的清理进程后整体退出。用户在 UAC 里选"否"时什么都不做。
 #[tauri::command]
 pub async fn remove_virtual_devices(app: AppHandle) -> Reply<()> {
     let program = guardian_program()?;
@@ -351,6 +352,7 @@ pub struct AppearanceInput {
     overlay_percent: u8,
 }
 
+/// 是否是 `#RRGGBB` 形式的颜色。界面传来的值要先校验再存进配置。
 fn is_hex_color(text: &str) -> bool {
     text.len() == HEX_COLOR_LENGTH && text.starts_with('#') && text[1..].chars().all(|c| c.is_ascii_hexdigit())
 }
@@ -369,6 +371,7 @@ pub async fn set_appearance(controller: State<'_, ControllerHandle>, appearance:
         .await
 }
 
+/// 按扩展名判断是不是 WebView 能显示的图片格式。
 fn is_supported_image(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
@@ -379,7 +382,7 @@ fn is_supported_image(path: &Path) -> bool {
         })
 }
 
-/// 校验后把图片复制进数据目录（M4 计划 V8），原文件之后移动或删除都不受影响。文件名带时间，换图时浏览器不会用旧缓存。
+/// 校验后把图片复制进数据目录，原文件之后移动或删除都不受影响。文件名带时间，换图时浏览器不会用旧缓存。
 fn copy_background(source: &Path, folder: &Path) -> Result<String, String> {
     if !is_supported_image(source) {
         return Err("only PNG, JPG and WebP images are supported".to_owned());
@@ -403,6 +406,7 @@ fn copy_background(source: &Path, folder: &Path) -> Result<String, String> {
     Ok(name)
 }
 
+/// 删掉文件夹里除 `keep` 以外的文件，清理换下来的旧背景图。删不掉的跳过。
 fn remove_other_files(folder: &Path, keep: Option<&str>) {
     let Ok(entries) = std::fs::read_dir(folder) else {
         return;
@@ -414,6 +418,7 @@ fn remove_other_files(folder: &Path, keep: Option<&str>) {
     }
 }
 
+/// 设定背景图：在阻塞线程上复制进数据目录（同时删掉旧的图），再写进配置。
 #[tauri::command]
 pub async fn set_background_image(
     controller: State<'_, ControllerHandle>,
@@ -438,18 +443,19 @@ pub async fn remove_background_image(
     Ok(state)
 }
 
-/// 设置页"打开配置目录"（M4 计划 D4）。
+/// 设置页"打开配置目录"。
 #[tauri::command]
 pub fn open_data_folder(data_dir: State<'_, DataDir>) -> Reply<()> {
     open_in_explorer(&data_dir.0)
 }
 
-/// 设置页"打开日志目录"（M4 计划 D4）。
+/// 设置页"打开日志目录"。
 #[tauri::command]
 pub fn open_log_folder(data_dir: State<'_, DataDir>) -> Reply<()> {
     open_in_explorer(&data_dir.0.join(LOG_FOLDER))
 }
 
+/// 在资源管理器里打开文件夹；文件夹还不存在时先建好。
 fn open_in_explorer(folder: &Path) -> Reply<()> {
     std::fs::create_dir_all(folder).map_err(invalid)?;
     std::process::Command::new("explorer")
@@ -474,7 +480,7 @@ pub async fn set_hotkey(
         .await
 }
 
-/// 界面录入新按键期间暂停全部热键（M3 计划 H12）。
+/// 界面录入新按键期间暂停全部热键。
 #[tauri::command]
 pub fn set_hotkeys_paused(controller: State<'_, ControllerHandle>, paused: bool) {
     controller.set_hotkeys_paused(paused);

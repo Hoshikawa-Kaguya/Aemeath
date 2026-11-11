@@ -1,4 +1,4 @@
-//! 外部输出（播放端点）的 IO 线程：环形缓冲 → ASRC 到设备采样率 → 设备（S5 的播放线程）。
+//! 外部输出（播放端点）的 IO 线程：环形缓冲 → ASRC 到设备采样率 → 设备。
 //!
 //! 重采样在消费方（本线程）进行，固定每次产出 1 ms 的设备帧，放进一个小队列，再按设备每次要的帧数写出。
 //! 水位 = 环形缓冲中的引擎帧 + 两级重采样之间的帧 + 已重采样但尚未写给设备的帧。
@@ -21,7 +21,7 @@ use crate::{
     BridgeConfig, BridgeHandle, IoDirection, STEREO, TARGET_LEVEL_MS, frames_to_ms, ms_to_frames, skip_backlog,
 };
 
-/// 每次重采样产出的设备帧数：1 ms（R8）
+/// 每次重采样产出的设备帧数：1 ms
 const CHUNKS_PER_SECOND: u32 = 1000;
 /// 开流前等待环形缓冲攒够目标水位时的轮询间隔
 const PRIME_POLL: Duration = Duration::from_millis(1);
@@ -61,6 +61,7 @@ impl Drop for ActiveGuard<'_> {
     }
 }
 
+/// 输出线程的主体：提高优先级后反复打开设备运行会话，直到收到停止信号。会话期间 `active` 为 true。
 fn run(
     config: &BridgeConfig,
     mut consumer: Consumer<f32>,

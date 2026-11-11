@@ -1,5 +1,5 @@
-//! 首次启动时注册全部 16 个槽位（ADR-0009）：每个槽位挂载一次，让 Windows 完成驱动安装，
-//! 并把设备格式设成引擎采样率（S2：应在槽位还没被应用使用时设定）。
+//! 首次启动时注册全部 16 个槽位：每个槽位挂载一次，让 Windows 完成驱动安装，
+//! 并把设备格式设成引擎采样率（应在槽位还没被应用使用时设定）。
 //!
 //! 注册不是单独的机制，而是挂载维护的一种用法：
 //! 1. 下发 [`registration_topology`]，让服务端导出全部槽位（服务端只导出拓扑中被占用的槽位）；
@@ -66,10 +66,12 @@ impl RegistrationProgress {
         }
     }
 
+    /// 记录挂载维护报告的最新状态。
     pub fn update(&mut self, status: SlotStatus) {
         self.latest.insert(status.slot, status);
     }
 
+    /// 这个槽位是否已经完成注册（判据见 [`RegistrationProgress`]）。
     pub fn is_registered(&self, slot: SlotId) -> bool {
         self.latest.get(&slot).is_some_and(|status| {
             status.health == SlotHealth::Healthy
@@ -90,6 +92,7 @@ impl RegistrationProgress {
         all_slots().len()
     }
 
+    /// 全部 16 个槽位都已完成。
     pub fn is_done(&self) -> bool {
         self.completed() == self.total()
     }

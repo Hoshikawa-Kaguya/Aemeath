@@ -9,7 +9,7 @@ import { formatBytes, formatDuration } from '@/format/format'
 import { useAppStore } from '@/stores/app'
 import { fileNameOf } from '@/stores/nodeLabels'
 
-// 录音页（M3 计划 R9）：录音文件夹、新录音节点的默认格式，以及每个录音节点的状态与开始/停止。不做文件浏览和回放。
+// 录音页：录音文件夹、新录音节点的默认格式，以及每个录音节点的状态与开始/停止。不做文件浏览和回放。
 const { t } = useI18n()
 const store = useAppStore()
 
@@ -26,7 +26,7 @@ function setDefaults(change: Partial<RecorderSettingsView>): void {
     return
   }
   const next = { ...current, ...change }
-  // FLAC 不支持浮点（M3 计划 R2）
+  // FLAC 不支持浮点
   void store.run(() =>
     backend.setRecordingDefaults(
       next.format === 'flac' && next.depth === 'float32' ? { ...next, depth: 'int24' } : next,

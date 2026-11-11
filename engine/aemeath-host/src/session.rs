@@ -108,6 +108,7 @@ struct Session {
     last_revision: Option<TopologyRevision>,
 }
 
+/// 处理一个已连接的客户端，直到它断开、违反协议或者引擎要退出；返回值告诉调用方接下来等新连接还是退出。
 pub async fn serve<F: Future<Output = ()>>(
     state: &mut HostState,
     pipe: &mut NamedPipeServer,
@@ -173,6 +174,7 @@ pub async fn serve<F: Future<Output = ()>>(
     }
 }
 
+/// 处理主程序发来的一条消息并回复，返回这条连接接下来该继续、断开还是让引擎退出。
 async fn handle(
     state: &mut HostState,
     session: &mut Session,

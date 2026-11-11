@@ -7,9 +7,9 @@ import AppIcon from '@/components/AppIcon.vue'
 import { useAppStore } from '@/stores/app'
 import { usePolling } from './usePolling'
 
-// 应用页（选型报告 5.5 节、S7）：只列出有音频会话的程序，可以把落点（GLOSSARY：落点）改到某个虚拟输入、外部输出，
+// 应用页：只列出有音频会话的程序，可以把落点（GLOSSARY：落点）改到某个虚拟输入、外部输出，
 // 或者跟随系统默认。指派按可执行文件持久保存；已在播放的流不一定转移，这时提示"重启该应用后生效"。
-// 被 Aemeath 独占的外部输出不可选（应用打不开它）。每张卡片可以把程序添加为应用源（M3 计划 A5）。
+// 被 Aemeath 独占的外部输出不可选（应用打不开它）。每张卡片可以把程序添加为应用源。
 const REFRESH_MS = 3000
 /** 指派后等这么久再刷新，看会话有没有转移 */
 const SETTLE_MS = 800
@@ -79,6 +79,7 @@ function optionLabel(choice: LandingChoice): string {
   return choice.exclusiveByAemeath ? t('apps.exclusive', { name }) : name
 }
 
+/** 改落点。指派要过一会儿才在会话上体现，期间下拉框先显示用户选的值，稍后再刷新这个程序 */
 async function choose(app: AppView, event: Event): Promise<void> {
   const value = (event.target as HTMLSelectElement).value
   const processId = app.processId

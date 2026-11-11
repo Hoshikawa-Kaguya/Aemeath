@@ -11,7 +11,7 @@ import { nodeCode } from '@/stores/nodeLabels'
 import { GAIN_MAX_DB, GAIN_MIN_DB } from './context'
 import { createHoverWheel } from './hoverWheel'
 
-// 路由矩阵（GLOSSARY：路由矩阵；M2 计划 2.3）：行是能发出声音的节点（输入、处理），列是能接收声音的节点（处理、输出），
+// 路由矩阵（GLOSSARY：路由矩阵）：行是能发出声音的节点（输入、处理），列是能接收声音的节点（处理、输出），
 // 每个格子就是一条连线。行高、列宽、行头和列头的宽度都固定，长名字截断，悬停显示全名。
 // 不能新建连线的格子（连到自己、会形成回路）禁用，原因来自后端（与拖线时的规则相同）。
 export interface RoutePair {
@@ -52,6 +52,7 @@ function visible(node: NodeView): boolean {
   return !pinOnly.value || store.state?.console.includes(node.id) === true
 }
 
+/** 按角色分组（输入、处理、输出），组内按节点 ID */
 function sorted(nodes: NodeView[]): NodeView[] {
   return [...nodes].sort((a, b) => GROUP_ORDER[roleOf(a.kind)] - GROUP_ORDER[roleOf(b.kind)] || a.id - b.id)
 }
@@ -65,6 +66,7 @@ interface Group {
   count: number
 }
 
+/** 已排好序的节点里，每个角色连续占几行（列），用来画分组标题 */
 function groupsOf(nodes: NodeView[]): Group[] {
   const groups: Group[] = []
   for (const node of nodes) {
@@ -146,6 +148,7 @@ function isSelected(from: number, to: number): boolean {
   return props.selected?.from === from && props.selected.to === to
 }
 
+/** 单击格子：没有连线就新建，有连线就开关它；都会选中这个格子 */
 async function click(from: NodeView, to: NodeView): Promise<void> {
   const route = routeMap.value.get(key(from.id, to.id))
   if (route === undefined) {
@@ -158,7 +161,6 @@ async function click(from: NodeView, to: NodeView): Promise<void> {
   await store.run(() => backend.setRouteEnabled(route.from, route.to, !route.enabled))
 }
 
-/** 与工作台相同（M2 计划 2.2）：格子已选中、或者按住 Ctrl 时才调增益，滚动矩阵时不会误改 */
 /** 同一时间只悬停一个格子，所以整个矩阵共用一个 */
 const hoverWheel = createHoverWheel()
 
@@ -173,6 +175,7 @@ function onWheel(event: WheelEvent, from: NodeView, to: NodeView): void {
   nudge(route, event.deltaY < 0 ? 1 : -1)
 }
 
+/** 把增益调整若干个 1 dB，限制在界面允许的范围内 */
 function nudge(route: RouteView, steps: number): void {
   const gain = Math.min(GAIN_MAX_DB, Math.max(GAIN_MIN_DB, Math.round(route.gainDb) + steps))
   if (gain !== route.gainDb) {
@@ -197,6 +200,7 @@ function onContextMenu(event: MouseEvent | KeyboardEvent, from: NodeView, to: No
   }
 }
 
+/** 键盘焦点移到指定格子（超出范围时停在边上）；矩阵只有一个格子可以 Tab 进入，其余用方向键移动 */
 function focusAt(row: number, column: number): void {
   const rowCount = rows.value.length
   const columnCount = columns.value.length
@@ -429,7 +433,7 @@ function isHot(node: NodeView, axis: 'from' | 'to'): boolean {
   margin: 12px 8px;
 }
 
-/* 行高、列宽固定：格子、行头、列头都有固定尺寸，长名字不撑开行列（维护者 2026-11-08）。
+/* 行高、列宽固定：格子、行头、列头都有固定尺寸，长名字不撑开行列。
    不用 table-layout: fixed：那样列宽取自带 colspan 的分组标题行，列头会被挤窄 */
 table.mx {
   border-collapse: separate;
@@ -505,7 +509,7 @@ table.mx {
   overflow: hidden;
 }
 
-/* 行头、列头只显示代号（A1、IN2、BUS1、OUT3、D1），全名在悬停提示和底部状态行里（维护者 2026-11-08） */
+/* 行头、列头只显示代号（A1、IN2、BUS1、OUT3），全名在悬停提示和底部状态行里 */
 .mx th.ch {
   width: 36px;
   min-width: 36px;

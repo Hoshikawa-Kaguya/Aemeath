@@ -1,4 +1,4 @@
-//! 执行路由拓扑：通道条（输入节点的门限、增益、静音）、连线增益与开关、求和（选型报告 6.2 节）。
+//! 执行路由拓扑：通道条（输入节点的门限、增益、静音）、连线增益与开关、求和。
 //!
 //! 构建在控制线程进行（会分配内存）；[`Mixer::process`] 在调度线程按块运行，不分配内存、不加锁。
 //!
@@ -75,7 +75,7 @@ pub struct MixerLayout {
 enum PortKey {
     Device(EndpointId, NodeRole),
     Program(ProgramPath),
-    /// 录音节点的端口按节点 ID 接过，写盘线程不随混音器替换（M3 计划 R7）
+    /// 录音节点的端口按节点 ID 接过，写盘线程不随混音器替换
     Recorder(NodeId),
 }
 
@@ -92,6 +92,8 @@ fn port_key(id: NodeId, kind: &NodeKind) -> Option<PortKey> {
     }
 }
 
+/// 按一份路由拓扑建好的混音器：在调度线程外预先分配好全部缓冲，交给调度线程后每 1 ms 运行一次，不再分配内存。
+/// 拓扑改变时整体替换，旧的送回非实时线程释放。
 #[derive(Debug)]
 pub struct Mixer {
     revision: TopologyRevision,
@@ -109,7 +111,7 @@ pub struct Mixer {
     inherit_ports: Vec<Option<usize>>,
     slot_inputs: Vec<(usize, SlotId)>,
     slot_outputs: Vec<(usize, SlotId)>,
-    /// 槽位的重采样算法（节点覆盖或全局默认，R9）
+    /// 槽位的重采样算法（节点覆盖或全局默认）
     slot_resamplers: HashMap<SlotId, Resampler>,
     default_resampler: Resampler,
 }

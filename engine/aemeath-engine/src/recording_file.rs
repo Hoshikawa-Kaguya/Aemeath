@@ -1,7 +1,7 @@
-//! 录音文件的写入（M3 计划 R2、R3、R8）：WAV（`hound`）和 FLAC（`flacenc`，纯 Rust，不引入 C 构建）。
+//! 录音文件的写入：WAV（`hound`）和 FLAC（`flacenc`，纯 Rust，不引入 C 构建）。
 //!
 //! 崩溃后文件仍然可读：WAV 每秒更新一次文件头；FLAC 边录边按帧写出，文件头里的总样本数在结束时才回填，
-//! 崩溃时为 0（规范中表示"未知"，解码器按帧读到文件末尾。2026-11-08 用 claxon 核实，最后一帧被截断时前面的帧仍可解码）。
+//! 崩溃时为 0（规范中表示"未知"，解码器按帧读到文件末尾。用 claxon 核实过，最后一帧被截断时前面的帧仍可解码）。
 
 use std::fs::File;
 use std::io::{self, BufWriter, Seek, SeekFrom, Write};
@@ -18,14 +18,14 @@ use flacenc::source::{Fill, FrameBuf};
 
 use crate::STEREO;
 
-/// WAV 的数据量上限：文件大小字段是 32 位，留出文件头的余量后分段（M3 计划 R3）
+/// WAV 的数据量上限：文件大小字段是 32 位，留出文件头的余量后分段
 pub const WAV_SEGMENT_LIMIT: u64 = 4_000_000_000;
 /// FLAC 每帧的样本数（每声道），48 kHz 下约 85 ms
 const FLAC_BLOCK_FRAMES: usize = 4096;
 /// `fLaC` 标记加上元数据块头的长度：文件头回填时 STREAMINFO 从这里开始
 const FLAC_MARKER: &[u8] = b"fLaC";
 const STREAMINFO_LAST_BLOCK: u8 = 0x80;
-/// `flacenc` 接受的最高采样率（2026-11-10 实测 192 kHz 建文件失败）
+/// `flacenc` 接受的最高采样率（实测 192 kHz 建文件失败）
 const FLAC_MAX_HZ: u32 = 96_000;
 /// 超过上限时的目标采样率：44.1 kHz 系用 88.2 kHz，其余用 96 kHz，比率都是整数
 const CD_FAMILY_HZ: u32 = 44_100;
@@ -147,6 +147,7 @@ impl WavSink {
         Ok(())
     }
 
+    /// 当前分段写满了：结束它，开始下一段。
     fn roll(&mut self) -> io::Result<()> {
         self.close_part()?;
         self.part += 1;
@@ -216,6 +217,7 @@ impl FlacSink {
         Ok(())
     }
 
+    /// 把攒下的样本编码成 FLAC 帧写出。
     fn encode_pending(&mut self) -> io::Result<()> {
         if self.pending.is_empty() {
             return Ok(());
@@ -245,6 +247,7 @@ impl FlacSink {
     }
 }
 
+/// 写 `fLaC` 标记和 STREAMINFO 块。开始时写一次，结束时回填真实的总样本数。
 fn write_flac_header(file: &mut File, info: &StreamInfo) -> io::Result<()> {
     let mut sink = ByteSink::new();
     info.write(&mut sink).map_err(to_io)?;
@@ -304,6 +307,7 @@ impl Downsampler {
         })
     }
 
+    /// 降采样一段输入；凑不够一整块的部分留到下次。
     fn convert(&mut self, stereo: &[f32]) -> io::Result<&[f32]> {
         self.output.clear();
         self.input.extend_from_slice(stereo);
@@ -365,6 +369,7 @@ impl RecordingFile {
         })
     }
 
+    /// 写入交错的立体声样本；FLAC 采样率超出上限时先降采样。
     pub fn write(&mut self, stereo: &[f32]) -> io::Result<()> {
         match (&mut self.writer, &mut self.downsampler) {
             (Writer::Wav(sink), _) => sink.write(stereo)?,
@@ -383,6 +388,7 @@ impl RecordingFile {
         }
     }
 
+    /// 正常结束：写出剩余数据并回填文件头。
     pub fn finish(mut self) -> io::Result<()> {
         match &mut self.writer {
             Writer::Wav(sink) => sink.close_part(),

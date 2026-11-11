@@ -6,12 +6,12 @@ import { formatKhz } from '@/format/format'
 import { useAppStore } from '@/stores/app'
 import ResamplerField from './ResamplerField.vue'
 
-// 占用槽位的节点的格式与重采样算法（M4 计划 F1）：配置属于节点，换槽位时带到新槽位。
+// 占用槽位的节点的格式与重采样算法：配置属于节点，换槽位时带到新槽位。
 const settings = defineModel<SlotSettings>({ required: true })
 const { t } = useI18n()
 const store = useAppStore()
 
-/** 共享模式下虚拟设备可用的采样率（M4 计划 F3） */
+/** 共享模式下虚拟设备可用的采样率 */
 const RATES = [44_100, 48_000, 88_200, 96_000, 176_400, 192_000, 352_800, 384_000]
 const SAMPLE_FORMATS: SampleFormat[] = ['int16', 'int24', 'int24In32', 'int32', 'float32']
 const FOLLOW = 'follow'

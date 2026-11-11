@@ -1,5 +1,5 @@
 // 节点的代号和副标题（工作台、路由矩阵、控制台、设备页共用）。
-// 代号全部大写并带编号（维护者 2026-11-08）：外部输入 A1、A2…，外部输出 D1、D2…，总线 BUS1、BUS2…
+// 代号全部大写并带编号：外部输入 A1、A2…，外部输出 D1、D2…，总线 BUS1、BUS2…
 // 应用源 APP1、APP2…（都按节点 ID 顺序）；虚拟节点用所占槽位的编号 IN1、OUT2，与 Windows 中的设备名 "Aemeath In 1" 对应。
 
 import type { NodeKind, NodeView, SlotRef } from '@/api/types'
@@ -20,6 +20,7 @@ export function fileNameOf(path: string): string {
   return path.split(/[\\/]/).pop() ?? path
 }
 
+/** 槽位的代号，例如 IN1、OUT2 */
 export function slotCode(slot: SlotRef): string {
   return `${slot.direction === 'in' ? 'IN' : 'OUT'}${slot.number}`
 }
@@ -33,8 +34,9 @@ export function slotName(slot: SlotRef): string {
   })
 }
 
+/** 节点的代号：占槽位的用槽位代号，其余按同类节点的 ID 顺序编号。`all` 是工作台上的全部节点 */
 export function nodeCode(node: NodeView, all: readonly NodeView[]): string {
-  // 外部插入虽然占用槽位，节点上不显示槽位（M3 计划 X2a）
+  // 外部插入虽然占用槽位，节点上不显示槽位
   if (node.slot !== null && node.kind !== 'externalInsert') {
     return slotCode(node.slot)
   }

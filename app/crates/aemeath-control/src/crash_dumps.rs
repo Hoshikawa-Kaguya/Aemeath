@@ -1,4 +1,4 @@
-//! 崩溃转储（M4 计划 1.10 节）：Windows 错误报告（WER）的 LocalDumps。
+//! 崩溃转储：Windows 错误报告（WER）的 LocalDumps。
 //!
 //! 微软文档只写了 `HKLM`，写入需要管理员权限，由提权的守护进程执行；读取不需要。
 
@@ -7,10 +7,10 @@ use std::io;
 use aemeath_sys::registry;
 use aemeath_usbip::identity::IdentityProfile;
 
-/// 让提权的守护进程写入这些键的命令行参数（M4 计划 W3）
+/// 让提权的守护进程写入这些键的命令行参数
 pub const ENABLE_ARGUMENT: &str = "--enable-crash-dumps";
 const LOCAL_DUMPS_KEY: &str = r"SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps";
-/// 三个进程的文件名（M4 计划 P1）
+/// 三个进程的文件名
 const EXECUTABLES: [&str; 3] = ["Aemeath.exe", "aemeath-host.exe", "aemeath-app.exe"];
 const DUMP_FOLDER: &str = "DumpFolder";
 const DUMP_COUNT: &str = "DumpCount";

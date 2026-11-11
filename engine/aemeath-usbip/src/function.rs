@@ -55,6 +55,7 @@ pub struct Setup {
 }
 
 impl Setup {
+    /// 拆开 URB 里 8 字节的 SETUP 包（多字节字段是小端序）。
     pub fn parse(raw: &[u8; 8]) -> Self {
         Self {
             request_type: raw[0],
@@ -208,6 +209,7 @@ impl Uac2Function {
         }
     }
 
+    /// SET_INTERFACE：主机切换流接口的备用设置，也就是开始、停止流或换格式。不支持的组合返回 None（STALL）。
     fn set_interface(&mut self, interface: u8, alternate: u8) -> Option<Vec<u8>> {
         match interface {
             CONTROL_INTERFACE if alternate == 0 => Some(Vec::new()),

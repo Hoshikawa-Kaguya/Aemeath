@@ -27,7 +27,7 @@ export interface Confirmation {
 
 /** 提示条自动消失的时间 */
 const TOAST_MS = 5000
-/** 切换引擎采样率时，最多等这么久（M4 计划 E3）；超时就解除，界面显示实际格式 */
+/** 切换引擎采样率时，最多等这么久；超时就解除，界面显示实际格式 */
 const RATE_SWITCH_TIMEOUT_MS = 10_000
 /** 共享模式下跟随引擎的采样率上限（SLOT_FORMAT_MAX_HZ） */
 export const SLOT_FORMAT_MAX_HZ = 384_000
@@ -51,6 +51,7 @@ export const useAppStore = defineStore('app', () => {
   const routes = computed(() => state.value?.routes ?? [])
   const nodeById = computed(() => new Map(nodes.value.map((node) => [node.id, node])))
 
+  /** 底部的短暂提示；`undoable` 时带"撤销"按钮。新提示会替换旧的 */
   function showToast(message: string, undoable = false): void {
     toast.value = { message, undoable }
     window.clearTimeout(toastTimer)
@@ -62,6 +63,7 @@ export const useAppStore = defineStore('app', () => {
     toast.value = null
   }
 
+  /** 把后端命令的错误翻译成给用户看的文字；不认识的错误原样显示 */
   function errorText(error: unknown): string {
     const { t } = i18n.global
     const known = error as Partial<CommandError> | undefined
@@ -80,6 +82,10 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
+  /**
+   * 收到新快照。第一份快照时恢复上次的页面并显示窗口；语言、主题变了才重新应用，
+   * 免得每次推送都重绘；切换采样率期间，等跟随引擎的节点都读回新采样率再结束等待
+   */
   function receive(next: ViewState): void {
     const previous = state.value
     state.value = next
@@ -124,6 +130,7 @@ export const useAppStore = defineStore('app', () => {
     rateSwitching.value = false
   }
 
+  /** 修改引擎采样率。槽位要异步改格式，所以先进入等待状态，节点读回新采样率或超时后才解除 */
   async function setEngineRate(hz: number): Promise<void> {
     rateSwitching.value = true
     window.clearTimeout(rateSwitchTimer)
@@ -159,6 +166,7 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
+  /** 切换界面语言；托盘菜单由后端绘制，要把翻译好的文字一并交给它 */
   function applyLocale(locale: string): void {
     setLocale(locale)
     const { t } = i18n.global
@@ -178,6 +186,7 @@ export const useAppStore = defineStore('app', () => {
 
   watch(page, (current) => void run(() => backend.setLastPage(current)))
 
+  /** 先订阅推送再取第一份快照，中间发生的变化不会漏掉 */
   async function start(): Promise<void> {
     await onStateChanged(receive)
     await onUpdateChanged((next) => (update.value = next))
@@ -203,8 +212,9 @@ export const useAppStore = defineStore('app', () => {
     confirmation.value = null
   }
 
+  /** 删除节点，删除后的提示带"撤销" */
   async function removeNode(node: NodeView): Promise<void> {
-    // 落点节点被删除时提示影响的应用数，但不阻止（M3 计划 L3）。查询失败时按没有应用处理：删除照常可以撤销
+    // 落点节点被删除时提示影响的应用数，但不阻止。查询失败时按没有应用处理：删除照常可以撤销
     const landed = await backend.landingCount(node.id).catch(() => 0)
     if (landed > 0) {
       const { t } = i18n.global
@@ -218,11 +228,13 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
+  /** 录音中就停止，否则开始。录音状态由引擎随后推送，这里不等结果 */
   function toggleRecording(node: NodeView): void {
     const command = node.recorder?.state.state === 'recording' ? backend.stopRecording : backend.startRecording
     command(node.id).catch((error: unknown) => showToast(errorText(error)))
   }
 
+  /** 删除连线，删除后的提示带"撤销" */
   async function disconnect(from: number, to: number): Promise<void> {
     const src = nodeById.value.get(from)?.name ?? ''
     const dst = nodeById.value.get(to)?.name ?? ''

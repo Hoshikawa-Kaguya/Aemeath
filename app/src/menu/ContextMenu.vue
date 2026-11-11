@@ -13,6 +13,7 @@ const EDGE_MARGIN = 8
 
 type TextField = HTMLInputElement | HTMLTextAreaElement
 
+/** 右键点中的是不是可输入文字的框；是的话给它提供剪切、复制、粘贴菜单 */
 function textFieldOf(target: EventTarget | null): TextField | null {
   if (target instanceof HTMLTextAreaElement) {
     return target
@@ -41,6 +42,7 @@ function command(field: TextField, name: 'cut' | 'copy'): void {
   document.execCommand(name)
 }
 
+/** 粘贴到光标处，并触发 input 事件，让绑定这个输入框的数据同步更新 */
 async function paste(field: TextField): Promise<void> {
   try {
     const text = await navigator.clipboard.readText()
@@ -105,6 +107,7 @@ function choose(item: MenuAction): void {
   item.run()
 }
 
+/** 在菜单外按下指针时关闭菜单 */
 function onPointerDownOutside(event: PointerEvent): void {
   if (openedMenu.value !== null && !root.value?.contains(event.target as Node)) {
     openedMenu.value = null
@@ -175,7 +178,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-/* Fluent 2 的菜单：圆角卡片、阴影 16、菜单项高 32 px（原型的 .flyout） */
+/* Fluent 2 的菜单：圆角卡片、阴影 16、菜单项高 32 px */
 .menu {
   position: fixed;
   z-index: 100;

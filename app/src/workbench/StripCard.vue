@@ -14,7 +14,7 @@ import { GATE_MAX_DB, GATE_OFF_POSITION, gateToPosition, positionToGate } from '
 import { throttled } from './throttle'
 
 // 控制台上的一条竖排通道条（GLOSSARY：通道条）：节点名、LEVEL / GAIN / GATE 三列竖条（门限只有输入节点才有，没有时去掉一列、通道条变窄）、静音。
-// 同一类节点宽度固定，长名字截断，悬停显示全名。拖动推子时先改本地值，再节流发给后端。列标识固定用英文，不进 i18n（M3 计划 1.6）。
+// 同一类节点宽度固定，长名字截断，悬停显示全名。拖动推子时先改本地值，再节流发给后端。列标识固定用英文，不进 i18n。
 const props = defineProps<{ node: NodeView }>()
 const emit = defineEmits<{ menu: [event: MouseEvent | KeyboardEvent] }>()
 const { t } = useI18n()
@@ -54,6 +54,7 @@ watch(
 const sendGain = throttled((value: number) => void store.run(() => backend.setNodeGain(props.node.id, value)))
 const sendGate = throttled((value: number | null) => void store.run(() => backend.setNodeGate(props.node.id, value)))
 
+/** 拖动推子：本地值先变，节流发给后端 */
 function onGain(): void {
   adjusting = true
   sendGain(gain.value)
@@ -64,6 +65,7 @@ function onGate(): void {
   sendGate(positionToGate(gatePosition.value))
 }
 
+/** 松开推子或滑块，恢复接收后端推来的值 */
 function done(): void {
   adjusting = false
 }

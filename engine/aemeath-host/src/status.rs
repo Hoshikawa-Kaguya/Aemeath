@@ -18,6 +18,7 @@ struct SlotState {
     format: Option<DeviceFormat>,
 }
 
+/// 引擎当前的全部状态，供主程序连上时一次性发出快照。
 #[derive(Debug, Default)]
 pub struct StatusCache {
     slots: BTreeMap<SlotId, SlotState>,
@@ -27,6 +28,7 @@ pub struct StatusCache {
 }
 
 impl StatusCache {
+    /// 用一个引擎事件更新缓存。槽位断开时一并清掉它的格式。
     pub fn record(&mut self, event: &EngineEvent) {
         match event {
             EngineEvent::SlotConnection { slot, connected } => {
@@ -114,6 +116,7 @@ pub fn to_messages(event: &EngineEvent, topology: Option<&RouteTopology>) -> Vec
     }
 }
 
+/// 当前拓扑里绑定这个程序的应用源节点。
 fn node_for_program(topology: Option<&RouteTopology>, program: &ProgramPath) -> Option<NodeId> {
     topology?
         .nodes
@@ -122,6 +125,7 @@ fn node_for_program(topology: Option<&RouteTopology>, program: &ProgramPath) -> 
         .map(|node| node.id)
 }
 
+/// 当前拓扑里在这个方向上使用这个端点的节点。外部插入的取回端也算在输入方向里。
 fn nodes_for<'a>(
     topology: Option<&'a RouteTopology>,
     endpoint: &'a EndpointId,

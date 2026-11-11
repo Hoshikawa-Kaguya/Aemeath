@@ -1,9 +1,9 @@
-//! 应用源（GLOSSARY：应用源；M3 计划 2.2）：按可执行文件的绝对路径寻找进程，用进程回环采集它的声音。
+//! 应用源（GLOSSARY：应用源）：按可执行文件的绝对路径寻找进程，用进程回环采集它的声音。
 //!
 //! 每个应用源一个寻找线程，每 [`SCAN_INTERVAL`] 取一次进程快照，找出这个 exe 的"根进程"（父进程不是同一个 exe 的进程），
 //! 每个根进程开一个采集线程（进程回环 `include_tree = true`，包含子进程）。多个根进程的声音由引擎端口求和。
 //!
-//! 实测（2026-11-08，Windows 11 25H2）：进程回环支持事件驱动，每 10 ms 一个包；程序不出声、停流、甚至从没放过声音时
+//! 在 Windows 11 25H2 上实测：进程回环支持事件驱动，每 10 ms 一个包；程序不出声、停流、甚至从没放过声音时
 //! 也持续送全零包，所以这里没有"无信号"判定，也不需要补静音。
 //! 进程回环没有混音格式，由我们指定引擎采样率、f32、立体声，转换由 Windows 完成；每条流仍按 QPC 时钟运行，要经过 ASRC。
 
@@ -59,6 +59,7 @@ pub fn app_rings(engine_rate: SampleRate) -> (Vec<Producer<f32>>, Vec<Consumer<f
     (0..MAX_ROOTS).map(|_| stereo_ring(engine_rate)).unzip()
 }
 
+/// 启动应用源的查找线程：按路径找到程序的进程，为每个根进程开一路进程回环采集，写进 `producers`。
 pub fn spawn_app_source(
     config: AppSourceConfig,
     producers: Vec<Producer<f32>>,
@@ -140,6 +141,7 @@ impl Finder {
         }
     }
 
+    /// 报告状态；与上次相同时不重复报告。
     fn report(&mut self, status: EndpointStatus) {
         if self.reported != Some(status) {
             tracing::info!(program = %self.config.program.as_str(), ?status, "app source status");
@@ -151,12 +153,13 @@ impl Finder {
         }
     }
 
+    /// 查找线程的主循环：定时查找新出现的进程，较短间隔回收已结束的采集；程序文件不存在时停下来等重新检测。
     fn run(&mut self, stop: &AtomicBool) {
         while !stop.load(Ordering::Relaxed) {
             if !Path::is_file(self.config.program.as_path()) {
                 self.stop_all();
                 self.report(EndpointStatus::ProgramMissing);
-                // 不再定时查找（M3 计划 A3）：等用户"重新检测"；路径改变时引擎会重建这个线程
+                // 不再定时查找：等用户"重新检测"；路径改变时引擎会重建这个线程
                 self.context.redetect.wait(&self.target, None, stop);
                 continue;
             }
@@ -171,6 +174,7 @@ impl Finder {
         self.stop_all();
     }
 
+    /// 找出程序的根进程，为还没采集的那些各开一路采集；环形缓冲用完时多出的实例被忽略。
     fn scan(&mut self) {
         self.reap();
         let matching = matching_processes(&self.config.program);
@@ -242,6 +246,7 @@ impl Finder {
         }
     }
 
+    /// 等采集线程结束，收回它的环形缓冲，并记下它是否打开失败过。
     fn collect(&mut self, root: RootCapture) {
         if let Ok(end) = root.thread.join() {
             self.open_failed |= end.failed;
@@ -249,6 +254,7 @@ impl Finder {
         }
     }
 
+    /// 汇总各路采集得出应用源的状态：有一路在采集就是在线；都打不开是离线；没有进程是未运行。
     fn update_status(&mut self) {
         if self.roots.iter().any(|root| root.opened.load(Ordering::Relaxed)) {
             self.open_failed = false;
@@ -273,6 +279,7 @@ impl Finder {
     }
 }
 
+/// 进程回环按我们请求的格式交付（引擎采样率的立体声浮点），界面上显示的就是它。
 fn loopback_format(engine_rate: SampleRate) -> DeviceFormat {
     DeviceFormat {
         sample_rate: engine_rate,
@@ -281,6 +288,7 @@ fn loopback_format(engine_rate: SampleRate) -> DeviceFormat {
     }
 }
 
+/// 采集一个根进程（连同子进程）的声音，直到进程退出、出错或收到停止信号。打开成功后置位 `opened`。
 fn capture_root(
     process_id: u32,
     program: &ProgramPath,

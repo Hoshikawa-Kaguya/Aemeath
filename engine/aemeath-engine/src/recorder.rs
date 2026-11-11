@@ -1,7 +1,7 @@
-//! 录音节点（M3 计划 2.5）：实时线程把信号推进无锁环形缓冲，每个录音节点一个非实时的写盘线程取走并写文件。
+//! 录音节点：实时线程把信号推进无锁环形缓冲，每个录音节点一个非实时的写盘线程取走并写文件。
 //!
-//! 写盘线程按节点 ID 存在，不随混音器替换，切换拓扑时继续写同一个文件（M3 计划 R7）；节点被删除时结束文件。
-//! 录音状态只在引擎里：主程序重启时录音不中断，引擎崩溃后不自动续录（M3 计划 R1、R8）。
+//! 写盘线程按节点 ID 存在，不随混音器替换，切换拓扑时继续写同一个文件；节点被删除时结束文件。
+//! 录音状态只在引擎里：主程序重启时录音不中断，引擎崩溃后不自动续录。
 //! 每路一个线程：一块磁盘卡住时不影响其他录音。
 
 use std::collections::HashMap;
@@ -24,7 +24,7 @@ use crate::mixer::Mixer;
 use crate::port::Port;
 use crate::recording_file::{RecordingFile, WAV_SEGMENT_LIMIT};
 
-/// 环形缓冲能存的秒数（M3 计划 2.5：至少 2 s），满了就丢弃并由调度线程计数
+/// 环形缓冲能存的秒数（至少 2 s），满了就丢弃并由调度线程计数
 const RING_SECONDS: usize = 2;
 const WRITER_POLL: Duration = Duration::from_millis(20);
 const STATUS_INTERVAL: Duration = Duration::from_secs(1);
@@ -57,6 +57,7 @@ impl Drop for RecorderHandle {
     }
 }
 
+/// 全部录音节点的写盘线程，按节点 ID 管理。
 pub struct Recorders {
     handles: HashMap<NodeId, RecorderHandle>,
     status: RecorderSink,
@@ -97,6 +98,7 @@ impl Recorders {
         self.handles.retain(|id, _| keep.contains(id));
     }
 
+    /// 为新出现的录音节点建环形缓冲并启动写盘线程，把生产端交给混音器。
     fn spawn(
         &self,
         node: NodeId,
@@ -132,6 +134,7 @@ impl Recorders {
         })
     }
 
+    /// 让这个录音节点开始写 `path`。节点不存在或写盘线程已退出时返回 false。
     pub fn start(&self, node: NodeId, path: PathBuf) -> bool {
         self.handles.get(&node).is_some_and(|handle| {
             handle
@@ -144,12 +147,14 @@ impl Recorders {
         })
     }
 
+    /// 让这个录音节点停止并结束文件。节点不存在或写盘线程已退出时返回 false。
     pub fn stop(&self, node: NodeId) -> bool {
         self.handles
             .get(&node)
             .is_some_and(|handle| handle.commands.send(WriterCommand::Stop).is_ok())
     }
 
+    /// 引擎退出时调用：结束全部写盘线程，正在写的文件都会正常收尾。
     pub fn shutdown(&mut self) {
         self.handles.clear();
     }
@@ -170,6 +175,7 @@ struct Writer {
     file: Option<OpenFile>,
 }
 
+/// 把写盘错误归成界面能说明的原因：磁盘满单独提示，其余都是写入失败。
 fn failure_reason(error: &io::Error) -> RecordingFailure {
     let disk_full = error.kind() == io::ErrorKind::StorageFull
         || error
@@ -183,6 +189,7 @@ fn failure_reason(error: &io::Error) -> RecordingFailure {
 }
 
 impl Writer {
+    /// 写盘线程的主循环：处理开始、停止命令，定时把缓冲写进文件；命令通道断开时结束文件并退出。
     fn run(&mut self, commands: &Receiver<WriterCommand>) {
         loop {
             match commands.recv_timeout(WRITER_POLL) {
@@ -203,6 +210,7 @@ impl Writer {
         (self.status)(self.node, state);
     }
 
+    /// 建文件并开始录音；已在录音时忽略。先丢掉缓冲里开始之前的旧数据。
     fn start(&mut self, path: &Path, settings: RecorderSettings) {
         if self.file.is_some() {
             return;
@@ -228,6 +236,7 @@ impl Writer {
         }
     }
 
+    /// 停止录音：先让调度线程停止推送，写完缓冲里剩下的数据，再结束文件。
     fn stop(&mut self) {
         self.active.store(false, Ordering::Release);
         self.drain();
@@ -256,7 +265,7 @@ impl Writer {
         }
     }
 
-    /// 把环形缓冲里的数据全部写进文件。出错时只停这一路（M3 计划 R10）。
+    /// 把环形缓冲里的数据全部写进文件。出错时只停这一路。
     fn drain(&mut self) {
         let available = self.consumer.slots() / STEREO * STEREO;
         let Ok(chunk) = self.consumer.read_chunk(available) else {
@@ -273,6 +282,7 @@ impl Writer {
         }
     }
 
+    /// 写盘出错：停止这一路，尽量把已写的部分收好尾，再报告原因。
     fn fail(&mut self, error: &io::Error) {
         tracing::warn!(node = self.node.0, %error, "recording failed");
         self.active.store(false, Ordering::Release);
@@ -284,6 +294,7 @@ impl Writer {
         });
     }
 
+    /// 每隔一段时间刷新文件头并向界面报告进度，这样崩溃时文件也是可读的。
     fn report_progress(&mut self) {
         let due = self
             .file

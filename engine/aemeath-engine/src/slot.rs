@@ -25,7 +25,7 @@ use aemeath_usbip::writer::ConnectionWriter;
 use crate::STEREO;
 use crate::fifo::FrameFifo;
 
-/// URB 迟到（预留的时间已经过去）时，从当前时刻往后这么多微帧重新开始（与探针相同，1 ms）
+/// URB 迟到（预留的时间已经过去）时，从当前时刻往后这么多微帧重新开始（1 ms）
 const RESTART_LEAD_MICROFRAMES: i64 = 8;
 /// 输入方向额外的放出延迟（1 ms），吸收主机与引擎分块的 ±1 帧差异
 pub const RENDER_PRIME_MICROFRAMES: i64 = 8;
@@ -128,6 +128,7 @@ pub struct Reservation {
     pub late_by: Option<i64>,
 }
 
+/// 一个槽位流的问题计数，由调度线程定期汇总进日志。
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SlotStats {
     /// URB 迟到、时间线预留重新开始的次数
@@ -138,6 +139,8 @@ pub struct SlotStats {
     pub overflow_frames: u64,
 }
 
+/// 一个已导入槽位的音频流：按时间线收发等时 URB，在 USB 一侧的格式与引擎之间缓冲和转换。
+/// 只在调度线程上使用。
 #[derive(Debug)]
 pub struct SlotStream {
     slot: SlotId,
@@ -334,7 +337,7 @@ impl SlotStream {
     /// URB 通常提前约 10 ms 到达，紧接上一个 URB。迟到时是否仍接在原位置，按方向不同：
     /// - 输入槽位（主机播放）：数据本来就多等 1 ms 才放出，迟到不超过 [`LATE_TOLERANCE_MICROFRAMES`] 不会造成空档。
     /// - 输出槽位（主机录音）：数据在 URB 到期时才取，只要它覆盖的时段还没结束（每个 URB 约 10 ms），
-    ///   接在原位置就不会有任何空档（2026-11-07 实测 Windows 曾迟交 2.9 ms）。
+    ///   接在原位置就不会有任何空档（实测 Windows 曾迟交 2.9 ms）。
     ///
     /// 超出容差时从当前时刻往后重新开始，并在结果中报告迟到的微帧数。
     pub fn reserve(&mut self, submit: &Submit, now_microframe: i64) -> Reservation {

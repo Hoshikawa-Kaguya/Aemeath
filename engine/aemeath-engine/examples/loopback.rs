@@ -5,9 +5,9 @@
 //!
 //! 用法：`cargo run -p aemeath-engine --example loopback --release -- [秒数] [引擎采样率]
 //! [--in 采样率:样本格式] [--out 采样率:样本格式] [--resampler poly|sinc|fft] [--format-matrix]`
-//! `--in`、`--out` 把两个槽位设成指定的设备格式，验证固定比率重采样（M4 计划 E2E 第 2 项）。
+//! `--in`、`--out` 把两个槽位设成指定的设备格式，验证固定比率重采样。
 //! `--format-matrix` 只逐项设置并读回全部采样率和样本格式（第 3 项）。结束后用 slot-maintenance 把格式设回去。
-//! 只使用开发槽位（ADR-0009），挂载不需要管理员权限；结束时卸下。agent 执行时不超过 5 分钟。
+//! 只使用开发槽位，挂载不需要管理员权限；结束时卸下。agent 执行时不超过 5 分钟。
 
 mod common;
 
@@ -34,7 +34,7 @@ const AMPLITUDE: f64 = 0.5;
 const TAIL_SECONDS: f64 = 1.0;
 const SETTLE_SECONDS: f64 = 0.5;
 const SLOT_CHANNELS: u16 = 2;
-/// 共享模式下虚拟设备可用的采样率和全部样本格式（M4 计划 F3）
+/// 共享模式下虚拟设备可用的采样率和全部样本格式
 const MATRIX_RATES: [u32; 8] = [44_100, 48_000, 88_200, 96_000, 176_400, 192_000, 352_800, 384_000];
 const MATRIX_FORMATS: [SampleFormat; 5] = [
     SampleFormat::Int16,

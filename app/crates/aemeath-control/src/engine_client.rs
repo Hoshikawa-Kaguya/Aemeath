@@ -3,7 +3,7 @@
 //! - 后台任务负责连接、握手、心跳和断线重连；调用方只提交"当前想要的路由拓扑"，并从事件通道读取结果和引擎状态。
 //! - 拓扑以最新一份为准：断线期间提交多次时，重连后只下发最后一份。修订号由客户端分配，跨连接也只增不减。
 //! - 心跳：每 [`Timing::ping_interval`] 发一次 `ping`，超过 [`Timing::unresponsive_after`] 没收到任何消息就判为假死，
-//!   断开后重连。重启假死的引擎由守护进程负责（ADR-0008）。
+//!   断开后重连。重启假死的引擎由守护进程负责。
 //! - tokio 的管道客户端默认带 `SECURITY_IDENTIFICATION`：服务端不能借这条连接冒充主程序的身份。
 
 use std::time::Duration;
@@ -51,8 +51,10 @@ impl Default for Timing {
     }
 }
 
+/// 连接引擎所需的设置。
 #[derive(Debug, Clone)]
 pub struct ClientConfig {
+    /// 引擎命名管道的完整名称
     pub pipe_name: String,
     /// 主程序版本，只用于引擎的日志
     pub app_version: String,
@@ -77,7 +79,7 @@ pub enum DisconnectReason {
 /// 客户端事件。
 #[derive(Debug, Clone, PartialEq)]
 pub enum ClientEvent {
-    /// 握手完成。`restored_topology` 是引擎启动时从缓存恢复的拓扑修订号（ADR-0008）
+    /// 握手完成。`restored_topology` 是引擎启动时从缓存恢复的拓扑修订号
     Connected {
         restored_topology: Option<TopologyRevision>,
         /// USB/IP 服务端实际监听的端口
@@ -101,7 +103,7 @@ pub enum ClientEvent {
         node: NodeId,
         status: RecorderState,
     },
-    /// USB/IP 服务端上槽位的连接状态（挂载成功以此为准，ADR-0007）
+    /// USB/IP 服务端上槽位的连接状态（挂载成功以此为准）
     SlotConnection {
         slot: SlotId,
         connected: bool,
@@ -187,7 +189,7 @@ impl EngineClient {
         }
     }
 
-    /// 请引擎立即重新检测离线设备；`node` 为 None 表示全部（选型报告 6.5 节的手动检测）。
+    /// 请引擎立即重新检测离线设备；`node` 为 None 表示全部。用户点"重新检测"时用，不必等下一次自动重试。
     pub fn redetect(&self, node: Option<NodeId>) {
         let _ = self.commands.send(Command::Redetect { node });
     }
@@ -197,6 +199,7 @@ impl EngineClient {
         let _ = self.commands.send(Command::StartRecording { node, path });
     }
 
+    /// 请引擎停止这个录音节点并结束文件。
     pub fn stop_recording(&self, node: NodeId) {
         let _ = self.commands.send(Command::StopRecording { node });
     }
@@ -209,7 +212,7 @@ pub struct EngineProber {
 }
 
 impl EngineProber {
-    /// 查询外部设备的能力（ADR-0014：独占时可选的格式和缓冲）。引擎不在或设备打不开时返回 None。
+    /// 查询外部设备的能力（独占时可选的格式和缓冲）。引擎不在或设备打不开时返回 None。
     pub async fn probe_device(&self, endpoint: EndpointId, direction: EndpointDirection) -> Option<DeviceCapabilities> {
         let (reply, wait) = oneshot::channel();
         self.commands
@@ -249,6 +252,7 @@ impl ClientState {
     }
 }
 
+/// 客户端任务：连接、握手、下发最新拓扑、转发命令和事件；断开后等一会儿重连，直到调用方要求退出。
 async fn run(
     config: ClientConfig,
     mut desired: watch::Receiver<Option<RouteTopology>>,
@@ -429,6 +433,7 @@ async fn session(
     reason
 }
 
+/// 处理引擎发来的一条消息：应答交给等它的请求，状态变化转成事件发给控制面。
 fn handle(
     message: EngineToApp,
     state: &mut ClientState,
@@ -479,6 +484,7 @@ fn handle(
     let _ = events.send(event);
 }
 
+/// 取出这个请求对应的、还在等应答的拓扑修订号。
 fn take_pending(state: &mut ClientState, request: RequestId) -> Option<TopologyRevision> {
     let index = state.pending_topologies.iter().position(|(id, _)| *id == request)?;
     Some(state.pending_topologies.swap_remove(index).1)

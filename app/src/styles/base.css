@@ -1,4 +1,4 @@
-/* 窗口底色只铺在 html 上：body 再铺一层会盖住 z-index 为负的背景图（App.vue，M4 计划 V4、V8） */
+/* 窗口底色只铺在 html 上：body 再铺一层会盖住 z-index 为负的背景图（App.vue） */
 :root {
   color-scheme: light;
 }

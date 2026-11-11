@@ -54,6 +54,7 @@ function onDragOver(event: DragEvent, index: number): void {
   dropIndex.value = event.clientX < rect.left + rect.width / 2 ? index : index + 1
 }
 
+/** 把拖动的通道条放到插入位置 */
 function onDrop(event: DragEvent): void {
   event.preventDefault()
   const node = dragged.value

@@ -9,6 +9,7 @@ use aemeath_protocol::ids::NodeId;
 
 use crate::STEREO;
 
+/// 各节点左右声道的峰值。调度线程用原子量写入，不加锁；读取方取走后清零。
 #[derive(Debug)]
 pub struct MeterBank {
     node_ids: Vec<NodeId>,

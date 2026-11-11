@@ -1,7 +1,7 @@
-//! 应用页（选型报告 5.5 节、S7）：列出正在出声的程序和它们的落点（GLOSSARY：落点），以及可选的落点。
+//! 应用页：列出正在出声的程序和它们的落点（GLOSSARY：落点），以及可选的落点。
 //!
 //! 候选落点：工作台上的虚拟输入节点（它们的槽位端点）和外部输出。被 Aemeath 独占的外部输出不可选——
-//! 应用打不开它（ADR-0014；2026-11-08 维护者决定）。
+//! 应用打不开它。
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -151,6 +151,7 @@ pub fn build(
     AppsView { apps, choices }
 }
 
+/// 这个程序已有的应用源节点；应用页据此决定显示"添加为应用源"还是"已是应用源"。
 fn source_node_of(workspace: &Workspace, executable: &str) -> Option<u32> {
     let program = ProgramPath::new(executable).ok()?;
     workspace
@@ -160,7 +161,7 @@ fn source_node_of(workspace: &Workspace, executable: &str) -> Option<u32> {
         .map(|node| node.id.0)
 }
 
-/// 应用源的默认节点名（M3 计划 A7）：文件说明，取不到时用不带扩展名的文件名。
+/// 应用源的默认节点名：文件说明，取不到时用不带扩展名的文件名。
 pub fn default_program_name(path: &str) -> String {
     let path = Path::new(path);
     aemeath_sys::process::file_description(path)

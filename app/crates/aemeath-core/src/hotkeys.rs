@@ -1,4 +1,4 @@
-//! 热键（GLOSSARY：热键、全局热键、专属热键；M3 计划 1.5）：按键组合、绑定、校验与冲突检查，以及按住型的临时叠加。
+//! 热键（GLOSSARY：热键、全局热键、专属热键）：按键组合、绑定、校验与冲突检查，以及按住型的临时叠加。
 //!
 //! 专属热键存放在所属的节点或连线上，随所属对象一起删除和恢复；全局热键存放在偏好设置里。
 
@@ -13,6 +13,7 @@ use crate::model::NodeKind;
 use crate::preferences::Preferences;
 use crate::workspace::Workspace;
 
+/// 修饰键的组合。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Modifiers {
@@ -27,6 +28,7 @@ pub struct Modifiers {
 }
 
 impl Modifiers {
+    /// 是否至少按了一个修饰键。
     pub fn any(self) -> bool {
         self.ctrl || self.alt || self.shift || self.win
     }
@@ -41,6 +43,7 @@ pub enum KeyCode {
     MouseX2,
 }
 
+/// 一个按键组合：修饰键加一个主键。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Hotkey {
@@ -49,6 +52,7 @@ pub struct Hotkey {
     pub key: KeyCode,
 }
 
+/// 热键的生效方式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HotkeyMode {
@@ -58,6 +62,7 @@ pub enum HotkeyMode {
     Hold,
 }
 
+/// 绑定在某个对象上的热键：按哪个组合、以哪种方式生效。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HotkeyBinding {
@@ -65,7 +70,7 @@ pub struct HotkeyBinding {
     pub mode: HotkeyMode,
 }
 
-/// 全局热键（M3 计划 H3）。
+/// 全局热键。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GlobalHotkeys {
@@ -89,7 +94,7 @@ pub enum HotkeyTarget {
 }
 
 impl HotkeyTarget {
-    /// 录音和显示/隐藏主窗口只能用切换（M3 计划 H4）。
+    /// 录音和显示/隐藏主窗口只能用切换。
     fn toggle_only(self) -> bool {
         matches!(self, Self::NodeRecord(_) | Self::AllRecording | Self::ToggleWindow)
     }
@@ -174,7 +179,7 @@ pub fn all_hotkeys(workspace: &Workspace, preferences: &Preferences) -> Vec<(Hot
     list
 }
 
-/// 临时叠加（M3 计划 H10）：编译拓扑时叠加，不写进配置，也不进撤销记录。
+/// 临时叠加：编译拓扑时叠加，不写进配置，也不进撤销记录。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct HotkeyOverlay {
     /// 紧急静音：全部输出节点静音
@@ -184,6 +189,7 @@ pub struct HotkeyOverlay {
 }
 
 impl HotkeyOverlay {
+    /// 把正按住的热键叠加到刚编译出的拓扑上：静音和连线开关各取反一次；紧急静音时所有输出都静音。
     pub fn apply(&self, topology: &mut RouteTopology) {
         for node in &mut topology.nodes {
             if self.held.contains(&HotkeyTarget::NodeMute(node.id)) {

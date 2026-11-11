@@ -1,11 +1,11 @@
 //! 槽位的 USB Audio Class 2.0 描述符（高速设备）。
 //!
-//! 字节布局从探针原样移植（S3 在真机上注册开发槽位时用的就是这一份）。**描述符的任何改动都要同时修改
+//! 这份字节布局已在 Windows 上实际注册过开发槽位，内置的 USB 声卡驱动能正确识别。**描述符的任何改动都要同时修改
 //! `identity::DEVICE_RELEASE`**，因为 Windows 会按"VID/PID + 版本号"缓存部分描述符。
 //!
-//! 每个槽位只有一个方向（usbaudio2 每台设备只支持一个时钟源，选型报告第 8 节）：
+//! 每个槽位只有一个方向（Windows 的 usbaudio2 驱动每台设备只支持一个时钟源，同一台设备上的播放和录音无法各用各的时钟）：
 //! - 输入槽位：应用往里播放。USB 流输入终端 → 扬声器输出终端，等时 OUT 端点，自适应同步。
-//! - 输出槽位：OBS 等从里面录。线路输入终端（ADR-0006）→ USB 流输出终端，等时 IN 端点，异步同步。
+//! - 输出槽位：OBS 等从里面录。线路输入终端→ USB 流输出终端，等时 IN 端点，异步同步。
 
 use aemeath_protocol::ids::SlotDirection;
 
@@ -49,7 +49,7 @@ pub const CONTROL_INTERFACE: u8 = 0;
 pub const STREAMING_INTERFACE: u8 = 1;
 const INTERFACE_COUNT: u8 = 2;
 
-// 音频功能内的实体 ID（与探针一致；输入、输出槽位各用其中两个终端）
+// 音频功能内的实体 ID（输入、输出槽位各用其中两个终端）。改动它们就是改动描述符，见模块说明
 pub const CLOCK_ID: u8 = 0x10;
 const RENDER_INPUT_TERMINAL: u8 = 0x01;
 const RENDER_OUTPUT_TERMINAL: u8 = 0x02;
@@ -59,7 +59,7 @@ const CAPTURE_OUTPUT_TERMINAL: u8 = 0x04;
 // 终端类型
 const TERMINAL_USB_STREAMING: u16 = 0x0101;
 const TERMINAL_SPEAKER: u16 = 0x0301;
-/// 线路连接器：虚拟输出必须声明为线路，否则 Windows 会套用麦克风处理（ADR-0006）
+/// 线路连接器：虚拟输出必须声明为线路，否则 Windows 会套用麦克风处理
 const TERMINAL_LINE_CONNECTOR: u16 = 0x0603;
 
 /// 内部可编程时钟；采样率可读写、时钟有效性只读
@@ -113,6 +113,7 @@ pub struct Descriptors {
 }
 
 impl Descriptors {
+    /// 按槽位身份生成全套描述符：方向决定是扬声器还是线路，身份决定 VID/PID、版本号和字符串。
     pub fn build(identity: &SlotIdentity) -> Self {
         let mut device = vec![18, DESC_DEVICE];
         put_le16(&mut device, USB_2_0);
@@ -189,6 +190,7 @@ impl Descriptors {
     }
 }
 
+/// 配置描述符及其下的全部接口、音频类和端点描述符，按方向生成。
 fn configuration(direction: SlotDirection) -> Vec<u8> {
     let mut audio_control = Vec::new();
     audio_control.extend_from_slice(&[

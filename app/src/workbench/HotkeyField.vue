@@ -6,12 +6,12 @@ import type { HotkeyBindingView, HotkeyModeView, HotkeyTargetView, HotkeyView } 
 import { useAppStore } from '@/stores/app'
 import { captureFromKey, captureFromPointer, formatHotkey, type CaptureResult } from './hotkeyLabels'
 
-// 一个热键的编辑控件（M3 计划 H7、H12）：节点设置、连线的"热键…"对话框和热键页共用，改的是同一份数据。
+// 一个热键的编辑控件：节点设置、连线的"热键…"对话框和热键页共用，改的是同一份数据。
 // 录入只在窗口有焦点时进行，由界面自己监听键鼠事件。Esc 取消，Backspace 清除，点别处或窗口失去焦点都回到录入前的状态。
 const props = defineProps<{
   target: HotkeyTargetView
   binding: HotkeyBindingView | null
-  /** 录音和显示/隐藏主窗口只能用切换（M3 计划 H4） */
+  /** 录音和显示/隐藏主窗口只能用切换 */
   toggleOnly?: boolean
   occupied?: boolean
 }>()
@@ -25,7 +25,7 @@ async function apply(binding: HotkeyBindingView | null): Promise<void> {
   await store.run(() => backend.setHotkey(props.target, binding))
 }
 
-/** 键盘的切换型必须带修饰键（M3 计划 H5）：单键直接录成按住型，用户可以再改 */
+/** 键盘的切换型必须带修饰键：单键直接录成按住型，用户可以再改 */
 function modeFor(key: HotkeyView, wanted: HotkeyModeView): HotkeyModeView {
   const bare =
     key.key.type === 'keyboard' &&
@@ -36,10 +36,12 @@ function modeFor(key: HotkeyView, wanted: HotkeyModeView): HotkeyModeView {
   return bare && wanted === 'toggle' && !props.toggleOnly ? 'hold' : wanted
 }
 
+/** 录入期间暂停全部热键，否则按下的组合会被系统热键吞掉，或者直接触发操作 */
 function setPaused(paused: boolean): void {
   backend.setHotkeysPaused(paused).catch((error: unknown) => store.showToast(store.errorText(error)))
 }
 
+/** 开始录入：接管整个窗口的按键和鼠标按下；窗口失去焦点就取消 */
 function startCapture(): void {
   capturing.value = true
   window.addEventListener('keydown', onCaptureKey, true)
@@ -56,6 +58,7 @@ function endCapture(): void {
   setPaused(false)
 }
 
+/** 结束录入，按结果设定、清除或保持原来的热键 */
 function finish(result: CaptureResult): void {
   endCapture()
   if (result.type === 'captured') {

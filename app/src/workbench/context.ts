@@ -50,6 +50,6 @@ export interface RouteData {
   highlighted: boolean
 }
 
-/** 增益的调节范围（与原型一致；后端允许 −120 到 +24 dB） */
+/** 界面上增益的调节范围。后端允许 −120 到 +24 dB，界面只开放常用的一段，推子才不会太灵敏 */
 export const GAIN_MIN_DB = -60
 export const GAIN_MAX_DB = 12

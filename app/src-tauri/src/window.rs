@@ -1,6 +1,6 @@
 //! 主窗口的最小尺寸与上次的位置和大小。
 //!
-//! 最小尺寸是主显示器分辨率的 65%（维护者 2026-11-08 要求）：工作台、路由矩阵、控制台三栏同屏，窗口太小时布局会挤坏；
+//! 最小尺寸是主显示器分辨率的 65%：工作台、路由矩阵、控制台三栏同屏，窗口太小时布局会挤坏；
 //! 按主显示器的物理分辨率算，不同分辨率和缩放比例下占屏幕的比例一致。
 //! tauri.conf.json 里的 minWidth / minHeight 只是拿不到显示器信息时的下限。
 //!
@@ -16,10 +16,11 @@ use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, Runtime, Webview
 use crate::controller::{ControllerHandle, Edit};
 use crate::tray::MAIN_WINDOW;
 
-/// 数据目录（Tauri 托管状态）。配置、日志、WebView2 的用户数据都在这里（M4 计划 D1、D6）。
+/// 数据目录（Tauri 托管状态）。配置、日志、WebView2 的用户数据都在这里。
 pub struct DataDir(pub PathBuf);
 
 impl DataDir {
+    /// WebView2 的用户数据目录。
     pub fn webview(&self) -> PathBuf {
         self.0.join(WEBVIEW_FOLDER)
     }
@@ -52,7 +53,7 @@ pub fn prepare<R: Runtime>(window: &WebviewWindow<R>) {
     if let Some(placement) = saved {
         restore(window, placement);
     }
-    // 等界面应用好主题后再显示（window_ready），否则会闪默认色（M4 计划 V4）；页面加载失败时兜底显示，窗口不能一直看不见
+    // 等界面应用好主题后再显示（window_ready），否则会闪默认色；页面加载失败时兜底显示，窗口不能一直看不见
     let fallback = window.clone();
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(SHOW_FALLBACK).await;
@@ -67,6 +68,7 @@ pub fn show<R: Runtime>(window: &WebviewWindow<R>) {
     }
 }
 
+/// 恢复上次的窗口位置和大小；保存的标题栏不在任何一块屏幕上时（例如拔掉了显示器）用默认位置，免得窗口拿不回来。
 fn restore<R: Runtime>(window: &WebviewWindow<R>, placement: WindowPlacement) {
     let screens: Vec<Screen> = window
         .available_monitors()

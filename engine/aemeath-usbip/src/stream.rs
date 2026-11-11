@@ -3,14 +3,14 @@
 use aemeath_protocol::message::SampleFormat;
 use aemeath_protocol::units::SampleRate;
 
-/// USB 描述符声明的声道数：v1 的槽位都是立体声（N 声道节点见选型报告第 10 节）。
+/// USB 描述符声明的声道数：槽位都是立体声，多声道目前不支持。
 /// 与 `aemeath_dsp::STEREO` 数值相同但含义不同（这是传输格式），usbip 也不依赖 dsp，所以单独定义。
 pub const CHANNELS: u8 = 2;
 
 /// 高速 USB 每秒的微帧数（125 µs 一个）
 pub const MICROFRAMES_PER_SECOND: u64 = 8_000;
 
-/// 槽位声明的全部采样率（ADR-0010：声明全部格式，Windows 选哪个就按哪个收发）。
+/// 槽位声明的全部采样率（声明全部格式，Windows 选哪个就按哪个收发）。
 pub const SUPPORTED_RATES: [u32; 10] = [
     44_100, 48_000, 88_200, 96_000, 176_400, 192_000, 352_800, 384_000, 705_600, 768_000,
 ];
@@ -28,7 +28,7 @@ pub struct WireFormat {
 }
 
 /// 流接口的备用设置（alternate setting）。备用设置 0 表示停止，1–5 依次对应这些格式。
-/// 顺序与探针一致，不能调整（主机按编号选择格式）。
+/// 顺序不能调整：主机按编号选择格式，调整顺序等于改动描述符。
 pub const WIRE_FORMATS: [WireFormat; 5] = [
     WireFormat {
         sample_format: SampleFormat::Int16,

@@ -8,8 +8,8 @@ import { nearestT, pointAt, routeCurve } from './curve'
 import { createHoverWheel } from './hoverWheel'
 import { workbenchKey, type RouteData } from './context'
 
-// 连线（原型的 #wires 与 .wire-label）：开启为强调色实线、关闭为虚线。
-// 标签上的交互（M2 计划 2.2，维护者 2026-11-08 要求防误触、拖动直观）：
+// 连线：开启为强调色实线、关闭为虚线。
+// 标签上的交互既要防止误触，又要让拖动直观：
 // - 单击标签选中连线；单击圆点开关连线。只有"按下和松开都在圆点上、没有移动"才算单击圆点。
 // - 按下后一移动就开始拖动（不必长按、不必先选中）。标签只在连线上滑动：指针停在哪，标签就滑到连线上离它最近的点
 //   （位置随连线保存）。
@@ -49,6 +49,7 @@ function onWheel(event: WheelEvent): void {
   actions?.nudgeGain(route.value, event.deltaY < 0 ? 1 : -1)
 }
 
+/** 在标签上按下：移动超过容差就当拖动标签，否则松开时按单击处理（点圆点开关连线，点别处选中连线） */
 function onLabelPointerDown(event: PointerEvent): void {
   if (event.button !== PRIMARY_BUTTON) {
     return

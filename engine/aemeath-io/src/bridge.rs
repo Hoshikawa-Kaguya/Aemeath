@@ -1,6 +1,6 @@
 //! 桥接线程共用的错误类型与统计日志。
 //!
-//! 日志是维护者长期验证的依据：每分钟记一次水位、漂移估计和校正量的摘要；溢出、欠载立即记录（限频）。
+//! 长时间运行出问题时要靠日志排查：每分钟记一次水位、漂移估计和校正量的摘要；溢出、欠载立即记录（限频）。
 
 use std::time::{Duration, Instant};
 
@@ -70,6 +70,7 @@ pub struct BridgeLog {
 const PROBLEM_LOG_INTERVAL: Duration = Duration::from_secs(5);
 
 impl BridgeLog {
+    /// 为一个端点开始一段新的统计；`endpoint` 只用于日志里区分设备。
     pub fn new(endpoint: &str) -> Self {
         let now = Instant::now();
         Self {
@@ -91,12 +92,13 @@ impl BridgeLog {
         }
     }
 
-    /// 记录一块重采样的耗时（M4 计划 1.2 节）。
+    /// 记录一块重采样的耗时。
     pub fn block_processed(&mut self, elapsed: Duration) {
         self.block_max = self.block_max.max(elapsed);
         self.session_block_max = self.session_block_max.max(elapsed);
     }
 
+    /// 记录一次环形缓冲的水位（ms），攒到下一次控制时取平均。
     pub fn level(&mut self, level_ms: f64) {
         self.level_sum += level_ms;
         self.level_count += 1;
@@ -104,10 +106,12 @@ impl BridgeLog {
         self.level_max = self.level_max.max(level_ms);
     }
 
+    /// 是否该调整一次重采样比率：距上次已满一个控制周期，并且这期间记录过水位。
     pub fn control_due(&self) -> bool {
         self.last_control.elapsed() >= CONTROL_PERIOD && self.level_count > 0
     }
 
+    /// 取出这个控制周期的平均水位（ms），并开始下一个周期。平均能滤掉设备按块交付造成的锯齿。
     pub fn take_average(&mut self) -> f64 {
         let average = self.level_sum / self.level_count.max(1) as f64;
         self.level_sum = 0.0;
@@ -116,6 +120,7 @@ impl BridgeLog {
         average
     }
 
+    /// 记下控制器这次的输出；每满一个日志周期写一条 `bridge status` 摘要，并清零周期内的统计。
     pub fn after_control(&mut self, update: RateUpdate) {
         self.last_update = update;
         if self.last_log.elapsed() >= LOG_PERIOD {
@@ -139,11 +144,13 @@ impl BridgeLog {
         }
     }
 
+    /// 环形缓冲满了，丢掉了 `frames` 帧。计数并限频记警告。
     pub fn overflow(&mut self, frames: usize) {
         self.overflow_frames += frames as u64;
         self.problem("ring buffer overflow, frames dropped");
     }
 
+    /// 环形缓冲空了，补了静音。计数并限频记警告。
     pub fn underflow(&mut self) {
         self.underflow_events += 1;
         self.problem("ring buffer underflow, silence inserted");

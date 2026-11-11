@@ -1,6 +1,6 @@
 //! 设备时钟的读数快照：IO 线程每秒从自己的流读一次 `IAudioClock`，写在这里；主时钟跟随线程（[`crate::follow`]）只读。
 //!
-//! 以前跟随线程另开一条共享流来读时钟。外部设备默认独占打开后（ADR-0014），第二条流必定打不开，
+//! 以前跟随线程另开一条共享流来读时钟。外部设备默认独占打开后，第二条流必定打不开，
 //! 所以改为从 IO 线程正在使用的流读取，共享模式也统一这样做。
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -32,6 +32,7 @@ pub struct ClockTap {
 }
 
 impl ClockTap {
+    /// 最近一次读数；设备还没打开过时为 None。
     pub fn latest(&self) -> Option<ClockReading> {
         *self.latest.lock().unwrap_or_else(PoisonError::into_inner)
     }

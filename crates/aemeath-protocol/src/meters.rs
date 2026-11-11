@@ -1,4 +1,4 @@
-//! 电平共享内存的布局（ADR-0003：电平不走管道，走共享内存）。引擎写，主程序读。
+//! 电平共享内存的布局（电平不走管道，走共享内存）。引擎写，主程序读。
 //!
 //! 整块内存是 [`METER_MEMORY_WORDS`] 个 `AtomicU32`：
 //!
@@ -122,6 +122,7 @@ pub struct MeterReader<'a> {
 }
 
 impl<'a> MeterReader<'a> {
+    /// 在共享内存上建读取器；内存比约定的布局小时报错，不越界读取。
     pub fn new(words: &'a [AtomicU32]) -> Result<Self, TooSmall> {
         Ok(Self { words: check(words)? })
     }

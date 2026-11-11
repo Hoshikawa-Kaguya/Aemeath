@@ -1,4 +1,4 @@
-//! 重采样（rubato，S5）：三种算法，各带固定的重采样预设，用于异步采样率转换（ASRC）和固定比率转换。
+//! 重采样（rubato）：三种算法，各带固定的重采样预设，用于异步采样率转换（ASRC）和固定比率转换。
 //!
 //! 只处理交错立体声 f32。构建时分配内存；`process` 不分配内存
 //! （输出写进调用方预留好容量的 `Vec`，容量不够时才会增长）。
@@ -14,15 +14,15 @@ use thiserror::Error;
 
 use crate::STEREO;
 
-/// 比率可调范围 ±1%，远大于 ±1000 ppm 的设计要求，给控制器的瞬时调整留出余量（S5）
+/// 比率可调范围 ±1%，远大于 ±1000 ppm 的设计要求，给控制器的瞬时调整留出余量
 pub const MAX_RELATIVE_RATIO: f64 = 1.01;
 /// FFT 预设的帧数以这个采样率为基准，按实际采样率换算，各采样率下延迟一致
 const FFT_REFERENCE_RATE: usize = 48_000;
 const FFT_LOW_LATENCY_FRAMES: usize = 256;
 const FFT_BALANCED_FRAMES: usize = 1024;
-/// 整块做一次 FFT：分块变大时滤波器随之变长，通带更宽。切成子块则分块大小只增加延迟（M4 计划 1.1 节实测）
+/// 整块做一次 FFT：分块变大时滤波器随之变长，通带更宽。实测切成子块时，分块变大只会增加延迟
 const FFT_SUB_CHUNKS: usize = 1;
-/// FFT 路径上吸收时钟漂移的小比率级（R7），放在引擎采样率一侧，用户不可选
+/// FFT 路径上吸收时钟漂移的小比率级，放在引擎采样率一侧，用户不可选
 const DRIFT_STAGE: Quality = Quality::SincAsync {
     preset: SincPreset::Fast,
 };
@@ -88,6 +88,7 @@ pub enum FixedSide {
     Output,
 }
 
+/// 交错立体声的 rubato 重采样器：rubato 按声道分开处理，这里负责交错与分声道之间的转换。
 pub struct StereoResampler {
     inner: Box<dyn Resampler<f32>>,
     scratch: Vec<f32>,
@@ -187,7 +188,7 @@ impl StereoResampler {
 /// 外部设备和应用源的桥接重采样：转换采样率并吸收时钟漂移。
 ///
 /// Poly、Sinc 一级完成。FFT 只能做固定比率，采样率不同时分两级：FFT 转换采样率，
-/// 小比率级（[`DRIFT_STAGE`]）在引擎采样率一侧吸收漂移（R7）；采样率相同时跳过 FFT。
+/// 小比率级（[`DRIFT_STAGE`]）在引擎采样率一侧吸收漂移；采样率相同时跳过 FFT。
 pub struct BridgeResampler {
     first: StereoResampler,
     second: Option<StereoResampler>,
@@ -245,6 +246,7 @@ impl BridgeResampler {
         })
     }
 
+    /// 只有一级的桥接重采样器：异步算法自己能调比率；FFT 同步算法在两边采样率相同时只需要漂移校正这一级。
     fn single(first: StereoResampler) -> Self {
         Self {
             first,
@@ -305,7 +307,7 @@ impl BridgeResampler {
     }
 }
 
-/// 时钟漂移的 PI 控制器（S5）。
+/// 时钟漂移的 PI 控制器。
 ///
 /// 反馈量是桥接缓冲的水位（ms）；输出是比率校正量（ppm）。校正量为正表示"消耗输入更快"，即把输出/输入比率调低。
 ///
@@ -314,16 +316,18 @@ impl BridgeResampler {
 /// 时间常数约 1 分钟，校正量不会因水位的毫秒级抖动而大幅跳动。
 ///
 /// 条件积分：误差超过 [`INTEGRATE_WITHIN_MS`] 时视为突发事件（例如其他程序改变了设备的引擎周期，
-/// 数据短暂中断、水位阶跃），只让比例项负责回填，不累积积分（S5 实测）。
+/// 数据短暂中断、水位阶跃），只让比例项负责回填，不累积积分。
 #[derive(Debug, Clone)]
 pub struct RateController {
     target_ms: f64,
     integral: f64,
 }
 
+/// 比例系数：水位每偏离 1 ms，校正 40 ppm（取值理由见 [`RateController`]）
 pub const DEFAULT_KP_PPM_PER_MS: f64 = 40.0;
+/// 积分系数：水位偏离 1 ms 持续 1 s，积分项增加 1 ppm
 pub const DEFAULT_KI_PPM_PER_MS_S: f64 = 1.0;
-/// 校正量上限（选型报告 6.3 节：比率调节范围按 ±1000 ppm 设计）
+/// 校正量上限（比率调节范围按 ±1000 ppm 设计）
 pub const MAX_CORRECTION_PPM: f64 = 1000.0;
 /// 只有水位误差在这个范围内才累积积分（ms）
 pub const INTEGRATE_WITHIN_MS: f64 = 3.0;
@@ -340,6 +344,7 @@ pub struct RateUpdate {
 }
 
 impl RateController {
+    /// 以 `target_ms` 为目标水位，积分从零开始。
     pub fn new(target_ms: f64) -> Self {
         Self {
             target_ms,

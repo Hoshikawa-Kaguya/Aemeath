@@ -33,7 +33,7 @@ export type Resampler =
 export type BufferChoice =
   { choice: 'deviceDefault' } | { choice: 'deviceMinimum' } | { choice: 'milliseconds'; ms: number }
 
-/** 外部设备节点的设备设置（ADR-0014），src-tauri/src/device_settings.rs */
+/** 外部设备节点的设备设置，src-tauri/src/device_settings.rs */
 export interface DeviceSettings {
   exclusive: boolean
   /** 独占时的格式；null 表示推荐格式 */
@@ -379,6 +379,7 @@ export type CommandError =
 /** 节点在信号流中的角色（决定颜色和有哪些端口） */
 export type Role = 'in' | 'proc' | 'out'
 
+/** 与后端 `NodeKind::role` 的划分一致 */
 export function roleOf(kind: NodeKind): Role {
   switch (kind) {
     case 'externalInput':

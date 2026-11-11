@@ -1,4 +1,4 @@
-//! 配置文件：工作台与偏好设置保存为 JSON（ADR-0012：安装版在 `%APPDATA%\Aemeath`，便携版在程序目录下的 `data\`）。
+//! 配置文件：工作台与偏好设置保存为 JSON，放在数据目录（安装版和便携版都是 `%APPDATA%\Aemeath`）。
 //!
 //! - 带结构版本号。遇到更新版本写的配置时拒绝加载，也不覆盖它，避免旧版本把新版本的配置写坏。
 //! - 先写临时文件再改名，写入中途进程被结束不会留下半份配置。
@@ -18,10 +18,10 @@ use crate::workspace::Workspace;
 
 /// 配置文件的结构版本。结构有不兼容的变化时加一，并在 [`ConfigStore::load`] 中加入迁移。
 ///
-/// 2（M2）：新增控制台的固定顺序、通道条的门限。新字段都有默认值，版本 1 的文件可以直接读入；
-/// 提升版本是为了让 M1 的程序明确拒绝新文件，而不是因为不认识的字段把它当作损坏的配置。
-/// 3（M3）：新增应用源、外部插入、录音节点与热键。规则同上。
-/// 4（M4）：重采样算法的表示改变，不做迁移（M4 计划 D7），版本 3 的配置解析失败后备份并从空配置开始。
+/// 2：新增控制台的固定顺序、通道条的门限。新字段都有默认值，版本 1 的文件可以直接读入；
+/// 提升版本是为了让只认识版本 1 的程序明确拒绝新文件，而不是因为不认识的字段把它当作损坏的配置。
+/// 3：新增应用源、外部插入、录音节点与热键。规则同上。
+/// 4：重采样算法的表示改变，不做迁移，版本 3 的配置解析失败后备份并从空配置开始。
 pub const CONFIG_VERSION: u32 = 4;
 const CONFIG_FILE: &str = "workspace.json";
 const TEMP_SUFFIX: &str = "tmp";
@@ -90,13 +90,14 @@ pub enum StoreError {
     Io(#[from] io::Error),
 }
 
+/// 配置文件 `workspace.json` 的读写。
 #[derive(Debug, Clone)]
 pub struct ConfigStore {
     path: PathBuf,
 }
 
 impl ConfigStore {
-    /// `data_dir` 是数据目录（安装版 `%APPDATA%\Aemeath`，便携版 `data\`）。
+    /// `data_dir` 是数据目录（安装版和便携版都是 `%APPDATA%\Aemeath`）。
     pub fn new(data_dir: &Path) -> Self {
         Self {
             path: data_dir.join(CONFIG_FILE),
@@ -107,6 +108,8 @@ impl ConfigStore {
         &self.path
     }
 
+    /// 读取配置。文件不存在、损坏或不合规都不算错误，结果见 [`Loaded`]；
+    /// 只有读不了文件，或文件来自更新的版本时才报错。
     pub fn load(&self) -> Result<Loaded, StoreError> {
         let bytes = match std::fs::read(&self.path) {
             Ok(bytes) => bytes,
@@ -139,6 +142,7 @@ impl ConfigStore {
             .map(|file| file.preferences)
     }
 
+    /// 保存配置：先写临时文件再改名替换。
     pub fn save(&self, config: &Config) -> io::Result<()> {
         if let Some(folder) = self.path.parent() {
             std::fs::create_dir_all(folder)?;

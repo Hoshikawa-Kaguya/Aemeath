@@ -1,4 +1,4 @@
-# 本地打包脚本（M4 计划 P2）：按指定身份构建，放入 usbip-win2 安装程序和许可声明，调用 vpk 生成安装版和便携版。
+# 本地打包脚本：按指定身份构建，放入 usbip-win2 安装程序和许可声明，调用 vpk 生成安装版和便携版。
 # `vpk upload` 和打 tag 由维护者手动执行。用 pwsh 运行：
 #   pwsh scripts/release.ps1 [-Identity production|development]
 # 版本号取自同目录的 version.json，程序里显示的版本也来自它（构建时读取），两边不会对不上。
@@ -38,7 +38,7 @@ try {
     Invoke-Step 'Build the UI and the app' {
         Push-Location app
         try {
-            # tauri build 负责嵌入前端资源；不生成 Tauri 自己的安装包（ADR-0012）
+            # tauri build 负责嵌入前端资源；不生成 Tauri 自己的安装包
             pnpm tauri build --no-bundle @FeatureFlags
         }
         finally {

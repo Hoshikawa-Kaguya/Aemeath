@@ -1,14 +1,14 @@
 /*
- * 语义变量：界面原型（agent_tmp/docs/ui-prototype）用到的颜色和尺寸，全部映射到 Fluent 2 设计令牌（ADR-0013）。
+ * 语义变量：界面用到的颜色和尺寸，全部映射到 Fluent 2 设计令牌，外观与 Windows 自带应用保持一致。
  * 组件只引用这里的变量，深浅主题随令牌一起切换（theme/theme.ts）。
- * 窗口底色不透明；层、卡片用 color-mix 做成半透明，用户设置的背景图才能透出来（M4 计划 V4）。
+ * 窗口底色不透明；层、卡片用 color-mix 做成半透明，用户设置的背景图才能透出来。
  */
 :root {
   --r-ctl: var(--borderRadiusMedium);
   --r-card: var(--borderRadiusXLarge);
   /* 卡片右边距：左侧有图标列的留白，右侧的控件贴边，要比左边距大才显得对称 */
   --card-padding-end: 24px;
-  /* 动效（M2 计划 2.10）：时长和曲线全部取自 Fluent 2 令牌，参照 WinUI 的用法 */
+  /* 动效：时长和曲线全部取自 Fluent 2 令牌，参照 WinUI 的用法 */
   --dur-fast: var(--durationFaster);
   --dur: var(--durationNormal);
   --dur-slow: var(--durationSlow);
@@ -57,7 +57,7 @@
   --meter-track: color-mix(in srgb, var(--colorNeutralForeground1) 10%, transparent);
 }
 
-/* 工作台以外的页面：内容居中，最宽 1400 px（M4 计划 V1）。滚动条仍占满内容区 */
+/* 工作台以外的页面：内容居中，最宽 1400 px。滚动条仍占满内容区 */
 .page > header,
 .page > .body {
   box-sizing: border-box;
@@ -188,7 +188,7 @@ fluent-button {
   outline-offset: 1px;
 }
 
-/* 原生下拉框（原型的样式） */
+/* 原生下拉框：改成与 Fluent 控件一致的外观 */
 .select {
   height: 32px;
   padding: 0 10px;

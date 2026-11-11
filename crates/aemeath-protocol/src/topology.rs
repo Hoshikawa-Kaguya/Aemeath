@@ -1,6 +1,6 @@
-//! 路由拓扑：主程序从工作台的图编译出来、整体下发给引擎的完整拓扑与参数（ADR-0003）。
+//! 路由拓扑：主程序从工作台的图编译出来、整体下发给引擎的完整拓扑与参数。
 //!
-//! 引擎只执行拓扑，不拥有配置；它缓存最近一份拓扑，重启后先按缓存恢复出声（ADR-0008）。
+//! 引擎只执行拓扑，不拥有配置；它缓存最近一份拓扑，重启后先按缓存恢复出声。
 //! 拓扑总是整体替换，不做增量修改，这样引擎侧的原子替换和崩溃恢复都更简单。
 //!
 //! 节点类型 [`NodeKind`] 与连线规则 [`check_route`] 在这里只定义一次：主程序的工作台（`aemeath-core`）
@@ -21,9 +21,11 @@ pub const MAX_NODES: usize = 256;
 /// 一份拓扑里连线数的上限。
 pub const MAX_ROUTES: usize = 4096;
 
+/// 一份完整的路由拓扑。主程序每次修改都整体下发，引擎整体替换，不做增量更新。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RouteTopology {
+    /// 修订号：同一连接内递增，引擎据此拒绝过期的拓扑
     pub revision: TopologyRevision,
     /// 引擎采样率：内部统一处理用的全局采样率，每个 IO 节点在边界处转换到它
     pub engine_sample_rate: SampleRate,
@@ -83,6 +85,7 @@ pub enum FftPreset {
     Balanced,
 }
 
+/// 拓扑里的一个节点：类型、通道条参数，以及外部设备的打开方式。节点名和位置是界面数据，不在这里。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TopologyNode {
@@ -122,10 +125,11 @@ pub enum SlotFormatChoice {
     },
 }
 
-/// 槽位设备格式的采样率上限：共享模式下 Windows 不接受更高的采样率（M4 计划 E1）
+/// 槽位设备格式的采样率上限：共享模式下 Windows 不接受更高的采样率
 pub const SLOT_FORMAT_MAX_HZ: u32 = 384_000;
 
 impl SlotFormatChoice {
+    /// 指定格式时，采样率不能超过共享模式的上限，样本格式不能是 64 位浮点。
     pub fn is_valid(self) -> bool {
         match self {
             Self::FollowEngine => true,
@@ -137,7 +141,7 @@ impl SlotFormatChoice {
     }
 }
 
-/// 外部设备节点的设备设置（ADR-0014）。
+/// 外部设备节点的设备设置。
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DeviceSettings {
@@ -180,6 +184,7 @@ impl Default for DeviceAccess {
 }
 
 impl DeviceAccess {
+    /// 是否以独占模式打开。
     pub fn is_exclusive(&self) -> bool {
         matches!(self, Self::Exclusive { .. })
     }
@@ -235,7 +240,7 @@ pub enum NodeKind<D = EndpointId> {
     /// 外部插入（GLOSSARY：外部插入）：入边的求和从送出端（输出方向的槽位）交给外部程序，
     /// 节点发出的信号从取回端（一个外部输入）读回来
     ExternalInsert { send: SlotId, ret: D },
-    /// 录音节点：把收到的信号写进文件（M3 计划 2.5）
+    /// 录音节点：把收到的信号写进文件
     Recorder { settings: RecorderSettings },
 }
 
@@ -248,6 +253,7 @@ pub enum NodeRole {
 }
 
 impl<D> NodeKind<D> {
+    /// 节点在信号流中的角色：只发出、既收又发，还是只接收。连线规则按角色判断。
     pub fn role(&self) -> NodeRole {
         match self {
             Self::ExternalInput { .. } | Self::VirtualInput { .. } | Self::AppSource { .. } => NodeRole::Input,
@@ -303,11 +309,12 @@ impl<D> NodeKind<D> {
         }
     }
 
-    /// 能否作为主时钟。外部插入的取回端总是经过 ASRC（M3 计划 X8）。
+    /// 能否作为主时钟。外部插入的取回端总是经过 ASRC。
     pub fn can_be_clock_master(&self) -> bool {
         matches!(self, Self::ExternalInput { .. } | Self::ExternalOutput { .. })
     }
 
+    /// 是否直接对应一台外部设备（外部输入、外部输出、外部插入）。
     pub fn is_external(&self) -> bool {
         self.device().is_some()
     }
@@ -360,7 +367,7 @@ pub enum RecordDepth {
     Float32,
 }
 
-/// 录音节点的格式设置，默认 FLAC 24 位（M3 计划 R2）。
+/// 录音节点的格式设置，默认 FLAC 24 位。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RecorderSettings {
@@ -369,12 +376,13 @@ pub struct RecorderSettings {
 }
 
 impl RecorderSettings {
+    /// FLAC 不支持浮点样本，其余组合都可以。
     pub fn is_valid(self) -> bool {
         !(self.format == RecordFormat::Flac && self.depth == RecordDepth::Float32)
     }
 }
 
-/// 通道条参数（GLOSSARY：通道条）。输入节点的处理顺序是门限 → 增益 → 静音；Aemeath 不提供 Solo 和监听（ADR-0004）。
+/// 通道条参数（GLOSSARY：通道条）。输入节点的处理顺序是门限 → 增益 → 静音；Aemeath 不提供 Solo 和监听。
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Strip {
@@ -524,12 +532,13 @@ impl RouteTopology {
         self.validate_routes(&nodes)
     }
 
+    /// 逐个校验节点，并检查跨节点的唯一性（节点 ID、槽位、外部端点、应用源的程序）。返回按 ID 索引的节点类型，供校验连线用。
     fn validate_nodes(&self) -> Result<HashMap<NodeId, &NodeKind>, TopologyError> {
         let mut nodes = HashMap::with_capacity(self.nodes.len());
         let mut slots: HashMap<SlotId, NodeId> = HashMap::new();
         // 同一个外部端点在同一方向上只能对应一个节点，否则两个 IO 线程会争用同一台设备
         let mut endpoints: HashMap<(&EndpointId, NodeRole), NodeId> = HashMap::new();
-        // 同一个程序只能有一个应用源，否则同一份声音会叠加（M3 计划 A6）
+        // 同一个程序只能有一个应用源，否则同一份声音会叠加
         let mut programs: HashMap<String, NodeId> = HashMap::new();
         for node in &self.nodes {
             if nodes.insert(node.id, &node.kind).is_some() {
@@ -655,7 +664,7 @@ mod tests {
         Err(TopologyError::InvalidRoute { from, to, rejection })
     }
 
-    /// M1 验收场景：麦克风 → 虚拟输出（OBS），应用 → 虚拟输入 → 总线 → 耳机
+    /// 一个典型的直播场景：麦克风 → 虚拟输出（OBS），应用 → 虚拟输入 → 总线 → 耳机
     fn sample_topology() -> RouteTopology {
         RouteTopology {
             revision: TopologyRevision(1),

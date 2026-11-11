@@ -101,7 +101,7 @@ pub async fn run(config: RuntimeConfig, shutdown: impl Future<Output = ()>) -> i
     Ok(())
 }
 
-/// 启动时先按缓存的拓扑恢复出声（ADR-0008），再等主程序下发最新拓扑。
+/// 启动时先按缓存的拓扑恢复出声，再等主程序下发最新拓扑。
 fn restore_cached_topology(state: &mut HostState) {
     let Some(topology) = state.cache.load() else {
         tracing::info!("no cached topology, starting silent");

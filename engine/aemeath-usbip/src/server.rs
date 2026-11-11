@@ -1,13 +1,13 @@
 //! USB/IP 服务端：每个被导入的槽位一条 TCP 连接，只监听 127.0.0.1。
 //!
-//! 线程模型（与 S4 验证过的结构一致）：
+//! 线程模型：
 //! - 一个监听线程，加上每条连接一个读线程（非实时）。读线程解析 URB，在本地处理控制请求，
 //!   并把一切需要写回连接的内容作为 [`ServerEvent`] 交给引擎。
 //! - 导入成功后，连接的写端（[`ConnectionWriter`]）随 [`ServerEvent::Imported`] 交给引擎的调度线程。
 //!   此后**只有调度线程**向这条连接发数据，所以控制请求的应答也经事件转交，不在读线程里直接写。
 //! - 读线程导入后提高优先级：它被抢占时 URB 会迟到，调度线程再快也没用。
 //!
-//! 只有被导出的槽位（路由拓扑里被占用的槽位）可以导入；重复的导入返回"设备忙"（ADR-0007）。
+//! 只有被导出的槽位（路由拓扑里被占用的槽位）可以导入；重复的导入返回"设备忙"。
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::{self, Read, Write};
@@ -83,13 +83,16 @@ pub enum ServerEvent {
     },
 }
 
+/// 启动服务端所需的设置。
 #[derive(Debug, Clone, Copy)]
 pub struct ServerConfig {
     /// 监听端口；测试中用 0 让系统分配
     pub port: u16,
+    /// 槽位以开发身份还是正式身份出现在 Windows 里
     pub profile: IdentityProfile,
 }
 
+/// 运行中的 USB/IP 服务端。监听和读连接都在后台线程里，这里只保留地址和导出状态。
 pub struct UsbipServer {
     local_addr: SocketAddr,
     shared: Arc<Shared>,
@@ -162,6 +165,7 @@ impl UsbipServer {
     }
 }
 
+/// 监听线程：每接受一条连接就开一个读线程；连接数到上限时直接拒绝。
 fn accept_loop(listener: &TcpListener, shared: &Arc<Shared>) {
     for stream in listener.incoming() {
         let stream = match stream {
@@ -193,6 +197,7 @@ fn accept_loop(listener: &TcpListener, shared: &Arc<Shared>) {
     }
 }
 
+/// 一条连接的操作阶段：回答设备列表，或者处理导入请求后进入 URB 阶段。握手阶段有超时，防止空连接一直占着。
 fn serve(mut stream: TcpStream, connection: ConnectionId, shared: &Shared) -> io::Result<()> {
     stream.set_nodelay(true)?;
     stream.set_read_timeout(Some(OP_PHASE_TIMEOUT))?;
@@ -274,6 +279,7 @@ fn admit(
     }
 }
 
+/// 导入成功后的 URB 阶段：把写端交给调度线程，然后在本线程读 URB，直到连接断开或槽位不再导出。
 fn import(mut stream: TcpStream, identity: SlotIdentity, connection: ConnectionId, shared: &Shared) -> io::Result<()> {
     stream.set_read_timeout(Some(EXPORT_CHECK_INTERVAL))?;
     let slot = identity.slot;
@@ -317,6 +323,7 @@ fn import(mut stream: TcpStream, identity: SlotIdentity, connection: ConnectionI
     }
 }
 
+/// 处理一条 URB 命令：取消请求和等时传输转给调度线程，控制请求在这里应答（应答同样经调度线程发出）。
 fn handle_command(
     command: UrbCommand,
     slot: SlotId,

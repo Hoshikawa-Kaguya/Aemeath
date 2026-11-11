@@ -1,10 +1,10 @@
-//! 外部设备的 WASAPI 流（默认独占，ADR-0014）、异步采样率转换（ASRC）桥接，以及主时钟跟随。
+//! 外部设备的 WASAPI 流（默认独占）、异步采样率转换（ASRC）桥接，以及主时钟跟随。
 //!
-//! 每台外部设备一个 IO 线程（ADR-0008 的线程模型），与引擎的调度线程之间只通过无锁环形缓冲（rtrb）交换音频：
+//! 每台外部设备一个 IO 线程，一台设备阻塞或出错不影响其他设备；IO 线程与引擎的调度线程之间只通过无锁环形缓冲（rtrb）交换音频：
 //! - 外部输入：设备 → 转立体声 → ASRC 到引擎采样率 → 环形缓冲 → 调度线程每 1 ms 取一块。
 //! - 外部输出：调度线程每 1 ms 推一块 → 环形缓冲 → ASRC 到设备采样率 → 设备。
 //!
-//! ASRC 的比率由 IO 线程里的 PI 控制器按环形缓冲的水位调整（S5），调度线程不参与。
+//! ASRC 的比率由 IO 线程里的 PI 控制器按环形缓冲的水位调整，调度线程不参与。
 //! 环形缓冲在引擎一侧的那一端被丢弃时（拓扑不再使用这台设备），IO 线程自行关闭设备并退出。
 //! IO 线程每秒把设备时钟的读数写进 [`clock::ClockTap`]，主时钟跟随线程从那里读取。
 
@@ -32,7 +32,7 @@ use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::device::DeviceRequest;
 
-/// 环形缓冲的目标水位（S5 默认值）。外部输入在引擎一侧先攒够这么多才开始读取。
+/// 环形缓冲的目标水位，实测能吸收设备周期抖动又不增加太多延迟。外部输入在引擎一侧先攒够这么多才开始读取。
 pub const TARGET_LEVEL_MS: f64 = 15.0;
 /// 环形缓冲容量（ms），远大于目标水位
 const RING_CAPACITY_MS: usize = 200;
@@ -71,6 +71,7 @@ pub struct BridgeConfig {
 }
 
 impl BridgeConfig {
+    /// 打开设备所需的那部分配置。
     pub fn request(&self, direction: IoDirection) -> DeviceRequest {
         DeviceRequest {
             endpoint: self.endpoint.clone(),

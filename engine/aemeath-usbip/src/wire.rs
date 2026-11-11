@@ -1,15 +1,16 @@
 //! USB/IP 协议 v1.1.1 的报文解析与编码（字段均为大端序）。
 //!
 //! 只处理字节，不做 IO，便于单元测试和模糊测试。这是对外的攻击面：本机任何进程都能连上服务端端口，
-//! 所以所有长度和包数都有上限，越界一律返回 [`WireError`]，调用方应断开连接（ADR-0008）。
+//! 所以所有长度和包数都有上限，越界一律返回 [`WireError`]，调用方应断开连接。
 //!
-//! 报文布局依据 Linux usbip 协议文档，并与已知能配合 usbip-win2 工作的 Virtual-Cables（BSD-2）交叉核对过；
-//! 行为在探针（S3、S4）中实测通过。
+//! 报文布局依据 Linux usbip 协议文档，并与已知能配合 usbip-win2 工作的 Virtual-Cables（BSD-2）交叉核对过，
+//! 并在 Windows 上与 usbip-win2 实际联调通过。
 
 use std::fmt;
 
 use thiserror::Error;
 
+/// 协议版本 1.1.1，usbip-win2 只接受这个版本
 pub const USBIP_VERSION: u16 = 0x0111;
 
 const OP_REQ_DEVLIST: u16 = 0x8005;
@@ -19,6 +20,7 @@ const OP_REP_IMPORT: u16 = 0x0003;
 
 /// 操作阶段的请求头：版本、操作码、状态
 pub const OP_HEADER_LEN: usize = 8;
+/// busid 字段的固定长度，不足部分补零
 pub const BUSID_LEN: usize = 32;
 const PATH_LEN: usize = 256;
 /// 设备路径的前缀；USB/IP 要求填写，Windows 端只用于显示
@@ -78,6 +80,8 @@ pub enum OpRequest {
     Import,
 }
 
+/// 解析连接建立后的第一个请求头，判断主机要列出设备还是导入设备。
+/// 版本不对或操作码不认识时报错，调用方应断开连接。
 pub fn parse_op_header(header: &[u8; OP_HEADER_LEN]) -> Result<OpRequest, WireError> {
     let mut reader = Reader::new(header);
     let version = reader.u16()?;
@@ -107,6 +111,7 @@ impl BusId {
         }
     }
 
+    /// 从报文里补零的定长字段读出 busid；没有结尾的零或不是合法 busid 时报错。
     pub fn parse(raw: &[u8; BUSID_LEN]) -> Result<Self, WireError> {
         let end = raw.iter().position(|byte| *byte == 0).ok_or(WireError::InvalidBusId)?;
         let text = std::str::from_utf8(&raw[..end]).map_err(|_| WireError::InvalidBusId)?;
@@ -135,7 +140,7 @@ impl fmt::Display for BusId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OpStatus {
     Ok,
-    /// 设备忙：已经被导入（ADR-0007：用于区分残留的后台重连）
+    /// 设备忙：已经被导入（用于区分残留的后台重连）
     DeviceBusy,
     /// 没有这台设备，或者它没有被导出（槽位没有被占用）
     NoDevice,
@@ -192,6 +197,7 @@ fn put_device_record(out: &mut Vec<u8>, record: &DeviceRecord) {
     out.push(u8::try_from(record.interfaces.len()).unwrap_or(u8::MAX));
 }
 
+/// 编码导入请求的应答。只有成功时才附带设备记录，失败时只有状态码。
 pub fn encode_import_reply(status: OpStatus, record: Option<&DeviceRecord>) -> Vec<u8> {
     let mut out = Vec::new();
     put_u16(&mut out, USBIP_VERSION);
@@ -203,6 +209,7 @@ pub fn encode_import_reply(status: OpStatus, record: Option<&DeviceRecord>) -> V
     out
 }
 
+/// 编码设备列表的应答：每台设备一条记录，后面跟它的各个接口。
 pub fn encode_devlist_reply(records: &[DeviceRecord]) -> Vec<u8> {
     let mut out = Vec::new();
     put_u16(&mut out, USBIP_VERSION);
@@ -259,14 +266,13 @@ impl Submit {
     }
 }
 
+/// URB 阶段主机发来的一条命令。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UrbCommand {
+    /// 主机提交一个 URB，等设备完成后应答
     Submit(Submit),
     /// 主机取消一个尚未完成的 URB
-    Unlink {
-        seq: u32,
-        target_seq: u32,
-    },
+    Unlink { seq: u32, target_seq: u32 },
 }
 
 /// URB 阶段的增量解码器：可以按任意大小分块喂入字节。
@@ -280,6 +286,7 @@ impl UrbDecoder {
         Self::default()
     }
 
+    /// 追加从连接读到的字节，之后用 [`Self::next_command`] 取出完整的命令。
     pub fn push(&mut self, bytes: &[u8]) {
         self.buffer.extend_from_slice(bytes);
     }
@@ -308,6 +315,7 @@ impl UrbDecoder {
         }
     }
 
+    /// 解析 SUBMIT 的剩余部分（数据和等时包描述）。数据还没收全时返回 `Ok(None)`，缓冲保持不动等下次再试。
     fn next_submit(
         &mut self,
         header: &mut Reader<'_>,
@@ -395,6 +403,7 @@ pub enum UrbStatus {
 }
 
 impl UrbStatus {
+    /// 写进应答的状态码：沿用 Linux 的负 errno，usbip-win2 按它判断 URB 的结果。
     pub fn code(self) -> i32 {
         match self {
             Self::Ok => 0,
@@ -417,6 +426,7 @@ pub struct RetSubmit<'a> {
     pub data: &'a [u8],
 }
 
+/// 编码一个 URB 的完成应答。实时路径请用 [`encode_ret_submit_into`]，可以复用缓冲、不分配内存。
 pub fn encode_ret_submit(reply: &RetSubmit<'_>) -> Vec<u8> {
     let mut out = Vec::new();
     encode_ret_submit_into(reply, &mut out);
@@ -460,6 +470,7 @@ pub fn encode_ret_submit_into(reply: &RetSubmit<'_>, out: &mut Vec<u8>) {
     }
 }
 
+/// 编码取消请求的应答。`status` 说明被取消的 URB 是否还没完成。
 pub fn encode_ret_unlink(seq: u32, status: UrbStatus) -> Vec<u8> {
     let mut out = Vec::with_capacity(URB_HEADER_LEN);
     put_u32(&mut out, RET_UNLINK);

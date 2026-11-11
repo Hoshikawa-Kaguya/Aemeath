@@ -1,4 +1,4 @@
-// 悬停即可用滚轮调增益（连线标签、路由矩阵的格子；维护者 2026-11-08 要求不必先点击选中）。
+// 悬停即可用滚轮调增益（连线标签、路由矩阵的格子），不必先点击选中。
 //
 // 防误触：区分一次滚动是从哪里开始的。
 // - 指针先停在目标上，再开始滚动：这次滚动属于目标，调增益；
@@ -28,6 +28,7 @@ export interface HoverWheel {
   accepts(): boolean
 }
 
+/** 为一个目标（一个标签或一个格子）建立判断状态 */
 export function createHoverWheel(): HoverWheel {
   /** 进入目标时，另一次滚动正在进行 */
   let inheritedGesture = false

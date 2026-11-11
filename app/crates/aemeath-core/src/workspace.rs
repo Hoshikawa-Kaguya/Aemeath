@@ -1,7 +1,7 @@
 //! 工作台：节点、连线与引擎设置，以及对它们的全部编辑操作。
 //!
 //! 字段只能通过方法修改，以保证规则始终成立：
-//! - 每个槽位最多被一个节点占用，方向与节点类型一致（ADR-0009）；新建虚拟节点时自动分配编号最小的空闲槽位。
+//! - 每个槽位最多被一个节点占用，方向与节点类型一致；新建虚拟节点时自动分配编号最小的空闲槽位。
 //! - 同一个外部设备在同一方向上只对应一个节点。
 //! - 连线规则与路由拓扑校验相同（[`topology::check_route`]）；拒绝时给出原因，供工作台拖线时提示。
 //! - 节点 ID 只增不减、不复用（引擎换拓扑时按 ID 接过旧状态，复用 ID 会让新节点继承旧节点的增益）。
@@ -23,6 +23,7 @@ use crate::model::{DeviceRef, EngineSettings, LabelPosition, Node, NodeKind, Nod
 /// 第一个节点的 ID
 const FIRST_NODE_ID: u32 = 1;
 
+/// 用户编辑的工作台：节点、连线、控制台和引擎设置。所有修改都经这里的方法，规则见模块说明。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Workspace {
@@ -45,7 +46,7 @@ pub enum NodeSpec {
     VirtualOutput(Option<SlotNumber>),
     Bus,
     AppSource(ProgramPath),
-    /// 外部插入：取回端设备；送出端槽位不指定时自动分配（M3 计划 X1）
+    /// 外部插入：取回端设备；送出端槽位不指定时自动分配
     ExternalInsert {
         ret: DeviceRef,
         send: Option<SlotNumber>,
@@ -112,6 +113,7 @@ impl Workspace {
         &self.console
     }
 
+    /// 节点是否固定在控制台上。
     pub fn is_pinned(&self, id: NodeId) -> bool {
         self.console.contains(&id)
     }
@@ -125,6 +127,7 @@ impl Workspace {
         Ok(())
     }
 
+    /// 从控制台上取下；没固定时不变。
     pub fn unpin(&mut self, id: NodeId) {
         self.console.retain(|pinned| *pinned != id);
     }
@@ -172,6 +175,8 @@ impl Workspace {
         self.nodes.iter().filter_map(|node| node.kind.slot())
     }
 
+    /// 添加节点并返回它的 ID。虚拟节点没指定槽位时自动分配编号最小的空闲槽位；
+    /// 设备或程序已被其他节点占用、槽位不可用时报错，工作台不变。
     pub fn add_node(&mut self, name: NodeName, spec: NodeSpec, position: Position) -> Result<NodeId, EditError> {
         let kind = match spec {
             NodeSpec::ExternalInput(device) => {
@@ -239,11 +244,13 @@ impl Workspace {
         Ok(self.nodes.remove(index))
     }
 
+    /// 改名。节点名允许重复，靠代号区分。
     pub fn rename_node(&mut self, id: NodeId, name: NodeName) -> Result<(), EditError> {
         self.node_mut(id)?.name = name;
         Ok(())
     }
 
+    /// 移动节点在工作台上的位置。
     pub fn move_node(&mut self, id: NodeId, position: Position) -> Result<(), EditError> {
         self.node_mut(id)?.position = position;
         Ok(())
@@ -259,7 +266,7 @@ impl Workspace {
         Ok(())
     }
 
-    /// 让外部设备节点改用另一个端点（按名称的后备匹配，或用户从同名候选中选定；选型报告 6.5 节）。
+    /// 让外部设备节点改用另一个端点（按名称的后备匹配，或用户从同名候选中选定）。
     /// 设备设置、通道条、连线都保留。
     pub fn replace_device(&mut self, id: NodeId, device: DeviceRef) -> Result<(), EditError> {
         let role = self.node(id).ok_or(EditError::UnknownNode(id))?.kind.endpoint_role();
@@ -280,7 +287,7 @@ impl Workspace {
         Ok(())
     }
 
-    /// 设定外部设备节点的设备设置（独占、格式、缓冲、重采样算法，ADR-0014）。
+    /// 设定外部设备节点的设备设置（独占、格式、缓冲、重采样算法）。
     pub fn set_device_settings(&mut self, id: NodeId, settings: DeviceSettings) -> Result<(), EditError> {
         let node = self.node_mut(id)?;
         if !node.kind.is_external() {
@@ -321,7 +328,7 @@ impl Workspace {
         Ok(())
     }
 
-    /// 设定占用槽位的节点的格式与重采样算法（M4 计划 F1）。
+    /// 设定占用槽位的节点的格式与重采样算法。
     pub fn set_slot_settings(&mut self, id: NodeId, settings: SlotNodeSettings) -> Result<(), EditError> {
         let node = self.node_mut(id)?;
         if node.kind.slot().is_none() {
@@ -339,7 +346,7 @@ impl Workspace {
             .collect()
     }
 
-    /// 让虚拟节点改占另一个同方向的槽位（节点配置中改选，ADR-0009）。
+    /// 让虚拟节点改占另一个同方向的槽位（节点配置中改选）。
     pub fn change_slot(&mut self, id: NodeId, number: SlotNumber) -> Result<(), EditError> {
         let direction = self
             .node(id)
@@ -400,16 +407,19 @@ impl Workspace {
         Ok(())
     }
 
+    /// 设定连线的发送增益。
     pub fn set_route_gain(&mut self, from: NodeId, to: NodeId, gain: GainDb) -> Result<(), EditError> {
         self.route_mut(from, to)?.gain = gain;
         Ok(())
     }
 
+    /// 开关连线。关闭的连线保留增益，只是不送声音。
     pub fn set_route_enabled(&mut self, from: NodeId, to: NodeId, enabled: bool) -> Result<(), EditError> {
         self.route_mut(from, to)?.enabled = enabled;
         Ok(())
     }
 
+    /// 设定连线标签在连线上的位置。只影响显示。
     pub fn set_route_label(&mut self, from: NodeId, to: NodeId, position: LabelPosition) -> Result<(), EditError> {
         self.route_mut(from, to)?.label_position = position;
         Ok(())
@@ -427,6 +437,7 @@ impl Workspace {
         Ok(())
     }
 
+    /// 同一台外部设备在同一方向上只能被一个节点使用，否则两个 IO 线程会争用它。
     fn check_device(&self, device: &DeviceRef, role: NodeRole) -> Result<(), EditError> {
         let existing = self.nodes.iter().find(|node| {
             node.kind.endpoint_role() == Some(role)
@@ -438,7 +449,7 @@ impl Workspace {
         }
     }
 
-    /// 每个程序只能有一个应用源（M3 计划 A6）；`except` 是正在改绑的节点自己。
+    /// 每个程序只能有一个应用源；`except` 是正在改绑的节点自己。
     fn check_program(&self, program: &ProgramPath, except: Option<NodeId>) -> Result<(), EditError> {
         let existing = self
             .nodes
@@ -450,6 +461,7 @@ impl Workspace {
         }
     }
 
+    /// 为新节点挑槽位：指定了编号就检查它是否空闲，否则取编号最小的空闲槽位。
     fn claim_slot(&self, direction: SlotDirection, number: Option<SlotNumber>) -> Result<SlotId, EditError> {
         let Some(number) = number else {
             return self.free_slot(direction).ok_or(EditError::NoFreeSlot(direction));

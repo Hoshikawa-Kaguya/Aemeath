@@ -1,4 +1,4 @@
-//! 虚拟设备清理（ADR-0009、ADR-0012，M4 计划 C1–C4、W4）。
+//! 虚拟设备清理。
 //!
 //! 卸载钩子有 30 秒时限，用户多久点 UAC 无法预知，所以钩子只启动提权进程、不等待。
 //! 提权进程跑在临时目录里的副本上：卸载程序随后要删除安装目录，不能占着里面的 exe。
@@ -25,7 +25,7 @@ const POLL_INTERVAL: Duration = Duration::from_millis(250);
 const OWN_EXECUTABLES: [&str; 3] = ["aemeath.exe", "aemeath-host.exe", "aemeath-app.exe"];
 const EXIT_REMOVAL_FAILED: u8 = 93;
 
-/// 卸载钩子：把自己复制到临时目录，提权启动清理，不等待（C1）。UAC 选"否"就保留设备，卸载继续（C3）。
+/// 卸载钩子：把自己复制到临时目录，提权启动清理，不等待。UAC 选"否"就保留设备，卸载继续。
 pub fn launch_from_temp() {
     // 在这里删而不是提权进程里：Run 键属于当前用户，提权后可能换成管理员账户的 HKCU
     let _ = autostart::disable();
@@ -56,6 +56,7 @@ fn others_running(processes: &[ProcessEntry], own_id: u32) -> bool {
     })
 }
 
+/// 等其他 Aemeath 进程退出，最多等一段时间。它们还挂着设备时，卸载会失败或留下残留。
 fn wait_for_exit() {
     let own_id = std::process::id();
     let started = Instant::now();
@@ -72,7 +73,7 @@ fn wait_for_exit() {
     warn!("Aemeath is still running after the wait, removing the devices anyway");
 }
 
-/// 提权进程的主体（C2、W4）。
+/// 提权进程的主体。
 pub fn run(identity: IdentityProfile) -> ExitCode {
     let data_dir = identity.default_data_dir();
     let _logs = data_dir

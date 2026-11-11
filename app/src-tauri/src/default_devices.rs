@@ -1,5 +1,5 @@
 //! 工具页的"系统默认设备"（GLOSSARY：工具页）：两个方向的活动端点，以及 Windows 当前的默认设备、默认通信设备。
-//! 只改 Windows 的设置，不记录、不还原。被 Aemeath 独占的设备不可选（2026-11-08 维护者决定）。
+//! 只改 Windows 的设置，不记录、不还原。被 Aemeath 独占的设备不可选。
 
 use aemeath_control::audio_policy::EndpointEntry;
 use aemeath_core::model::NodeKind;
@@ -27,6 +27,7 @@ pub struct DefaultDeviceView {
 }
 
 impl DefaultDevicesView {
+    /// 列出两个方向的端点，并标出被 Aemeath 独占、不能设为默认的设备。
     pub fn new(render: Vec<EndpointEntry>, capture: Vec<EndpointEntry>, workspace: &Workspace) -> Self {
         let convert = |entries: Vec<EndpointEntry>, output: bool| -> Vec<DefaultDeviceView> {
             entries

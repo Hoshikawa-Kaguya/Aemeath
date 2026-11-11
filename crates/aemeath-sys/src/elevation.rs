@@ -1,4 +1,4 @@
-//! 提权：当前进程是否以管理员身份运行（卸载设备实例需要，ADR-0009），以及用 UAC 提权启动另一个进程（ADR-0011）。
+//! 提权：当前进程是否以管理员身份运行（卸载设备实例需要），以及用 UAC 提权启动另一个进程。
 
 use std::ffi::c_void;
 use std::io;
@@ -69,6 +69,7 @@ pub fn run_elevated(program: &Path, arguments: &str) -> Result<ElevatedProcess, 
     }
 }
 
+/// 当前进程是否以管理员身份运行（UAC 提权后的令牌）。
 pub fn is_elevated() -> io::Result<bool> {
     let token = Token::current_process()?;
     let mut elevation = TOKEN_ELEVATION::default();

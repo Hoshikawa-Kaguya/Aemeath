@@ -1,4 +1,4 @@
-//! 端点的共享模式格式：通过未公开的 `IPolicyConfig` 读取和设定（S2）。
+//! 端点的共享模式格式：通过未公开的 `IPolicyConfig` 读取和设定。
 //!
 //! - 不需要管理员权限；设定后立即生效，拔出再插回后保留。
 //! - 端点上已有的流会被作废（`AUDCLNT_E_DEVICE_INVALIDATED`），所以应在端点还没被应用使用时设定，
@@ -74,6 +74,7 @@ pub enum FormatError {
     Unsupported,
 }
 
+/// 读写端点共享模式格式的入口。
 pub struct PolicyConfig {
     config: IPolicyConfig,
 }
@@ -85,6 +86,7 @@ impl std::fmt::Debug for PolicyConfig {
 }
 
 impl PolicyConfig {
+    /// 创建 COM 对象。调用线程须持有 [`crate::com::ComApartment`]。
     pub fn new() -> windows::core::Result<Self> {
         // SAFETY: 标准的 COM 创建调用；调用线程须已初始化 COM（见模块说明）
         let config = unsafe { CoCreateInstance(&POLICY_CONFIG_CLIENT, None, CLSCTX_ALL)? };
@@ -122,7 +124,7 @@ impl PolicyConfig {
         Ok(())
     }
 
-    /// 设定端点的设备格式（只支持立体声，v1 的槽位都是立体声）。
+    /// 设定端点的设备格式（只支持立体声，槽位都是立体声）。
     pub fn set_device_format(&self, endpoint_id: &str, format: DeviceFormat) -> Result<(), FormatError> {
         if format.channels != STEREO_CHANNELS {
             return Err(FormatError::Unsupported);
@@ -202,6 +204,7 @@ fn layout_of(format: SampleFormat) -> (bool, u16, u16) {
     }
 }
 
+/// 把设备格式写成 `WAVEFORMATEXTENSIBLE`，这是设定共享格式时 Windows 要求的写法。
 fn to_extensible(format: DeviceFormat) -> WAVEFORMATEXTENSIBLE {
     let (is_float, container_bits, valid_bits) = layout_of(format.sample_format);
     let block_align = format.channels * container_bits / BITS_PER_BYTE;

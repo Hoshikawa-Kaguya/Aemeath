@@ -1,4 +1,4 @@
-//! 进程快照、进程路径、进程退出检测与文件说明（应用源按路径寻找进程，M3 计划 A1、A7、A11）。
+//! 进程快照、进程路径、进程退出检测与文件说明（应用源按路径寻找进程）。
 
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
@@ -82,12 +82,14 @@ pub struct ProcessExit {
 unsafe impl Send for ProcessExit {}
 
 impl ProcessExit {
+    /// 打开进程句柄，只请求等待退出所需的权限。进程已经退出或无权访问时报错。
     pub fn open(process_id: u32) -> windows::core::Result<Self> {
         // SAFETY: 只请求等待所需的权限；句柄在 Drop 中关闭
         let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, process_id)? };
         Ok(Self { handle })
     }
 
+    /// 进程是否已经退出，不阻塞。
     pub fn has_exited(&self) -> bool {
         // SAFETY: handle 在 self 存活期间有效；超时为 0，不阻塞
         unsafe { WaitForSingleObject(self.handle, 0) == WAIT_OBJECT_0 }

@@ -1,6 +1,6 @@
 # aemeath-host
 
-引擎进程（`aemeath-host.exe`）：组装引擎与 USB/IP 服务端，在命名管道上与主程序通信，写日志，缓存最近一份路由拓扑并在启动时先恢复出声（ADR-0003、ADR-0008）。
+引擎进程（`aemeath-host.exe`）：组装引擎与 USB/IP 服务端，在命名管道上与主程序通信，写日志，缓存最近一份路由拓扑并在启动时先恢复出声。
 
 ```
 aemeath-host [--data-dir <目录>] [--usbip-port <端口>] [--pipe <管道名>] [--meters <共享内存名>]
@@ -12,7 +12,7 @@ aemeath-host [--data-dir <目录>] [--usbip-port <端口>] [--pipe <管道名>] 
 
 | 项 | 默认 |
 |---|---|
-| 数据目录 | `%APPDATA%\Aemeath Dev`（M4 加入正式身份后，正式版为 `%APPDATA%\Aemeath`；便携版由守护进程传入 `data\`） |
+| 数据目录 | `%APPDATA%\Aemeath Dev`（正式版为 `%APPDATA%\Aemeath`，安装版和便携版相同） |
 | USB/IP 端口 | 32410（经守护进程启动时由它决定） |
 | 管道名 | `\\.\pipe\Aemeath.Dev.Engine.<当前用户 SID>` |
 | 电平共享内存 | `Local\Aemeath.Dev.Meters.<当前用户 SID>` |

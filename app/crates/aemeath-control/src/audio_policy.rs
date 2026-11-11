@@ -1,4 +1,4 @@
-//! Windows 音频策略：应用页的会话与按应用指派（选型报告 5.5 节、S7），工具页的系统默认设备。
+//! Windows 音频策略：应用页的会话与按应用指派，工具页的系统默认设备。
 //!
 //! 线程模型：COM 对象只能在创建它的线程上使用，所以由一个专用线程持有（MTA），其他代码经请求通道访问。
 //! 按应用指派的激活工厂第一次使用时才创建（创建失败只影响应用页）。
@@ -77,6 +77,7 @@ pub struct AudioPolicy {
 }
 
 impl AudioPolicy {
+    /// 启动专用的 COM 线程，等它初始化成功后返回。之后所有调用都排进这个线程执行，调用方不必关心 COM。
     pub fn start() -> Result<Self, PolicyError> {
         let (requests, receiver) = std_mpsc::channel();
         let (ready, started) = std_mpsc::channel();
@@ -93,7 +94,7 @@ impl AudioPolicy {
         self.ask(Request::Sessions).await
     }
 
-    /// 把进程的默认播放端点指派为 `endpoint_id`；None 表示恢复为跟随系统默认。进程须正在运行并有音频会话（S7）。
+    /// 把进程的默认播放端点指派为 `endpoint_id`；None 表示恢复为跟随系统默认。进程须正在运行并有音频会话。
     pub async fn set_landing(&self, process_id: u32, endpoint_id: Option<String>) -> Result<(), PolicyError> {
         self.ask(|reply| Request::SetLanding {
             process_id,
@@ -103,7 +104,7 @@ impl AudioPolicy {
         .await
     }
 
-    /// 进程当前的持久指派；没有指派时为 None。进程须正在运行并有音频会话（S7）。
+    /// 进程当前的持久指派；没有指派时为 None。进程须正在运行并有音频会话。
     pub async fn landing(&self, process_id: u32) -> Result<Option<String>, PolicyError> {
         self.ask(|reply| Request::Landing { process_id, reply }).await
     }
@@ -141,6 +142,7 @@ struct Worker {
     routing: Option<AppRouting>,
 }
 
+/// COM 线程的主体：建好 COM 对象后报告就绪，然后逐个执行请求，直到请求通道关闭。
 fn worker(requests: std_mpsc::Receiver<Request>, ready: std_mpsc::Sender<Result<(), PolicyError>>) {
     let setup = || -> Result<(ComApartment, Worker), PolicyError> {
         let com = ComApartment::multithreaded()?;
@@ -211,6 +213,7 @@ impl Worker {
             .collect())
     }
 
+    /// 用到时才创建按应用指派的接口：它是未公开接口，建不起来时不影响其他功能。
     fn routing(&mut self) -> Result<&AppRouting, PolicyError> {
         Ok(match &mut self.routing {
             Some(routing) => routing,

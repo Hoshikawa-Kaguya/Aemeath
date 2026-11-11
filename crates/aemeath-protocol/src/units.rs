@@ -93,7 +93,7 @@ impl From<GateThreshold> for f32 {
 )]
 pub struct GateThresholdError(pub f32);
 
-/// 独占模式的缓冲（设备周期），单位 ms（ADR-0014：用户可以自定义）。
+/// 独占模式的缓冲（设备周期），单位 ms（用户可以自定义）。
 ///
 /// 范围只用来拒绝异常值：实际使用时还会被限制到设备的最小周期以上，并按设备要求对齐。
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
@@ -142,7 +142,7 @@ pub struct SampleRate(u32);
 
 impl SampleRate {
     pub const MIN_HZ: u32 = 8_000;
-    /// 独占模式实测可到 768 kHz（选型报告 6.3 节）
+    /// 独占模式实测可到 768 kHz
     pub const MAX_HZ: u32 = 768_000;
     /// 最常用的采样率，用作各处的初始值
     pub const HZ_48000: Self = Self(48_000);

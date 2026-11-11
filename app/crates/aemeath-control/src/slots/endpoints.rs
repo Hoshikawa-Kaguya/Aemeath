@@ -108,7 +108,7 @@ impl EndpointProbe {
     }
 
     /// 把端点的设备格式改成指定的采样率和样本格式（`sample_format` 为 None 时不变），返回设定后的格式。
-    /// 端点上已有的流会被作废（S2），正在使用这个设备的应用会短暂断开。
+    /// 端点上已有的流会被作废，正在使用这个设备的应用会短暂断开。
     pub async fn set_format(
         &self,
         endpoint_id: String,
@@ -148,6 +148,7 @@ struct Worker {
     _watcher: EndpointWatcher,
 }
 
+/// COM 线程的主体：建好 COM 对象并订阅端点变化后报告就绪，然后逐个执行请求，直到请求通道关闭。
 fn worker(
     slots: Vec<SlotIdentity>,
     on_change: impl Fn() + Send + Sync + 'static,
@@ -271,6 +272,7 @@ impl Worker {
             .is_some_and(|name| self.slots.iter().any(|identity| identity.product_name == name))
     }
 
+    /// 把端点的共享格式设成指定采样率；不指定样本格式时保留当前的。返回设定后的格式。
     fn set_format(
         &self,
         endpoint_id: &str,

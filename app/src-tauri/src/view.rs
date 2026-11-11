@@ -55,15 +55,15 @@ pub struct NoticeView {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum NoticeKind {
-    /// 录音出错，这一路已停止（M3 计划 R10）
+    /// 录音出错，这一路已停止
     RecordingFailed { node: String, reason: RecordingFailureView },
-    /// 外部设备换了端点 ID（例如换了 USB 口），已按名称自动改用（选型报告 6.5 节）
+    /// 外部设备换了端点 ID（例如换了 USB 口），已按名称自动改用
     DeviceReplaced { node: String, device: String },
-    /// 程序的持久指派被别处改过，已放回 Aemeath 记录的落点（M3 计划 L1）
+    /// 程序的持久指派被别处改过，已放回 Aemeath 记录的落点
     LandingRestored { app: String, landing: String },
 }
 
-/// 一处重复路由（M3 计划 L4）的说明。
+/// 一处重复路由的说明。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DuplicateView {
@@ -86,6 +86,7 @@ pub enum EngineState {
 }
 
 impl EngineState {
+    /// 连接断开后显示的引擎状态：无响应和版本不符单独提示，其余都显示为正在连接。
     pub fn after_disconnect(reason: &DisconnectReason) -> Self {
         match reason {
             DisconnectReason::Unresponsive => Self::Unresponsive,
@@ -97,7 +98,7 @@ impl EngineState {
     }
 }
 
-/// 界面外观（M4 计划 1.11 节）。
+/// 界面外观。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppearanceView {
@@ -226,7 +227,7 @@ pub struct NodeView {
     pub muted: bool,
     /// 门限阈值（dBFS）；None 表示关。只有输入节点会有
     pub gate_db: Option<f32>,
-    /// 外部设备节点的设备设置（ADR-0014）
+    /// 外部设备节点的设备设置
     pub io: Option<DeviceSettingsView>,
     /// 占用槽位的节点的格式与重采样算法
     pub slot_settings: Option<SlotSettingsView>,
@@ -274,6 +275,7 @@ pub enum OfflineReasonView {
 }
 
 impl NodeStatus {
+    /// 外部设备或应用源节点的状态；引擎还没报告时为等待中。
     pub fn of_endpoint(status: Option<&EndpointStatus>) -> Self {
         match status {
             Some(EndpointStatus::Online { .. }) => Self::Ok,
@@ -291,6 +293,7 @@ impl NodeStatus {
         }
     }
 
+    /// 虚拟节点的状态，取自它所占槽位的挂载状态。
     pub fn of_slot(health: Option<SlotHealth>) -> Self {
         match health {
             Some(SlotHealth::Healthy) => Self::Ok,
@@ -437,6 +440,7 @@ impl SlotView {
     }
 }
 
+/// 节点类型在界面上的表示，只保留类型，不带设备或槽位。
 pub fn kind_view(kind: &NodeKind) -> NodeKindView {
     match kind {
         NodeKind::ExternalInput { .. } => NodeKindView::ExternalInput,

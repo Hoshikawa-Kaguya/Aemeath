@@ -6,7 +6,7 @@ import type { BufferChoice, Capabilities, DeviceSettings, FormatView } from '@/a
 import { formatKhz } from '@/format/format'
 import ResamplerField from './ResamplerField.vue'
 
-// 外部设备节点的设备设置（ADR-0014），添加节点和节点设置两个对话框共用：
+// 外部设备节点的设备设置，添加节点和节点设置两个对话框共用：
 // 独占（默认勾选）、独占时的格式与缓冲、按节点覆盖的重采样算法。可选的格式和周期由引擎探测设备得到。
 const props = defineProps<{ endpointId: string | null; direction: 'input' | 'output' }>()
 const settings = defineModel<DeviceSettings>({ required: true })

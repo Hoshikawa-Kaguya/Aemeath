@@ -6,7 +6,7 @@ import { useAppStore } from '@/stores/app'
 import { describeTarget } from './hotkeyLabels'
 import HotkeyField from './HotkeyField.vue'
 
-// 连线的专属热键：从连线和路由矩阵格子的右键菜单打开（M3 计划 H2）。
+// 连线的专属热键：从连线和路由矩阵格子的右键菜单打开。
 interface FluentDialog extends HTMLElement {
   show(): void
   hide(): void

@@ -1,4 +1,4 @@
-//! 最近一份路由拓扑的缓存（ADR-0008：引擎重启后先按缓存恢复出声，再等主程序下发最新拓扑）。
+//! 最近一份路由拓扑的缓存（引擎重启后先按缓存恢复出声，再等主程序下发最新拓扑）。
 //!
 //! 先写临时文件再改名，进程在写入中途被结束时不会留下半份拓扑。读取时重新校验，不信任磁盘上的内容。
 
@@ -11,6 +11,7 @@ const CACHE_FOLDER: &str = "engine";
 const CACHE_FILE: &str = "topology.json";
 const TEMP_FILE: &str = "topology.json.tmp";
 
+/// 数据目录下 `engine\topology.json` 的读写。
 #[derive(Debug, Clone)]
 pub struct TopologyCache {
     folder: PathBuf,
@@ -48,6 +49,7 @@ impl TopologyCache {
         Some(topology)
     }
 
+    /// 保存收到的拓扑，下次启动时先按它恢复出声。
     pub fn save(&self, topology: &RouteTopology) -> io::Result<()> {
         std::fs::create_dir_all(&self.folder)?;
         let temp = self.folder.join(TEMP_FILE);

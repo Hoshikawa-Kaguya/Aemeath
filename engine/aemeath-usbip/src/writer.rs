@@ -76,6 +76,7 @@ impl ConnectionWriter {
     }
 }
 
+/// 写线程：按顺序把应答写进连接，用完的缓冲还给调度线程复用。写失败就标记连接已放弃并关闭它。
 fn run(mut stream: TcpStream, pending: &Receiver<Outgoing>, give_back: &SyncSender<Vec<u8>>, abandoned: &AtomicBool) {
     if let Err(error) = raise_current_thread() {
         tracing::warn!(%error, "cannot raise the USB/IP writer thread priority");

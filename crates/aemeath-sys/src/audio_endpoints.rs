@@ -73,6 +73,7 @@ impl std::fmt::Debug for AudioEndpoints {
 }
 
 impl AudioEndpoints {
+    /// 创建 COM 对象。调用线程须持有 [`crate::com::ComApartment`]。
     pub fn new() -> windows::core::Result<Self> {
         // SAFETY: 标准的 COM 创建调用；调用线程须已初始化 COM（见模块说明）
         let enumerator = unsafe { CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)? };

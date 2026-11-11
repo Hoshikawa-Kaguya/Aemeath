@@ -1,4 +1,4 @@
-//! 热键的真机验证（M3 计划 E2E 第 5 项）：用 `SendInput` 注入按键，检查切换型、按住型、鼠标侧键和占用检测。
+//! 在本机上验证热键：用 `SendInput` 注入按键，检查切换型、按住型、鼠标侧键和占用检测。
 //!
 //! 用法：`cargo run -p aemeath-control --example hotkey-check`。
 

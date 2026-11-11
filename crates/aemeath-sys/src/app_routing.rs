@@ -1,6 +1,6 @@
-//! 按应用指派默认播放端点（"应用音量和设备首选项"背后的未公开接口 `IAudioPolicyConfigFactory`，S7）。
+//! 按应用指派默认播放端点（"应用音量和设备首选项"背后的未公开接口 `IAudioPolicyConfigFactory`）。
 //!
-//! S7 的实测约束：
+//! 实测得到的约束：
 //! - 指派按可执行文件持久保存，对这个程序以后的每次启动都生效；
 //! - 读写都要求目标进程正在运行并且已有音频会话，否则返回 `E_INVALIDARG`；
 //! - 已在播放的流不一定被转移：启动时就把默认设备解析成具体端点的程序，要重启后才生效；
@@ -24,7 +24,7 @@ const ASSIGNED_ROLES: [ERole; 2] = [eConsole, eMultimedia];
 
 /// 方法顺序就是虚表顺序，不能调整；不用的方法只占位置，绝不调用。
 /// 它本是 IInspectable 接口；`#[interface]` 不支持以 IInspectable 为基接口，所以按 IUnknown 声明，
-/// 并把 IInspectable 的 3 个方法写成占位（与 S7 的 C# 声明相同）。
+/// 并把 IInspectable 的 3 个方法写成占位。
 #[interface("ab3d4648-e242-459f-b02f-541c70306324")]
 unsafe trait IAudioPolicyConfigFactory: IUnknown {
     fn get_iids(&self) -> HRESULT;
@@ -67,6 +67,7 @@ unsafe trait IAudioPolicyConfigFactory: IUnknown {
     ) -> HRESULT;
 }
 
+/// 按应用指派的读写入口。
 pub struct AppRouting {
     factory: IAudioPolicyConfigFactory,
 }
@@ -78,6 +79,7 @@ impl std::fmt::Debug for AppRouting {
 }
 
 impl AppRouting {
+    /// 创建 COM 对象。调用线程须持有 [`crate::com::ComApartment`]。
     pub fn new() -> windows::core::Result<Self> {
         // SAFETY: 标准的 WinRT 激活工厂调用；调用线程须已初始化 COM（见模块说明）
         let factory = unsafe { RoGetActivationFactory(&HSTRING::from(ACTIVATABLE_CLASS))? };

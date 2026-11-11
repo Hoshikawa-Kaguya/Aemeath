@@ -1,4 +1,4 @@
-//! 全局热键与低级输入钩子（M3 计划 2.6）。
+//! 全局热键与低级输入钩子。
 //!
 //! 线程模型：`RegisterHotKey` 和 `SetWindowsHookExW` 都绑定调用线程，消息要在这个线程上取，所以由一个专用线程持有。
 //! 钩子回调里只把事件投进通道然后立即返回：回调超时的钩子会被 Windows 静默移除。
@@ -29,6 +29,7 @@ const HIGH_WORD_SHIFT: u32 = 16;
 /// 让消息循环去处理命令队列
 const WM_WAKE: u32 = WM_APP + 1;
 
+/// 鼠标侧键：X1 通常是"后退"，X2 通常是"前进"。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SideButton {
     X1,
@@ -71,6 +72,7 @@ enum Command {
 /// 钩子回调用的全局通道。钩子回调没有用户数据参数，只能走全局；整个进程只有一个输入线程。
 static RAW_SINK: OnceLock<Sender<RawInput>> = OnceLock::new();
 
+/// 把原始输入交给转发方。钩子回调必须尽快返回，所以这里只发送，不做任何处理。
 fn emit(input: RawInput) {
     if let Some(sink) = RAW_SINK.get() {
         let _ = sink.send(input);
@@ -168,6 +170,7 @@ impl InputThread {
         result.recv().unwrap_or(false)
     }
 
+    /// 注销一个热键；`id` 是注册时用的编号。
     pub fn unregister(&self, id: i32) {
         self.send(Command::Unregister(id));
     }
@@ -194,7 +197,7 @@ fn send_input(input: INPUT) -> u32 {
     unsafe { SendInput(&[input], size_of::<INPUT>() as i32) }
 }
 
-/// 注入一次键盘按键（只用于真机验证）。返回实际注入的事件数。
+/// 注入一次键盘按键，只供热键的验证示例使用。返回实际注入的事件数。
 pub fn inject_key(vk: u32, down: bool) -> u32 {
     send_input(INPUT {
         r#type: INPUT_KEYBOARD,
@@ -210,7 +213,7 @@ pub fn inject_key(vk: u32, down: bool) -> u32 {
     })
 }
 
-/// 注入一次鼠标侧键（只用于真机验证）。返回实际注入的事件数。
+/// 注入一次鼠标侧键，只供热键的验证示例使用。返回实际注入的事件数。
 pub fn inject_side_button(button: SideButton, down: bool) -> u32 {
     send_input(INPUT {
         r#type: INPUT_MOUSE,
@@ -254,6 +257,7 @@ struct Hooks {
 }
 
 impl Hooks {
+    /// 按需安装或卸载键盘、鼠标的低级钩子；已是目标状态的不动。
     fn set(&mut self, keyboard: bool, mouse: bool) -> windows::core::Result<()> {
         // SAFETY: 取本进程的模块句柄，不增加引用计数
         let module: HINSTANCE = unsafe { GetModuleHandleW(None)? }.into();
@@ -284,6 +288,7 @@ impl Hooks {
     }
 }
 
+/// 输入线程的消息循环。热键注册和钩子都绑定在线程上，所以全部在这个线程里做；其他线程的命令经消息唤醒后处理。
 fn run(commands: &Receiver<Command>, ready: &Sender<u32>) {
     let mut message = MSG::default();
     // SAFETY: 让系统为本线程建立消息队列，之后 PostThreadMessageW 才不会失败

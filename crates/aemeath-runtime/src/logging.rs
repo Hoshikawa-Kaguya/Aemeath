@@ -1,8 +1,8 @@
 //! 日志：写入数据目录下的 `logs\`，每个进程一组文件（`engine.<日期>.log`、`app.<日期>.log`……），
 //! 按天轮转，保留 15 天；同时输出到标准错误（开发时在控制台查看）。
 //!
-//! 写文件用非阻塞写入器：引擎的调度线程等记日志时不会被磁盘 IO 拖慢（ADR-0008）。
-//! 日志是维护者长期使用时排查问题的依据，所以统一带 UTC 时间戳，不使用颜色控制字符。
+//! 写文件用非阻塞写入器：引擎的调度线程等记日志时不会被磁盘 IO 拖慢。
+//! 长时间使用后出了问题，要靠日志对照时间排查，所以统一带 UTC 时间戳，不使用颜色控制字符。
 
 use std::io::{self, Write};
 use std::path::Path;
@@ -63,7 +63,7 @@ pub fn init(data_dir: &Path, process: Process) -> io::Result<LogGuard> {
         .map_err(io::Error::other)?;
     let (writer, worker) = tracing_appender::non_blocking(appender);
     let file_layer = tracing_subscriber::fmt::layer().with_writer(writer).with_ansi(false);
-    // 实时线程也写日志，而终端或管道可能卡住几百毫秒（2026-11-08 实测调度线程因此停了 187 ms、285 ms），
+    // 实时线程也写日志，而终端或管道可能卡住几百毫秒（实测调度线程曾因此停了 187 ms、285 ms），
     // 所以控制台和文件一样交给后台线程，写不过来时丢弃
     let (console_writer, console_worker) = tracing_appender::non_blocking(io::stderr());
     let console_layer = tracing_subscriber::fmt::layer().with_writer(console_writer);

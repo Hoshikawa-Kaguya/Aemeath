@@ -1,4 +1,4 @@
-//! 设备实例（Configuration Manager）：列出实例 ID、查询父实例。包括当前不在线的实例（卸载残留设备时要用，ADR-0009）。
+//! 设备实例（Configuration Manager）：列出实例 ID、查询父实例。包括当前不在线的实例（卸载残留设备时要用）。
 
 use std::io;
 

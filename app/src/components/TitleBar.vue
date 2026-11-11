@@ -7,7 +7,7 @@ import AppIcon from '@/components/AppIcon.vue'
 import { useAppStore } from '@/stores/app'
 import { formatKhz } from '@/format/format'
 
-// 窗口没有系统标题栏（ADR-0013）：拖动区域用 data-tauri-drag-region 标出（双击可最大化），
+// 窗口没有系统标题栏：拖动区域用 data-tauri-drag-region 标出（双击可最大化），
 // 三个窗口按钮由前端绘制，图标取 Windows 11 自带的 Segoe Fluent Icons 字体
 const GLYPH_MINIMIZE = ''
 const GLYPH_MAXIMIZE = ''
@@ -34,7 +34,7 @@ const engineText = computed(() => {
   }
   return ''
 })
-/** 程序缺失需要用户处理，计入离线警告；未运行是常态，单独计数（M3 计划 A2、A10） */
+/** 程序缺失需要用户处理，计入离线警告；未运行是常态，单独计数 */
 const offline = computed(
   () => store.nodes.filter((node) => node.status.state === 'offline' || node.status.state === 'programMissing').length,
 )

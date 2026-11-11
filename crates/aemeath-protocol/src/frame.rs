@@ -3,7 +3,7 @@
 //! 这里只处理字节，不做 IO：发送方用 [`encode`] 得到要写出的字节；接收方把读到的字节交给
 //! [`FrameDecoder::push`]，再用 [`FrameDecoder::next_message`] 逐条取出。同步和异步的命名管道都能用。
 //!
-//! 管道只允许当前用户访问，但收到的内容仍一律校验（ADR-0008）：超长的帧直接报错，调用方应断开连接。
+//! 管道只允许当前用户访问，但收到的内容仍一律校验：超长的帧直接报错，调用方应断开连接。
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;

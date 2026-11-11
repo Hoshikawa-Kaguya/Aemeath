@@ -1,4 +1,4 @@
-//! 把共享内存里的节点电平推给界面（ADR-0013：经 Tauri 的 `Channel` 推送，界面用 `<canvas>` 绘制）。
+//! 把共享内存里的节点电平推给界面（经 Tauri 的 `Channel` 推送，界面用 `<canvas>` 绘制）。
 //!
 //! 每 [`PUSH_INTERVAL`] 取走一次峰值，编码成原始字节发出，不经过 JSON：每个节点 12 字节，
 //! 依次是节点 ID（u32）、左声道峰值、右声道峰值（f32），全部小端。界面在两次推送之间自己做衰减动画。
@@ -25,6 +25,7 @@ pub struct MeterHub {
 }
 
 impl MeterHub {
+    /// 启动推送任务：按固定节奏读共享内存推给界面；没有界面订阅时不读。
     pub fn start(memory_name: String) -> Self {
         let subscriber: Subscriber = Arc::new(Mutex::new(None));
         let shared = Arc::clone(&subscriber);

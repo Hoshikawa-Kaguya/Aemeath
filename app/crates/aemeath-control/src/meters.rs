@@ -1,12 +1,13 @@
 //! 读取引擎写在共享内存里的节点电平（布局见 `aemeath_protocol::meters`）。
 //!
-//! 由界面按自己的刷新节奏调用（M1 约 30 Hz）。引擎还没启动时共享内存不存在，下次读取时再尝试打开；
+//! 由界面按自己的刷新节奏调用（约 30 Hz）。引擎还没启动时共享内存不存在，下次读取时再尝试打开；
 //! 打开后一直持有：引擎重启时会沿用这块内存，主程序这边不中断。
 
 use aemeath_protocol::meters::{METER_MEMORY_WORDS, MeterReader, NodeMeter};
 use aemeath_sys::shared_memory::SharedMemory;
 use tracing::{debug, warn};
 
+/// 引擎电平共享内存的读取端，按名称延迟打开。
 #[derive(Debug)]
 pub struct MeterSource {
     name: String,

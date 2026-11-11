@@ -1,4 +1,4 @@
-// 自己的右键菜单（M2 计划 2.2）：WebView 自带的菜单（刷新、检查等）全局屏蔽，由各处按对象提供菜单项。
+// 自己的右键菜单：WebView 自带的菜单（刷新、检查等）全局屏蔽，由各处按对象提供菜单项。
 // 全应用只有一个菜单实例（ContextMenu.vue 放在 App 中），任何组件调用 openMenu 打开。
 
 import { shallowRef } from 'vue'
@@ -53,6 +53,7 @@ export function openMenuAt(point: { x: number; y: number }, items: MenuItem[]): 
   openedMenu.value = { items, x: point.x, y: point.y, returnFocus: document.activeElement as HTMLElement | null }
 }
 
+/** 关闭菜单，焦点还给打开菜单前的元素，键盘用户不会丢失位置 */
 export function closeMenu(): void {
   const menu = openedMenu.value
   openedMenu.value = null

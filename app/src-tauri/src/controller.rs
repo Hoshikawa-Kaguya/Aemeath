@@ -1,10 +1,10 @@
-//! 控制面（ADR-0003）：工作台、配置文件、与引擎的 IPC、槽位的挂载维护与首次注册。
+//! 控制面：工作台、配置文件、与引擎的 IPC、槽位的挂载维护与首次注册。
 //!
 //! 线程模型：一个 actor 任务独占全部状态，界面的命令和引擎、槽位的事件都经通道送进来依次处理，不加锁。
 //! 每次编辑后：保存配置、把编译出的路由拓扑交给 IPC 客户端（拓扑没变时不下发）、更新被占用的槽位。
 //!
 //! 首次启动（配置里还没有"已注册"）：先下发注册用拓扑、占用全部 16 个槽位，等全部完成后再换回工作台
-//! （ADR-0009）。工作台一开始是空的；工作台为空时界面提供预设（GLOSSARY：预设），节点名由界面按当前语言提供。
+//! 。工作台一开始是空的；工作台为空时界面提供预设（GLOSSARY：预设），节点名由界面按当前语言提供。
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::Path;
@@ -50,7 +50,7 @@ use crate::view::{
     ViewState, kind_view,
 };
 
-/// 数据目录下存放背景图的文件夹（M4 计划 V8）
+/// 数据目录下存放背景图的文件夹
 pub const BACKGROUND_FOLDER: &str = "background";
 /// 撤销最多保留的步数
 const UNDO_LIMIT: usize = 50;
@@ -62,7 +62,7 @@ const EMIT_COALESCE: Duration = Duration::from_millis(50);
 const RESUME_PROBE_INTERVAL: Duration = Duration::from_secs(2);
 /// 读取音频会话的间隔：发现新会话（纠正落点）、刷新重复路由的判断
 const SESSION_POLL_INTERVAL: Duration = Duration::from_secs(2);
-/// 墙上时钟比预期多走这么多，就认为系统刚睡眠过（ADR-0007：唤醒后立即检查挂载）
+/// 墙上时钟比预期多走这么多，就认为系统刚睡眠过（唤醒后立即检查挂载）
 const RESUME_GAP: Duration = Duration::from_secs(10);
 const APP_VERSION: &str = aemeath_runtime::VERSION;
 
@@ -185,7 +185,7 @@ pub enum Edit {
         kind: NewNodeKind,
         name: String,
         position: Position,
-        /// 外部设备节点在添加时就设定的设备设置（ADR-0014）；None 表示默认值
+        /// 外部设备节点在添加时就设定的设备设置；None 表示默认值
         io: Option<DeviceSettings>,
         /// 占用槽位的节点在添加时就设定的格式与重采样算法；None 表示默认值
         slot_settings: Option<SlotNodeSettings>,
@@ -217,7 +217,7 @@ pub enum Edit {
     },
     /// 全局默认的重采样算法（设置页）
     SetGlobalResampler(Resampler),
-    /// 引擎采样率（M4 计划 E2）：先停止录音，再下发新拓扑；"跟随引擎"的节点由挂载维护异步改格式
+    /// 引擎采样率：先停止录音，再下发新拓扑；"跟随引擎"的节点由挂载维护异步改格式
     SetEngineRate(SampleRate),
     SetRecorderSettings {
         node: NodeId,
@@ -239,7 +239,7 @@ pub enum Edit {
         node: NodeId,
         position: Position,
     },
-    /// 虚拟节点改占同方向的另一个槽位（节点设置，ADR-0009）
+    /// 虚拟节点改占同方向的另一个槽位（节点设置）
     ChangeSlot {
         node: NodeId,
         number: u8,
@@ -397,6 +397,7 @@ impl ControllerHandle {
         Self { requests }
     }
 
+    /// 把请求排进控制面的队列并等它回答。控制面已经停止时返回 `Unavailable`。
     async fn ask<T>(&self, request: impl FnOnce(oneshot::Sender<T>) -> Request) -> Result<T, CommandError> {
         let (reply, wait) = oneshot::channel();
         self.requests
@@ -422,7 +423,7 @@ impl ControllerHandle {
         .await
     }
 
-    /// 查询外部设备的能力（添加节点和节点设置用，ADR-0014）。引擎不在或设备打不开时返回 None。
+    /// 查询外部设备的能力（添加节点和节点设置用）。引擎不在或设备打不开时返回 None。
     pub async fn probe_device(
         &self,
         endpoint: EndpointId,
@@ -526,6 +527,7 @@ impl ControllerHandle {
         self.ask(|reply| Request::Devices { direction, reply }).await?
     }
 
+    /// 让挂载维护立即检查一轮，不等下一个周期（例如系统刚从睡眠中唤醒）。
     pub fn check_slots(&self) {
         let _ = self.requests.send(Request::CheckSlots);
     }
@@ -547,7 +549,7 @@ enum StartError {
 struct Controller {
     config: Config,
     store: ConfigStore,
-    /// 配置文件是更新版本写的：只在内存中使用，不覆盖它
+    /// 启动时配置文件不可用（读不了，或是更新的版本写的）：只在内存中使用，不覆盖它
     read_only: bool,
     undo: Vec<Workspace>,
     client: EngineClient,
@@ -575,7 +577,7 @@ struct Controller {
     candidates: HashMap<NodeId, Vec<ExternalDevice>>,
     /// 最近一次轮询到的音频会话
     sessions: Vec<AppSession>,
-    /// 已经处理过的会话（进程 ID）：只在会话出现时纠正一次落点（M3 计划 L1）
+    /// 已经处理过的会话（进程 ID）：只在会话出现时纠正一次落点
     known_sessions: HashSet<u32>,
     /// 槽位当前的端点 ID（判断重复路由时把会话的落点对应到节点）
     slot_endpoints: BTreeMap<SlotId, String>,
@@ -601,6 +603,7 @@ const PRESET_INPUT_AT: Position = Position { x: 40.0, y: 60.0 };
 const PRESET_OUTPUT_AT: Position = Position { x: 440.0, y: 60.0 };
 
 impl Controller {
+    /// 读配置、启动各项服务。配置文件读不了或来自更新的版本时，从空工作台开始，并且不保存，免得覆盖它。
     async fn new(
         runtime: RuntimeConfig,
         toggle_window: Box<dyn Fn() + Send>,
@@ -679,7 +682,7 @@ impl Controller {
         })
         .map_err(|error| StartError::Endpoints(error.to_string()))?;
 
-        // 不记在配置里，每次启动都查（M4 计划 D5）：用户卸载过设备实例时才能重新注册。查不了时不打扰，按已注册处理
+        // 不记在配置里，每次启动都查：用户卸载过设备实例时才能重新注册。查不了时不打扰，按已注册处理
         let identity = runtime.identity;
         let registered = tokio::task::spawn_blocking(move || uninstall::all_slots_registered(identity))
             .await
@@ -750,6 +753,8 @@ impl Controller {
         Ok(controller)
     }
 
+    /// 控制面的主循环：逐个处理界面请求、引擎事件、热键和各项定时任务，直到请求通道关闭。
+    /// 所有状态只在这里修改，所以不需要加锁。
     async fn run(mut self, mut requests: mpsc::UnboundedReceiver<Request>) {
         let mut resume_probe = tokio::time::interval(RESUME_PROBE_INTERVAL);
         let mut last_probe = SystemTime::now();
@@ -798,6 +803,7 @@ impl Controller {
         }
     }
 
+    /// 处理一个界面请求，并把结果回给等待的命令。
     async fn handle(&mut self, request: Request) {
         match request {
             Request::State(reply) => {
@@ -900,6 +906,7 @@ impl Controller {
         }
     }
 
+    /// 执行一次编辑：成功后记入撤销记录（可撤销的编辑）、保存配置并下发新拓扑；失败时工作台不变。
     fn apply(&mut self, edit: Edit) -> Result<(), CommandError> {
         if let Edit::SetEngineRate(rate) = edit
             && rate != self.config.workspace.engine.sample_rate
@@ -1103,6 +1110,7 @@ impl Controller {
         Ok(())
     }
 
+    /// 保存配置。启动时配置文件不可用的话不保存；写入失败只记日志，界面照常可用。
     fn save(&self) {
         if self.read_only {
             return;
@@ -1156,6 +1164,7 @@ impl Controller {
         self.registered_hotkeys = bindings;
     }
 
+    /// 处理热键：切换型直接改配置；按住型只改临时叠加，松开时撤掉。
     fn on_hotkey(&mut self, event: HotkeyEvent) {
         match event {
             HotkeyEvent::Fired(target) => self.fire_hotkey(target),
@@ -1171,7 +1180,7 @@ impl Controller {
         self.schedule_emit();
     }
 
-    /// 切换型热键（M3 计划 H10）：静音和连线开关是正式修改，写进配置，但不进撤销记录。
+    /// 切换型热键：静音和连线开关是正式修改，写进配置，但不进撤销记录。
     fn fire_hotkey(&mut self, target: HotkeyTarget) {
         match target {
             HotkeyTarget::NodeMute(node) => {
@@ -1216,7 +1225,7 @@ impl Controller {
         }
     }
 
-    /// 只要有一个录音节点在录音就全部停止，否则全部开始（M3 计划 H3）。
+    /// 只要有一个录音节点在录音就全部停止，否则全部开始。
     fn toggle_all_recording(&mut self) {
         let recorders: Vec<NodeId> = self
             .config
@@ -1241,6 +1250,7 @@ impl Controller {
         }
     }
 
+    /// 处理引擎连接的事件：更新引擎状态和各节点状态，并转给挂载维护。
     fn on_engine_event(&mut self, event: ClientEvent) {
         if let Some(maintainer) = &self.maintainer {
             maintainer.engine_event(&event);
@@ -1292,6 +1302,7 @@ impl Controller {
         self.schedule_emit();
     }
 
+    /// 处理挂载维护报告的槽位状态；首次注册期间还要推进注册进度，全部完成后换回正式拓扑。
     fn on_slot_status(&mut self, status: SlotStatus) {
         if let Some(progress) = &mut self.registration {
             progress.update(status.clone());
@@ -1305,7 +1316,7 @@ impl Controller {
         self.schedule_emit();
     }
 
-    /// 按名称的后备匹配（选型报告 6.5 节，2026-11-08 维护者决定）：等待设备的外部节点，端点 ID 已不在系统中时，
+    /// 按名称的后备匹配：等待设备的外部节点，端点 ID 已不在系统中时，
     /// 在同方向的活动端点里找同名、且没有被其他节点使用的设备。只有一个时自动改用并提示；有多个时等用户选。
     async fn rematch(&mut self) {
         let Some(probe) = &self.probe else {
@@ -1435,7 +1446,7 @@ impl Controller {
         ))
     }
 
-    /// 记录成功的指派（选型报告 5.5 节：Aemeath 记录自己做过的指派，以便日后撤销）。
+    /// 记录成功的指派（Aemeath 记录自己做过的指派，以便日后撤销）。
     fn record_landing(&mut self, executable: String, endpoint_id: Option<String>) {
         let landings = &mut self.config.preferences.app_landings;
         match endpoint_id {
@@ -1449,7 +1460,7 @@ impl Controller {
         self.save();
     }
 
-    /// 拼出文件路径、确保文件夹存在，然后让引擎开始录音（M3 计划 R6）。
+    /// 拼出文件路径、确保文件夹存在，然后让引擎开始录音。
     fn start_recording(&self, id: NodeId) -> Result<(), CommandError> {
         let node = self.config.workspace.node(id).ok_or(CommandError::NotFound)?;
         let NodeKind::Recorder { settings } = node.kind else {
@@ -1461,6 +1472,7 @@ impl Controller {
         Ok(())
     }
 
+    /// 让引擎停止一个录音节点；节点不存在或不是录音节点时返回 `NotFound`。
     fn stop_recording(&self, id: NodeId) -> Result<(), CommandError> {
         match self.config.workspace.node(id).map(|node| &node.kind) {
             Some(NodeKind::Recorder { .. }) => {
@@ -1500,6 +1512,7 @@ impl Controller {
         }
     }
 
+    /// Aemeath 记录的落点在这个端点上的程序（可执行文件路径）。
     fn landings_on<'a>(&'a self, endpoint: &'a EndpointId) -> impl Iterator<Item = &'a str> + 'a {
         self.config
             .preferences
@@ -1509,7 +1522,7 @@ impl Controller {
             .map(|(executable, _)| executable.as_str())
     }
 
-    /// 落点节点被删除后（M3 计划 L3）：正有会话的程序立即清除指派，其余的记为"待清除"，
+    /// 落点节点被删除后：正有会话的程序立即清除指派，其余的记为"待清除"，
     /// 免得这个槽位以后被别的节点占用时，这些程序意外落进去。
     // shortcut: 撤销删除节点时不恢复这些指派，用户要在应用页重新指派；需要时把记录放进撤销快照
     async fn release_landings(&mut self, endpoint: &EndpointId) {
@@ -1539,7 +1552,7 @@ impl Controller {
         self.save();
     }
 
-    /// 定时读取音频会话：新出现的程序按记录纠正落点（M3 计划 L1、L3），并刷新判断重复路由所需的数据。
+    /// 定时读取音频会话：新出现的程序按记录纠正落点，并刷新判断重复路由所需的数据。
     async fn poll_sessions(&mut self) {
         let Some(policy) = self.policy.clone() else {
             return;
@@ -1619,6 +1632,7 @@ impl Controller {
             .map_or_else(|| endpoint.0.clone(), |node| node.name.as_str().to_owned())
     }
 
+    /// 这个端点是不是节点可以作为落点的那个端点（虚拟输入的槽位端点，或外部输出的设备）。
     fn is_landing_endpoint(&self, node: &Node, endpoint: &str) -> bool {
         match &node.kind {
             NodeKind::VirtualInput { slot } => self.slot_endpoints.get(slot).is_some_and(|own| own == endpoint),
@@ -1627,7 +1641,7 @@ impl Controller {
         }
     }
 
-    /// 当前的重复路由（M3 计划 L5）：落点按会话当前所在的端点实时判断。
+    /// 当前的重复路由：落点按会话当前所在的端点实时判断。
     fn duplicates(&self) -> Vec<DuplicateRoute> {
         let workspace = &self.config.workspace;
         let landings: Vec<(NodeId, NodeId)> = workspace
@@ -1676,6 +1690,7 @@ impl Controller {
         Ok(DefaultDevicesView::new(render, capture, &self.config.workspace))
     }
 
+    /// 给界面加一条通知；只保留最近的若干条。
     fn notify(&mut self, kind: NoticeKind) {
         self.notices.push_back(NoticeView {
             id: self.next_notice,
@@ -1687,10 +1702,12 @@ impl Controller {
         }
     }
 
+    /// 安排向界面推送一次状态。短时间内的多次变化合并成一次，避免界面被刷屏。
     fn schedule_emit(&mut self) {
         self.emit_at.get_or_insert_with(|| Instant::now() + EMIT_COALESCE);
     }
 
+    /// 从节点拖线时，其他每个节点能不能接上、为什么不能。`from_output` 表示从输出端口往外拖。
     fn verdicts(&self, node: NodeId, from_output: bool) -> Vec<RouteVerdict> {
         let workspace = &self.config.workspace;
         workspace
@@ -1716,6 +1733,7 @@ impl Controller {
             .collect()
     }
 
+    /// 路由矩阵里不能连线的格子及原因，界面据此把格子画成不可用。
     fn matrix_verdicts(&self) -> Vec<PairVerdict> {
         let workspace = &self.config.workspace;
         let nodes = workspace.nodes();
@@ -1754,6 +1772,7 @@ impl Controller {
         }
     }
 
+    /// 拼出界面需要的完整状态快照。
     fn view(&self) -> ViewState {
         let workspace = &self.config.workspace;
         let engine_up = self.engine_state == EngineState::Running;
@@ -1826,6 +1845,7 @@ impl Controller {
         }
     }
 
+    /// 一个节点在界面上的样子；引擎没在运行时，依赖引擎的节点一律显示为等待中。
     fn node_view(&self, node: &Node, engine_up: bool, duplicate: Option<DuplicateView>) -> NodeView {
         let status = match &node.kind {
             NodeKind::ExternalInput { .. }
@@ -1928,6 +1948,7 @@ fn strip_of(workspace: &Workspace, node: NodeId) -> Result<Strip, CommandError> 
         .ok_or(CommandError::NotFound)
 }
 
+/// 睡到 `deadline`；没有截止时间时永不返回，`select!` 里的这一支就等于关闭。
 async fn sleep_until(deadline: Option<Instant>) {
     match deadline {
         Some(deadline) => tokio::time::sleep_until(deadline).await,

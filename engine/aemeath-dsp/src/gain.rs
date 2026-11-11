@@ -54,6 +54,7 @@ impl SmoothedGain {
         self.remaining == 0 && self.current == 0.0
     }
 
+    /// 渐变已经走完，增益停在目标值。
     pub fn is_settled(&self) -> bool {
         self.remaining == 0
     }

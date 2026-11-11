@@ -1,4 +1,4 @@
-//! 重复路由（GLOSSARY：重复路由；M3 计划 L4、L5）：同一个程序的声音同时经它的落点和它的应用源到达同一个目的地。
+//! 重复路由（GLOSSARY：重复路由）：同一个程序的声音同时经它的落点和它的应用源到达同一个目的地。
 //!
 //! 只警告不阻止。只看开启的连线，经过总线、外部插入间接到达的也算。
 
@@ -18,6 +18,7 @@ pub struct DuplicateRoute {
     pub routes: BTreeSet<(NodeId, NodeId)>,
 }
 
+/// 从 `start` 沿连线能到达的全部节点（含它自己）。
 fn reachable(edges: &[(NodeId, NodeId)], start: NodeId) -> BTreeSet<NodeId> {
     let mut seen = BTreeSet::from([start]);
     let mut stack = vec![start];

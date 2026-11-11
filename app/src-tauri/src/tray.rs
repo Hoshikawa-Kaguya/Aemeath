@@ -1,4 +1,4 @@
-//! 托盘（ADR-0013）：关闭窗口时销毁 WebView，只留托盘和后端，降低常驻内存；从托盘重新打开时重建窗口。
+//! 托盘：关闭窗口时销毁 WebView，只留托盘和后端，降低常驻内存；从托盘重新打开时重建窗口。
 //!
 //! 菜单文字由界面按当前语言提供（`set_tray_labels`），界面加载之前用英文。
 
@@ -35,6 +35,7 @@ pub struct TrayLabels {
 }
 
 impl TrayMenu {
+    /// 换成界面当前语言的菜单文字。托盘先用默认文字建好，界面加载后再调这里。
     pub fn set_labels(&self, labels: &TrayLabels) -> tauri::Result<()> {
         self.open.set_text(&labels.open)?;
         self.redetect.set_text(&labels.redetect)?;
@@ -42,9 +43,10 @@ impl TrayMenu {
     }
 }
 
+/// 建立托盘图标和菜单（打开、重新检测、退出）。
 pub fn create(app: &AppHandle) -> tauri::Result<TrayMenu> {
     let open = MenuItem::with_id(app, MENU_OPEN, DEFAULT_OPEN_LABEL, true, None::<&str>)?;
-    // 选型报告 6.5 节：托盘菜单里有"重新检测全部设备"
+    // 设备离线时，不打开窗口也能从托盘手动重新检测
     let redetect = MenuItem::with_id(app, MENU_REDETECT, DEFAULT_REDETECT_LABEL, true, None::<&str>)?;
     let quit = MenuItem::with_id(app, MENU_QUIT, DEFAULT_QUIT_LABEL, true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
@@ -98,7 +100,7 @@ pub fn show_main_window(app: &AppHandle) {
         error!("the main window is missing from tauri.conf.json");
         return;
     };
-    // WebView2 的用户数据也放进数据目录，卸载后不在 %LOCALAPPDATA% 留东西（M4 计划 D6）
+    // WebView2 的用户数据也放进数据目录，卸载后不在 %LOCALAPPDATA% 留东西
     let webview_data = app.state::<DataDir>().webview();
     let window = WebviewWindowBuilder::from_config(app, config)
         .map(|builder| builder.data_directory(webview_data))

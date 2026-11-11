@@ -24,7 +24,7 @@ import { useAppStore } from '@/stores/app'
 const { t } = useI18n()
 const store = useAppStore()
 
-/** 用户的背景图（M4 计划 V8）：铺满窗口，遮罩的颜色随深浅色变化 */
+/** 用户的背景图：铺满窗口，遮罩的颜色随深浅色变化 */
 const appearance = computed(() => store.state?.appearance)
 const backdrop = computed(() => {
   const path = appearance.value?.backgroundPath
@@ -43,7 +43,7 @@ onMounted(() => {
     <div class="backdrop overlay" :style="{ opacity: (appearance?.overlayPercent ?? 0) / 100 }"></div>
   </template>
   <div class="window" :class="{ 'has-backdrop': backdrop }">
-    <!-- 左列从窗口顶部开始，竖分隔线贯穿全高；右列上方是状态区（M4 计划 V3） -->
+    <!-- 左列从窗口顶部开始，竖分隔线贯穿全高；右列上方是状态区 -->
     <aside class="side">
       <div class="brand" data-tauri-drag-region>
         <img :src="logoUrl" class="logo" alt="" />

@@ -1,11 +1,11 @@
 //! 打开外部设备的 WASAPI 流，以及"打开 → 运行 → 出错后离线重试"的公共框架。
 //!
-//! 打开方式按节点的设备设置（ADR-0014）：
+//! 打开方式按节点的设备设置：
 //! - 独占（默认）：格式取用户指定的或推荐的（[`DeviceCapabilities::recommended`]），周期按缓冲设置并对齐到设备要求。
 //!   打不开时不退回共享模式，报告离线原因。
 //! - 共享：按 Windows 的混音格式（32 位浮点）收发。
 //!
-//! 两种方式都不使用 `AUTOCONVERTPCM`，采样率转换只在 Aemeath 内部完成（ADR-0010）。
+//! 两种方式都不使用 `AUTOCONVERTPCM`，采样率转换只在 Aemeath 内部完成。
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -24,7 +24,7 @@ use crate::format::{to_device_format, to_wave_format};
 use crate::redetect::{Redetect, RedetectTarget, retry_interval};
 use crate::{AppStatusSink, IoDirection, IoEvent, STEREO, StatusSink};
 
-/// 其他程序占着设备（S5 实测：Voicemeeter 的独占输出；独占打开时，其他程序共享使用也会这样）
+/// 其他程序占着设备（Voicemeeter 的独占输出；独占打开时，其他程序共享使用也会这样）
 const AUDCLNT_E_DEVICE_IN_USE: u32 = 0x8889_000A;
 /// Windows 声音设置里关掉了"允许应用程序独占控制"
 const AUDCLNT_E_EXCLUSIVE_MODE_NOT_ALLOWED: u32 = 0x8889_000E;
@@ -36,7 +36,7 @@ const AUDCLNT_E_UNSUPPORTED_FORMAT: u32 = 0x8889_0008;
 pub const EVENT_WAIT_MS: u32 = 100;
 /// 这么久没有设备事件时，主动查询一次设备，让失效（设备被拔出、重新连接）以错误的形式暴露出来
 const PROBE_AFTER: Duration = Duration::from_secs(1);
-/// 这么久没有设备事件、查询却又正常时，判定为"无信号"（选型报告 6.5 节）：关闭这次会话，重新打开设备
+/// 这么久没有设备事件、查询却又正常时，判定为"无信号"：关闭这次会话，重新打开设备
 const NO_SIGNAL_AFTER: Duration = Duration::from_secs(3);
 const HNS_PER_MILLISECOND: f64 = 10_000.0;
 const HNS_PER_SECOND: f64 = 10_000_000.0;
@@ -140,6 +140,7 @@ impl EventWatch {
         }
     }
 
+    /// 等下一个设备事件。等不到时按沉默的时长决定：先查询一次设备，再久就判定这次会话卡死。
     pub fn wait(&mut self, stream: &OpenStream) -> Result<Waited, WaitError> {
         match stream.event.wait_for_event(EVENT_WAIT_MS) {
             Ok(()) => {
@@ -208,7 +209,7 @@ fn wasapi_direction(direction: IoDirection) -> wasapi::Direction {
     }
 }
 
-/// 打开设备，并把当前的格式和周期登记到 `cache`，供主程序查询（ADR-0014）。
+/// 打开设备，并把当前的格式和周期登记到 `cache`，供主程序查询。
 /// 不做全量探测：探测会切换 USB 设备的格式（见 [`crate::capabilities`]）。
 pub fn open(request: &DeviceRequest, cache: &CapabilityCache) -> Result<OpenStream, OpenError> {
     let device = DeviceEnumerator::new()
@@ -252,6 +253,7 @@ pub fn open(request: &DeviceRequest, cache: &CapabilityCache) -> Result<OpenStre
     Ok(stream)
 }
 
+/// 以共享模式、按 Windows 的混音格式打开设备。
 fn open_shared(device: &wasapi::Device, direction: IoDirection) -> Result<OpenStream, OpenError> {
     let mut client = device
         .get_iaudioclient()
@@ -277,6 +279,7 @@ fn open_shared(device: &wasapi::Device, direction: IoDirection) -> Result<OpenSt
     finish(client, &wave, false)
 }
 
+/// 以独占模式、按节点设置的格式和缓冲打开设备。打不开时不退回共享模式，由用户决定是否改用共享。
 fn open_exclusive(
     device: &wasapi::Device,
     request: &DeviceRequest,
@@ -340,6 +343,7 @@ fn open_exclusive(
     finish(client, &wave, true)
 }
 
+/// 两种模式共用的收尾：取事件句柄，换算出实际格式。
 fn finish(client: AudioClient, wave: &WaveFormat, exclusive: bool) -> Result<OpenStream, OpenError> {
     let event = client.set_get_eventhandle().map_err(OpenError::Failed)?;
     let format = to_device_format(wave).ok_or(OpenError::Failed(WasapiError::UnsupportedFormat))?;
@@ -378,7 +382,7 @@ pub struct IoContext {
     pub redetect: Redetect,
 }
 
-/// IO 线程的主循环：反复打开设备并运行会话，出错时报告离线状态，按选型报告 6.5 节的节奏重试。
+/// IO 线程的主循环：反复打开设备并运行会话，出错时报告离线状态，刚离线时重试得勤，离线久了放慢（见 [`retry_interval`]）。
 pub fn run_with_retry(
     request: &DeviceRequest,
     stop: &AtomicBool,

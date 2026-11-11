@@ -1,4 +1,4 @@
-//! 录音文件名（M3 计划 R6）：`〈节点名〉_YYYY-MM-DD_HH-mm-ss.〈扩展名〉`。
+//! 录音文件名：`〈节点名〉_YYYY-MM-DD_HH-mm-ss.〈扩展名〉`。
 
 use aemeath_protocol::topology::RecordFormat;
 

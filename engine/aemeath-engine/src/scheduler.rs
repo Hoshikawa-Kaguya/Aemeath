@@ -1,4 +1,4 @@
-//! 主时钟调度线程（S4）：唯一的实时线程，统一完成所有槽位的等时 URB，并按时间线每 1 ms 运行一次混音。
+//! 主时钟调度线程：唯一的实时线程，统一完成所有槽位的等时 URB，并按时间线每 1 ms 运行一次混音。
 //!
 //! 每轮循环：处理控制命令 → 处理服务端事件 → 运行到期的混音块 → 完成到期的 URB →
 //! 用高精度定时器睡到下一个截止时刻（最多 0.5 ms，以便及时应答控制传输）。
@@ -31,7 +31,7 @@ const MICROSECONDS_PER_MICROFRAME: i64 = 125;
 const HNS_PER_MICROSECOND: i64 = 10;
 /// 两轮循环相隔超过这么久时记录警告（正常最多 0.5 ms）
 const LOOP_GAP_WARNING_HNS: i64 = 30_000;
-/// 没有更早的截止时刻时，最多睡这么久（与 S4 相同）
+/// 没有更早的截止时刻时，最多睡这么久
 const MAX_SLEEP_HNS: i64 = 5_000;
 /// 混音落后超过这么多微帧（10 ms）时不再逐块追赶，直接跳到当前时刻
 const MAX_CATCH_UP_MICROFRAMES: i64 = 80;
@@ -54,6 +54,7 @@ enum Pending {
     Capture(Submit),
 }
 
+/// 调度线程的全部状态。只在调度线程上使用，与其他线程只经通道和原子量往来。
 pub struct Scheduler {
     timeline: Arc<Timeline>,
     commands: Receiver<Command>,
@@ -102,6 +103,8 @@ impl Scheduler {
         }
     }
 
+    /// 调度线程的主循环：提升到 MMCSS 优先级，按时间线等到最近的截止时刻，完成到期的 URB、运行混音，
+    /// 直到收到停止命令。
     pub fn run(mut self) {
         let priority = aemeath_sys::thread_priority::promote_current_thread();
         if let Err(error) = &priority {
@@ -174,6 +177,7 @@ impl Scheduler {
         }
     }
 
+    /// 取完 USB/IP 服务端积压的事件：新导入的连接、提交和取消的 URB、断开的连接。不阻塞。
     fn handle_server_events(&mut self) {
         while let Ok(event) = self.server_events.try_recv() {
             match event {
@@ -232,6 +236,7 @@ impl Scheduler {
         }
     }
 
+    /// 为一个等时 URB 在时间线上排好完成时刻，到期时由 [`Self::complete_due`] 应答。
     fn schedule(&mut self, connection: ConnectionId, submit: Submit, received_hns: i64) {
         let Some(stream) = self.streams.get_mut(&connection) else {
             return;
@@ -325,6 +330,7 @@ impl Scheduler {
         self.last_port_log = now;
     }
 
+    /// 应答所有已到期的 URB。录音方向的数据到这时才从缓冲里取，尽量用上最新的混音结果。
     fn complete_due(&mut self, now: i64) {
         while let Some(Reverse((deadline, connection, seq))) = self.deadlines.peek().copied() {
             if deadline > now {
@@ -346,6 +352,8 @@ impl Scheduler {
         }
     }
 
+    /// 睡到下一个 URB 到期或下一个混音块该运行的时刻，最多睡 [`MAX_SLEEP_HNS`]，以便及时处理新事件。
+    /// 高精度定时器不可用时退回普通 `sleep`。
     fn sleep(&self, timer: Option<&HighResolutionTimer>) {
         let now = now_hns();
         let mut wake = now + MAX_SLEEP_HNS;
@@ -380,6 +388,7 @@ impl Scheduler {
         }
     }
 
+    /// 丢弃一条连接的全部状态；它的重采样器交给辅助线程释放。
     fn drop_connection(&mut self, connection: ConnectionId, slot: SlotId) {
         if let Some(mut stream) = self.streams.remove(&connection) {
             if let Some(resampler) = stream.take_resampler() {

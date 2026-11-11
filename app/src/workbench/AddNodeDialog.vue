@@ -19,10 +19,10 @@ import { pickProgram } from './pickProgram'
 import ResamplerField from './ResamplerField.vue'
 import SlotSettingsFields from './SlotSettingsFields.vue'
 
-// "添加节点"对话框：选类型；外部设备再选设备，并在添加时就设定独占、格式、缓冲和重采样算法（ADR-0014，
-// 维护者要求避免添加后再调整）；名称默认取设备名或类型名，可以修改。
-// 虚拟节点的槽位由后端自动分配编号最小的空闲槽位（ADR-0009）。总线不对应任何设备，只有名称。
-// 应用源：从有音频会话的程序里选，或者"浏览…"选还没运行的 exe（M3 计划 A5）。
+// "添加节点"对话框：选类型；外部设备再选设备，并在添加时就设定独占、格式、缓冲和重采样算法，
+// 免得添加后再打开设置调整；名称默认取设备名或类型名，可以修改。
+// 虚拟节点的槽位由后端自动分配编号最小的空闲槽位。总线不对应任何设备，只有名称。
+// 应用源：从有音频会话的程序里选，或者"浏览…"选还没运行的 exe。
 type KindChoice =
   | 'externalInput'
   | 'virtualInput'
@@ -80,7 +80,7 @@ const sendSlot = computed(
   () => store.state?.slots.find((row) => row.slot.direction === 'out' && row.occupant === null)?.slot ?? null,
 )
 
-/** 同方向上已被占用的设备不能再添加，说明被谁占用（M3 计划 X6） */
+/** 同方向上已被占用的设备不能再添加，说明被谁占用 */
 function deviceOwner(endpointId: string): NodeView | undefined {
   const wanted = direction.value === 'input' ? ['externalInput', 'externalInsert'] : ['externalOutput']
   return store.nodes.find((node) => wanted.includes(node.kind) && node.device?.endpointId === endpointId)
@@ -133,6 +133,7 @@ async function loadPrograms(): Promise<void> {
   }
 }
 
+/** 选一个还没运行的程序，加进候选列表并选中它 */
 async function browse(): Promise<void> {
   const path = await pickProgram()
   if (path !== null) {
@@ -148,6 +149,7 @@ watch(program, async (path) => {
   suggestName()
 })
 
+/** 外部设备类节点：列出这个方向的设备，默认选第一台还没被占用的 */
 async function loadDevices(): Promise<void> {
   devices.value = null
   endpointId.value = ''
@@ -164,6 +166,7 @@ async function loadDevices(): Promise<void> {
   }
 }
 
+/** 按类型、设备或程序给出默认名；用户改过名字后就不再覆盖 */
 function suggestName(): void {
   if (nameEdited.value) {
     return
@@ -179,7 +182,7 @@ function suggestName(): void {
   name.value = (isExternal.value ? device.value?.name : t(`kind.${kind.value}`)) ?? ''
 }
 
-/** 外部插入的默认名取设备名括号里的部分，没有括号时用完整设备名（M3 计划 X2） */
+/** 外部插入的默认名取设备名括号里的部分，没有括号时用完整设备名 */
 function insertName(deviceName: string): string {
   return /\(([^()]+)\)\s*$/.exec(deviceName)?.[1] ?? deviceName
 }
@@ -211,6 +214,7 @@ function onNameInput(event: Event): void {
   nameEdited.value = true
 }
 
+/** 按所选类型拼出新节点的参数并添加；成功后关闭对话框 */
 async function confirm(): Promise<void> {
   let newKind: NewNodeKind
   switch (kind.value) {
@@ -330,7 +334,7 @@ defineExpose({ open })
   gap: 8px;
 }
 
-/* 选项卡片（原型设置页的 .rs-opt） */
+/* 选项卡片：整张卡片都可以点选 */
 .kind {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);

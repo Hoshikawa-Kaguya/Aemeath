@@ -32,7 +32,7 @@ pub struct RequestId(pub u64);
 #[serde(transparent)]
 pub struct TopologyRevision(pub u64);
 
-/// 槽位方向（ADR-0009）。从 Aemeath 的视角命名：
+/// 槽位方向。从 Aemeath 的视角命名：
 /// 输入方向的槽位提供虚拟输入（应用往里播放），输出方向的槽位提供虚拟输出（OBS 等从里面录）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -47,10 +47,12 @@ pub enum SlotDirection {
 pub struct SlotNumber(u8);
 
 impl SlotNumber {
+    /// 编号从 1 开始，与 Windows 里的设备名一致
     pub const FIRST: u8 = 1;
-    /// 每个方向的槽位数（ADR-0009：8 进 8 出）
+    /// 每个方向的槽位数（8 进 8 出）
     pub const LAST: u8 = 8;
 
+    /// 校验编号在 [`Self::FIRST`]–[`Self::LAST`] 之内。
     pub fn new(number: u8) -> Result<Self, SlotNumberError> {
         if (Self::FIRST..=Self::LAST).contains(&number) {
             Ok(Self(number))
@@ -121,12 +123,13 @@ impl EndpointId {
     /// 端点 ID 的长度上限（字节）。实际 ID 约 55 字符，上限只用来拒绝异常输入。
     pub const MAX_LEN: usize = 512;
 
+    /// 非空且不超长。只做粗查，真正能不能打开要交给 Windows。
     pub fn is_well_formed(&self) -> bool {
         !self.0.is_empty() && self.0.len() <= Self::MAX_LEN
     }
 }
 
-/// 应用源绑定的程序：可执行文件的绝对路径（M3 计划 A1、A3）。反序列化时就校验。
+/// 应用源绑定的程序：可执行文件的绝对路径。反序列化时就校验。
 ///
 /// Windows 的路径不区分大小写，比较"是不是同一个程序"用 [`Self::same_program`]，派生的 `Eq` 只比较原文。
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -138,6 +141,7 @@ impl ProgramPath {
     pub const MAX_CHARS: usize = 32_767;
     const EXTENSION: &str = "exe";
 
+    /// 校验后包装：必须是指向 `.exe` 的绝对路径。不检查文件是否存在，程序缺失是运行时的状态。
     pub fn new(path: &str) -> Result<Self, InvalidProgramPath> {
         let typed = Path::new(path);
         let is_exe = typed
@@ -166,6 +170,7 @@ impl ProgramPath {
             .unwrap_or(&self.0)
     }
 
+    /// 是否指向同一个程序（不区分大小写）。
     pub fn same_program(&self, other: &Self) -> bool {
         self.0.to_lowercase() == other.0.to_lowercase()
     }

@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { formatKhz } from '@/format/format'
 import { SLOT_FORMAT_MAX_HZ, useAppStore } from '@/stores/app'
 
-// 修改引擎采样率（M4 计划 E1、E2、E5）：标题栏的采样率按钮和设置页共用。
+// 修改引擎采样率：标题栏的采样率按钮和设置页共用。
 interface FluentDialog extends HTMLElement {
   show(): void
   hide(): void

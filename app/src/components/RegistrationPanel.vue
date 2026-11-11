@@ -5,7 +5,7 @@ import AppIcon from '@/components/AppIcon.vue'
 import { useAppStore } from '@/stores/app'
 import { slotCode } from '@/stores/nodeLabels'
 
-// 首次启动注册 16 个槽位时盖在内容区上（ADR-0009：第一次安装驱动可能要 1 分钟左右）
+// 首次启动注册 16 个槽位时盖在内容区上（第一次安装驱动可能要 1 分钟左右）
 const { t } = useI18n()
 const store = useAppStore()
 

@@ -6,10 +6,12 @@ export const GATE_MAX_DB = 0
 /** 滑块上表示"关"的位置：比最低阈值再低一格 */
 export const GATE_OFF_POSITION = GATE_MIN_DB - 1
 
+/** 阈值换算成滑块位置；没有门限时在"关"的位置 */
 export function gateToPosition(gateDb: number | null): number {
   return gateDb ?? GATE_OFF_POSITION
 }
 
+/** 滑块位置换算成阈值（整数 dB）；在"关"的位置时返回 null */
 export function positionToGate(position: number): number | null {
   return position <= GATE_OFF_POSITION ? null : Math.min(GATE_MAX_DB, Math.max(GATE_MIN_DB, Math.round(position)))
 }

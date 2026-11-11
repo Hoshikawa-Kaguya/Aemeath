@@ -1,6 +1,6 @@
 //! 三个进程（引擎、主程序、守护进程）共用的配置：数据目录、USB/IP 端口、命名管道与电平共享内存的名称。
 //!
-//! 正式启动时由守护进程传入参数（ADR-0003），引擎和主程序拿到的是同一组值；开发时可以不带参数直接运行，
+//! 正式启动时由守护进程传入参数，引擎和主程序拿到的是同一组值；开发时可以不带参数直接运行，
 //! 两边按身份算出的默认值一致。
 
 use std::io;
@@ -12,9 +12,10 @@ use thiserror::Error;
 
 use crate::autostart::ARGUMENT;
 
+/// 三个进程共用的运行参数。守护进程把同一组值传给引擎和主程序，两边才能找到对方。
 #[derive(Debug, Clone)]
 pub struct RuntimeConfig {
-    /// 数据目录：日志在 `logs\`，拓扑缓存在 `engine\`（ADR-0012：安装版和便携版都是 `%APPDATA%\Aemeath`）
+    /// 数据目录：日志在 `logs\`，拓扑缓存在 `engine\`（安装版和便携版都是 `%APPDATA%\Aemeath`）
     pub data_dir: PathBuf,
     /// USB/IP 端口；经守护进程启动时由它决定（guardian 的 `usbip_port` 模块）
     pub usbip_port: u16,

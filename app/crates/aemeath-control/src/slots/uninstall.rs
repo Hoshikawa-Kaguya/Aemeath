@@ -1,7 +1,7 @@
-//! 完全卸载槽位的设备实例（ADR-0009；S1 的结论）：按"音频端点 → 音频功能子设备 → USB 复合设备"的顺序，
-//! 用 `pnputil /remove-device` 卸载，需要管理员权限。不动 MMDevices 记录（S1：留下的只是无害的历史条目）。
+//! 完全卸载槽位的设备实例：按"音频端点 → 音频功能子设备 → USB 复合设备"的顺序，
+//! 用 `pnputil /remove-device` 卸载，需要管理员权限。不动 MMDevices 记录（留下的只是无害的历史条目）。
 //!
-//! 开发工具（`tools/aemeath-dev-cleanup`）、安装版的卸载钩子和便携版的"移除虚拟设备"（M4）调用同一段逻辑。
+//! 开发工具（`tools/aemeath-dev-cleanup`）、安装版的卸载钩子和便携版的"移除虚拟设备"调用同一段逻辑。
 //!
 //! 只匹配指定身份的设备：复合设备按 VID/PID 和序列号精确匹配，功能子设备按父实例归属，
 //! 音频端点按设备接口名（USB 产品名）精确匹配。
@@ -35,6 +35,7 @@ pub enum Stage {
     Composite,
 }
 
+/// 一个待卸载的设备实例。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SlotInstance {
     pub stage: Stage,
@@ -93,7 +94,7 @@ pub fn find_instances(identity: IdentityProfile) -> Result<Vec<SlotInstance>, Un
     Ok(instances)
 }
 
-/// 让提权的守护进程移除虚拟设备的命令行参数（M4 计划 C1、C4）
+/// 让提权的守护进程移除虚拟设备的命令行参数
 pub const REMOVE_ARGUMENT: &str = "--remove-virtual-devices";
 
 /// 一个实例的卸载结果。
@@ -104,7 +105,7 @@ pub struct Removal {
 }
 
 /// 卸下自己身份的挂载（只碰指向 Aemeath 服务端口、或 VID:PID 属于自己的条目），再按顺序卸载全部设备实例（需要管理员权限）。
-/// 开发工具、卸载钩子、便携版的"移除虚拟设备"共用（M4 计划 2.7 节）。
+/// 开发工具、卸载钩子、便携版的"移除虚拟设备"共用。
 pub async fn detach_and_remove(identity: IdentityProfile, cli: &UsbipCli) -> Result<Vec<Removal>, UninstallError> {
     let identities = identity
         .all()
@@ -136,7 +137,7 @@ pub async fn detach_and_remove(identity: IdentityProfile, cli: &UsbipCli) -> Res
         .collect())
 }
 
-/// 这套身份的 16 个复合设备实例是否都存在（包括不在线的）。只查 USB 枚举器，不需要管理员权限（M4 计划 D5）。
+/// 这套身份的 16 个复合设备实例是否都存在（包括不在线的）。只查 USB 枚举器，不需要管理员权限。
 pub fn all_slots_registered(identity: IdentityProfile) -> Result<bool, UninstallError> {
     let identities = identity
         .all()
@@ -169,6 +170,7 @@ pub fn remove(instance: &SlotInstance) -> Result<(), UninstallError> {
     }
 }
 
+/// 两个方向上属于这套身份的音频端点实例（包括不在线的）。
 fn endpoint_instances(identities: &[SlotIdentity]) -> Result<Vec<SlotInstance>, UninstallError> {
     let error = |error: aemeath_sys::com::ComError| UninstallError::Endpoints(error.to_string());
     let _com = ComApartment::multithreaded().map_err(error)?;
@@ -235,7 +237,7 @@ mod tests {
                 .map(|identity| identity.product_name.as_str()),
             Some("Aemeath Dev Out 8")
         );
-        // 探针等其他设备：同一个测试 PID，但序列号不属于开发槽位
+        // 其他测试设备：同一个测试 PID，但序列号不属于开发槽位
         assert!(composite_of(r"USB\VID_1209&PID_0001\AEMPROBE01", &identities).is_none());
         assert!(composite_of(r"USB\VID_1209&PID_0003\AEMDEVIN01", &identities).is_none());
         assert!(composite_of(r"USB\VID_046D&PID_0001\AEMDEVIN01", &identities).is_none());

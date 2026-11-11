@@ -1,4 +1,4 @@
-//! 外部设备节点的设备设置（ADR-0014）在界面上的表示：快照里发给界面，界面改完再原样传回来。
+//! 外部设备节点的设备设置在界面上的表示：快照里发给界面，界面改完再原样传回来。
 //!
 //! 协议类型（`aemeath_protocol::topology::DeviceSettings`）用 snake_case 的带标签枚举，界面统一用 camelCase，
 //! 所以在这里换算，并在换算时校验取值。
@@ -254,6 +254,7 @@ pub struct CapabilitiesView {
 const MICROSECONDS_PER_MILLISECOND: f32 = 1000.0;
 
 impl CapabilitiesView {
+    /// 把引擎探测到的设备能力转成界面的选项；推荐格式按当前引擎采样率挑选。
     pub fn new(capabilities: &DeviceCapabilities, engine_rate: SampleRate) -> Self {
         Self {
             exclusive_formats: capabilities

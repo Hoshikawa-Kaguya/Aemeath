@@ -9,8 +9,8 @@ import { useAppStore } from '@/stores/app'
 import { slotName } from '@/stores/nodeLabels'
 import NodeSettingsDialog from '@/workbench/NodeSettingsDialog.vue'
 
-// 设备页：16 个槽位的占用者、挂载状态和设备格式（ADR-0009）。
-// 格式是占用节点的配置，这里用同一个节点设置对话框修改；空槽位没有可改的设置（M4 计划 F3）。
+// 设备页：16 个槽位的占用者、挂载状态和设备格式。
+// 格式是占用节点的配置，这里用同一个节点设置对话框修改；空槽位没有可改的设置。
 const { t } = useI18n()
 const store = useAppStore()
 const settingsDialog = useTemplateRef<InstanceType<typeof NodeSettingsDialog>>('settingsDialog')
@@ -44,6 +44,7 @@ function rows(direction: Direction): Row[] {
     }))
 }
 
+/** 槽位此刻是否插在 Windows 里（挂载正常，或刚挂上正等端点出现） */
 function plugged(slot: SlotView): boolean {
   return slot.health.state === 'healthy' || slot.health.state === 'settling'
 }
@@ -54,6 +55,7 @@ interface StateDisplay {
   text: string
 }
 
+/** 挂载状态的图标、色调和文字 */
 function stateOf(slot: SlotView): StateDisplay {
   const health = slot.health
   switch (health.state) {
@@ -97,6 +99,7 @@ function matchesSettings(slot: SlotView, occupant: NodeView | undefined): boolea
   return slot.format.sampleRate === wanted.sampleRate && slot.format.sampleFormat === wanted.sampleFormat
 }
 
+/** 格式下方的说明：拔出、读回的格式与设置不符、与引擎采样率相同（不重采样）或不同 */
 function formatHint(slot: SlotView, occupant: NodeView | undefined): string {
   if (!plugged(slot)) {
     return t('dev.fmtOff')

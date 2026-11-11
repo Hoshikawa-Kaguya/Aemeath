@@ -55,6 +55,7 @@ function brandRamp(hex: string): BrandVariants {
   return Object.fromEntries(BRAND_STEPS.map((step) => [step, shade(step)])) as unknown as BrandVariants
 }
 
+/** 生成 Fluent 主题：没有自定义主题色时用官方默认主题，否则按主题色生成，并按亮度选主题色上的文字颜色 */
 function buildTheme(isDark: boolean, accent: string | null): Theme {
   if (accent === null) {
     return isDark ? webDarkTheme : webLightTheme
@@ -70,6 +71,7 @@ function buildTheme(isDark: boolean, accent: string | null): Theme {
 let current: Pick<Appearance, 'themeMode' | 'accent'> = { themeMode: 'system', accent: null }
 const query = window.matchMedia(DARK_QUERY)
 
+/** 按当前设置和系统深浅色应用主题，并在根元素上标出深浅色，供少数需要区分的样式使用 */
 function apply(): void {
   const isDark = current.themeMode === 'dark' || (current.themeMode === 'system' && query.matches)
   setTheme(buildTheme(isDark, current.accent))
@@ -78,14 +80,14 @@ function apply(): void {
 
 /**
  * 把 Fluent 2 设计令牌写成全局 CSS 变量（如 `--colorNeutralForeground1`），"跟随系统"时随系统切换立即更新。
- * 样式只引用这些变量，不写死颜色（ADR-0013）。
+ * 样式只引用这些变量，不写死颜色。
  */
 export function initTheme(): void {
   apply()
   query.addEventListener('change', apply)
 }
 
-/** 应用深浅色和主题色（M4 计划 V5、V6）。 */
+/** 应用深浅色和主题色。 */
 export function applyAppearance(next: Pick<Appearance, 'themeMode' | 'accent'>): void {
   current = next
   apply()

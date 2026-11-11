@@ -1,6 +1,6 @@
 //! 高精度可等待定时器（`CREATE_WAITABLE_TIMER_HIGH_RESOLUTION`，Windows 10 1803 起）。
 //!
-//! S4 中调度线程用普通 `sleep` 等待，受 1 ms 系统定时精度限制，偶尔滞后到 2.7 ms；
+//! 调度线程如果用普通 `sleep` 等待，会受 1 ms 系统定时精度限制，实测偶尔滞后到 2.7 ms；
 //! 高精度定时器不依赖 `timeBeginPeriod`，精度约 0.5 ms 以内。
 
 use std::io;
@@ -21,6 +21,7 @@ pub struct HighResolutionTimer {
 }
 
 impl HighResolutionTimer {
+    /// 创建匿名的高精度定时器；系统不支持（Windows 10 1803 之前）时报错。
     pub fn new() -> io::Result<Self> {
         // SAFETY: 不传安全属性和名称（匿名定时器）；返回的句柄由本对象独占并在 Drop 中关闭。
         let handle = unsafe {

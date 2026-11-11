@@ -1,4 +1,4 @@
-//! 查询服务（驱动）的运行状态（守护进程检查 usbip-win2 的驱动服务能否运行，ADR-0011）。
+//! 查询服务（驱动）的运行状态（守护进程检查 usbip-win2 的驱动服务能否运行）。
 
 use std::io;
 
@@ -9,6 +9,7 @@ use windows::Win32::System::Services::{
 };
 use windows::core::{HSTRING, PCWSTR};
 
+/// 服务的运行状态，只区分调用方关心的几种。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ServiceState {
     Running,

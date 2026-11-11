@@ -1,4 +1,4 @@
-//! 槽位的固定 USB 身份（ADR-0009）。
+//! 槽位的固定 USB 身份。
 //!
 //! Windows 按"VID/PID + 序列号"识别设备实例，端点 ID、设备名、共享格式都绑定在实例上，
 //! 所以这里的每一项都必须永久不变：改动任何一项都会产生新的设备实例，OBS 等应用里选好的设备随之失效。
@@ -16,9 +16,9 @@ use crate::wire::{BusId, WireError};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IdentityProfile {
     /// 开发与测试用：pid.codes 的测试 PID，设备名 `Aemeath Dev In/Out N`，不与正式安装的设备重名。
-    /// 与 S3 注册的开发槽位完全一致，可以复用已有的设备实例。
+    /// 各项值从最早注册开发槽位起就没有变过，开发机上已有的设备实例可以一直复用。
     Development,
-    /// 正式发布用：`1209:AEEE`，设备名 `Aemeath In/Out N`（ADR-0009，M4 计划 I4、I6）。
+    /// 正式发布用：`1209:AEEE`，设备名 `Aemeath In/Out N`。
     Production,
 }
 
@@ -27,7 +27,7 @@ pub const DEFAULT_USBIP_PORT: u16 = 32410;
 const APP_DATA_VARIABLE: &str = "APPDATA";
 
 impl IdentityProfile {
-    /// 这次构建使用的身份：只有打开 `production-identity` feature（打包脚本）才是正式身份（M4 计划 I5）。
+    /// 这次构建使用的身份：只有打开 `production-identity` feature（打包脚本）才是正式身份。
     pub const fn current() -> Self {
         if cfg!(feature = "production-identity") {
             Self::Production
@@ -45,7 +45,7 @@ impl IdentityProfile {
     }
 
     /// 数据目录：`%APPDATA%\Aemeath`；开发身份用 `%APPDATA%\Aemeath Dev`，与正式安装互不干扰。
-    /// 安装版和便携版相同，不提供修改（ADR-0012，M4 计划 D1）。
+    /// 安装版和便携版相同，不提供修改。
     pub fn default_data_dir(self) -> Option<PathBuf> {
         let app_data = std::env::var_os(APP_DATA_VARIABLE)?;
         Some(PathBuf::from(app_data).join(self.data_folder_name()))
@@ -87,9 +87,9 @@ const VENDOR_ID: u16 = 0x1209;
 const DEV_PRODUCT_ID_IN: u16 = 0x0001;
 const DEV_PRODUCT_ID_OUT: u16 = 0x0002;
 /// 设备版本号。Windows 会按"VID/PID + 版本号"缓存部分描述符，所以描述符有不兼容的改动时要改这个值。
-/// 0x0203 与 S3 的开发槽位一致。
+/// 0x0203 是开发槽位最初注册时的值，改动会让已注册的开发设备全部变成新实例。
 const DEVICE_RELEASE: u16 = 0x0203;
-/// 正式 PID：输入、输出共用（M4 计划 I4）
+/// 正式 PID：输入、输出共用
 const PRODUCTION_PRODUCT_ID: u16 = 0xAEEE;
 /// 正式身份靠不同的版本号区分方向，避开 Windows 按"VID/PID + 版本号"的描述符缓存
 const PRODUCTION_RELEASE_IN: u16 = 0x0100;
@@ -114,6 +114,7 @@ pub struct SlotIdentity {
 }
 
 impl IdentityProfile {
+    /// 算出一个槽位在这套身份下的完整 USB 身份：busid、VID/PID、版本号、设备名和序列号。
     pub fn identity(self, slot: SlotId) -> Result<SlotIdentity, WireError> {
         let number = slot.number.get();
         let (bus_number, dev_product_id, production_release, name_direction, serial_direction) = match slot.direction {
@@ -177,7 +178,7 @@ mod tests {
         }
     }
 
-    /// 与 S3 注册的开发槽位逐项一致（改动会产生新的设备实例）
+    /// 开发身份逐项固定：任何一项改动都会产生新的设备实例
     #[test]
     fn development_identities_match_the_registered_s3_slots() {
         let in1 = IdentityProfile::Development

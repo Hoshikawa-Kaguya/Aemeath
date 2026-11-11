@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Resampler } from '@/api/types'
 
-// 重采样算法和重采样预设（M4 计划 1.1 节）。节点设置、添加节点和设置页共用；参数不对用户开放。
+// 重采样算法和重采样预设。节点设置、添加节点和设置页共用；参数不对用户开放。
 // null 表示跟随全局默认，设置页的全局默认没有这一项（allowFollow 为 false）。
 type Algorithm = Resampler['algorithm']
 
@@ -19,13 +19,13 @@ const props = withDefaults(defineProps<{ allowFollow?: boolean }>(), { allowFoll
 const { t } = useI18n()
 
 const FOLLOW_GLOBAL = 'global'
-/** R1：算法的显示文字固定，不进 i18n */
+/** 算法名是专有名词，各语言都显示同样的文字，不进 i18n */
 const ALGORITHMS: { id: Algorithm; name: string }[] = [
   { id: 'polyAsync', name: 'Rubato Poly Async' },
   { id: 'sincAsync', name: 'Rubato Sinc Async' },
   { id: 'fftSync', name: 'Rubato FFT Sync' },
 ]
-/** 延迟是 48 kHz 下的实测值（M4 计划 1.1 节） */
+/** 延迟是 48 kHz 下的实测值 */
 const POLY_LATENCY = '<0.1'
 const PRESETS: Record<Algorithm, PresetChoice[]> = {
   polyAsync: [

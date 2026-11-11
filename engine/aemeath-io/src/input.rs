@@ -12,6 +12,8 @@ use crate::clock::{ClockReader, ClockTap};
 use crate::device::{self, EventWatch, IoContext, OpenStream, SessionEnd, Waited};
 use crate::{BridgeConfig, BridgeHandle, IoDirection};
 
+/// 启动一台外部输入的 IO 线程：打开设备，把录到的声音转成引擎采样率写进 `producer`，
+/// 出错时报告离线并按节奏重试，直到 [`BridgeHandle`] 被丢弃。
 pub fn spawn_input(
     config: BridgeConfig,
     producer: Producer<f32>,
@@ -26,6 +28,7 @@ pub fn spawn_input(
     Ok(BridgeHandle::new(stop, thread))
 }
 
+/// 输入线程的主体：提高优先级后反复打开设备运行会话，直到收到停止信号。
 fn run(config: &BridgeConfig, mut producer: Producer<f32>, stop: &AtomicBool, context: &IoContext, clock: &ClockTap) {
     let _priority = aemeath_sys::thread_priority::promote_current_thread()
         .inspect_err(|error| tracing::warn!(%error, "cannot raise the input thread priority"));

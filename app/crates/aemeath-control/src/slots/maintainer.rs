@@ -1,11 +1,11 @@
-//! 挂载维护（ADR-0007）：持续检查每个被占用的槽位是否正常挂载，发现异常就修复；没有被占用的槽位保持卸下。
+//! 挂载维护：持续检查每个被占用的槽位是否正常挂载，发现异常就修复；没有被占用的槽位保持卸下。
 //!
 //! - 何时检查：每 [`MaintainerTiming::check_interval`] 一次（也覆盖了睡眠唤醒）；占用状态改变、引擎连上、
 //!   端点有变化、服务端报告某个占用中的槽位断开时立即检查。
 //! - 修复：只停掉这台设备自己的后台重试（`attach --stop`，不能用 `--stop-all`），卸下指向 Aemeath 的残留和重复条目，
 //!   再以 `--once` 挂载；以服务端实际收到 import 为成功判据。失败后按 1、2、4、8、10 秒退避，
 //!   连续 [`ALERT_AFTER_FAILURES`] 次失败标记为 [`SlotHealth::Failing`]，由界面提示用户。
-//! - 格式：只有占用节点的设置算数（M4 计划 F1），每轮检查都核对，Windows 里改的格式会被改回来。
+//! - 格式：只有占用节点的设置算数，每轮检查都核对，Windows 里改的格式会被改回来。
 //!   "跟随引擎"是引擎采样率（最高 384 kHz）加 32 位整数，"指定格式"是指定的采样率和样本格式。
 //!   Windows 把格式记在设备实例上，而且不允许给已拔出的端点写格式（实测 0x80070003），释放时改不了；
 //!   下一个占用者挂上后按它的设置改掉，上一个节点的格式不会留下来。
@@ -29,7 +29,7 @@ use super::endpoints::{EndpointProbe, ProbeError, SlotEndpoint};
 use crate::engine_client::ClientEvent;
 use crate::usbip_cli::{ImportedDevice, UsbipCli, VhciPort};
 
-/// 失败后的重试间隔（ADR-0007：1、2、4 秒起，上限 10 秒）
+/// 失败后的重试间隔（1、2、4 秒起，上限 10 秒）
 const RETRY_DELAYS: [Duration; 5] = [
     Duration::from_secs(1),
     Duration::from_secs(2),
@@ -37,15 +37,17 @@ const RETRY_DELAYS: [Duration; 5] = [
     Duration::from_secs(8),
     Duration::from_secs(10),
 ];
-/// "跟随引擎"的样本格式：Windows 给这些设备的默认值（S2）。写死才不会继承上一个节点或 Windows 里改过的值
+/// "跟随引擎"的样本格式：Windows 给这些设备的默认值。写死才不会继承上一个节点或 Windows 里改过的值
 const FOLLOW_SAMPLE_FORMAT: SampleFormat = SampleFormat::Int32;
 /// 连续失败这么多次后提示用户
 pub const ALERT_AFTER_FAILURES: u32 = 3;
 
+/// 挂载维护的各项时间。正式运行用默认值，测试里缩短。
 #[derive(Debug, Clone, Copy)]
 pub struct MaintainerTiming {
+    /// 两轮检查之间的间隔
     pub check_interval: Duration,
-    /// 连接建立后等待端点变为 ACTIVE 的时间；首次安装驱动可能接近 1 分钟（ADR-0009）
+    /// 连接建立后等待端点变为 ACTIVE 的时间；首次安装驱动可能接近 1 分钟
     pub endpoint_grace: Duration,
     /// 挂载命令成功后，等待服务端报告收到 import 的时间
     pub attach_confirm: Duration,
@@ -74,6 +76,7 @@ impl Default for MaintainerTiming {
     }
 }
 
+/// 启动挂载维护所需的设置。
 #[derive(Debug, Clone)]
 pub struct MaintainerConfig {
     pub identity: IdentityProfile,
@@ -82,7 +85,7 @@ pub struct MaintainerConfig {
     pub timing: MaintainerTiming,
 }
 
-/// 槽位的挂载健康状态（设备页显示，ADR-0009）。
+/// 槽位的挂载健康状态（设备页显示）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SlotHealth {
     /// 没有被占用，已卸下
@@ -179,6 +182,7 @@ impl SlotMaintainer {
         let _ = self.inputs.send(Input::Formats(formats));
     }
 
+    /// 引擎采样率变了：之后"跟随引擎"的槽位按新采样率设定格式。
     pub fn set_engine_rate(&self, rate: SampleRate) {
         let _ = self.inputs.send(Input::EngineRate(rate));
     }
@@ -244,6 +248,7 @@ struct Task {
 }
 
 impl Task {
+    /// 挂载维护的主循环：收到输入或到了检查时间就检查一轮，直到输入通道关闭。
     async fn run(mut self) {
         let mut next_periodic = Instant::now() + self.timing.check_interval;
         loop {
@@ -296,6 +301,7 @@ impl Task {
         wake
     }
 
+    /// 记下一个输入（占用、格式、引擎事件等）带来的变化，等下一轮检查时处理。
     fn apply(&mut self, input: Input) {
         let now = Instant::now();
         match input {
@@ -359,6 +365,7 @@ impl Task {
         }
     }
 
+    /// 检查一轮：列出已挂载的设备（只看属于 Aemeath 的），再逐个槽位判断和修复。
     async fn check(&mut self) {
         let imported: Vec<ImportedDevice> = match self.cli.imported().await {
             Ok(devices) => devices
@@ -434,6 +441,7 @@ impl Task {
         }
     }
 
+    /// 判断一个槽位并执行相应的动作：修复、卸下，或核对设备格式。
     async fn check_slot(&mut self, identity: &SlotIdentity, ports: &[VhciPort], endpoint: Option<SlotEndpoint>) {
         let slot = identity.slot;
         let Some(state) = self.slots.get(&slot) else {
@@ -528,7 +536,8 @@ impl Task {
         false
     }
 
-    /// 等服务端报告收到 import（ADR-0007 的成功判据）。期间照常处理其他输入。
+    /// 等服务端报告收到 import。`usbip.exe` 的退出码和输出分不清"挂上了"和"没挂上"，
+    /// 只有服务端真的收到 import 才算挂载成功。期间照常处理其他输入。
     async fn wait_for_connection(&mut self, slot: SlotId) -> bool {
         let deadline = Instant::now() + self.timing.attach_confirm;
         loop {
@@ -581,6 +590,7 @@ impl Task {
         Some(endpoint)
     }
 
+    /// 报告槽位状态；与上次相同时不重复报告。
     fn report(&mut self, slot: SlotId, health: SlotHealth, endpoint: Option<SlotEndpoint>) {
         let Some(state) = self.slots.get_mut(&slot) else {
             return;
@@ -622,6 +632,7 @@ fn desired_format(choice: SlotFormatChoice, engine_rate: SampleRate) -> (SampleR
     }
 }
 
+/// 端点当前的采样率和样本格式是否就是想要的。
 fn format_matches(current: Option<DeviceFormat>, (rate, sample_format): (SampleRate, SampleFormat)) -> bool {
     current.is_some_and(|format| format.sample_rate == rate && format.sample_format == sample_format)
 }

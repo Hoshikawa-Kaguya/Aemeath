@@ -1,4 +1,4 @@
-//! 主时钟调度（S4）与路由拓扑的执行。
+//! 主时钟调度与路由拓扑的执行。
 //!
 //! - [`timeline`]：速率可调的设备时间线（无锁）。
 //! - [`mixer`]：路由拓扑的执行（通道条、连线、求和、平滑、电平）。
@@ -48,25 +48,28 @@ use crate::resampler_worker::ResamplerWorker;
 use crate::scheduler::{Command, Scheduler};
 use crate::timeline::Timeline;
 
-/// 引擎内部一律是立体声（N 声道节点见选型报告第 10 节）
+/// 引擎内部一律是立体声；多声道节点目前不支持
 pub use aemeath_dsp::STEREO;
 
 /// 重建设备流之前，让这些节点淡出所等的时间。淡出的样本要先走完整条输出链路才到达设备：
 /// 通道条平滑 10 ms + 环形缓冲目标水位 15 ms + 重采样延迟（最多约 3 ms）+ 设备缓冲（默认约 10 ms）。
-/// 只等平滑时间就停掉旧流的话，设备里还在播放淡出之前的满幅度声音，会被突然切断（2026-11-08 E2E 实测为爆音）。
+/// 只等平滑时间就停掉旧流的话，设备里还在播放淡出之前的满幅度声音，会被突然切断，实测听起来就是爆音。
 /// 80 ms 覆盖到约 50 ms 的设备缓冲；更大的自定义缓冲很少见，最坏只是切换瞬间有一点咔哒声。
 const FADE: Duration = Duration::from_millis(80);
 
+/// 启动引擎所需的设置，来自命令行参数。
 #[derive(Debug, Clone, Copy)]
 pub struct EngineConfig {
+    /// USB/IP 服务端的监听端口
     pub usbip_port: u16,
+    /// 槽位以开发身份还是正式身份出现在 Windows 里
     pub identity: IdentityProfile,
 }
 
 /// 引擎报告给控制面的事件（再由宿主转成 IPC 消息）。
 #[derive(Debug, Clone, PartialEq)]
 pub enum EngineEvent {
-    /// USB/IP 服务端上某个槽位的连接状态（ADR-0007：挂载成功以收到 import 为准）
+    /// USB/IP 服务端上某个槽位的连接状态（挂载成功以收到 import 为准）
     SlotConnection { slot: SlotId, connected: bool },
     /// 主机为槽位选定的流格式；None 表示流停止
     SlotFormat { slot: SlotId, format: Option<DeviceFormat> },
@@ -78,6 +81,8 @@ pub enum EngineEvent {
     Recorder { node: NodeId, state: RecorderState },
 }
 
+/// 音频引擎：USB/IP 服务端、调度线程、外部设备和录音的总入口。
+/// 由宿主进程的非实时线程持有和调用，实时工作都在它启动的调度线程里。
 pub struct Engine {
     server: UsbipServer,
     commands: Sender<Command>,
@@ -147,6 +152,7 @@ impl Engine {
         })
     }
 
+    /// 服务端实际监听的地址；端口为 0 时由系统分配，要从这里取。
     pub fn usbip_address(&self) -> SocketAddr {
         self.server.local_addr()
     }
@@ -154,7 +160,7 @@ impl Engine {
     /// 校验并下发一份路由拓扑：导出它占用的槽位，构建混音器交给调度线程。
     ///
     /// 有外部设备的流要重建时（独占设置、格式、缓冲或重采样算法变了），先下发一份把这些节点静音的中间拓扑，
-    /// 借通道条的平滑让它们在 [`FADE`] 内淡出，再重建设备；新混音器从静音接过增益，再淡入（M2 计划 2.5）。
+    /// 借通道条的平滑让它们在 [`FADE`] 内淡出，再重建设备；新混音器从静音接过增益，再淡入。
     pub fn apply_topology(&mut self, topology: &RouteTopology) -> Result<(), TopologyError> {
         topology.validate()?;
         let reconfigured = self.devices.reconfigured_nodes(topology);

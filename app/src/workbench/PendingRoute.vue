@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { routeCurve } from './curve'
 
-// 拖线中的虚线（原型的 path.pending）。从输出端口拖时向右引出，从输入端口反向拖时从左侧进入。
+// 拖线中的虚线。从输出端口拖时向右引出，从输入端口反向拖时从左侧进入。
 const props = defineProps<{
   sourceX: number
   sourceY: number

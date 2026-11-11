@@ -11,11 +11,11 @@ import NodeMeter from '@/meters/NodeMeter.vue'
 import { useAppStore } from '@/stores/app'
 import { workbenchKey, type NodeData } from './context'
 
-// 工作台上的节点卡片（原型的 .node）：类型图标、名称、副标题、代号、电平或离线提示，左右两侧是端口。
+// 工作台上的节点卡片：类型图标、名称、副标题、代号、电平或离线提示，左右两侧是端口。
 // 宽度固定，长名字截断（节点名最长 64 个字符），悬停显示全名；双击名称或从菜单选"改名"可以改名。
 // 右上角的"⋯"按钮与右键打开同一个节点菜单。
 // 外部设备在线时显示实际使用的格式和独占与否；离线时醒目标出原因，并给出"重新检测"，
-// 独占打不开时另给"改用共享模式"（ADR-0014：不自动退回共享）。
+// 独占打不开时另给"改用共享模式"（不自动退回共享）。
 const props = defineProps<NodeProps<NodeData>>()
 const { t } = useI18n()
 const actions = inject(workbenchKey)
@@ -62,7 +62,7 @@ const notRunning = computed(() => node.value.status.state === 'notRunning')
 const isExternal = computed(() => node.value.device !== null)
 /**
  * 独占用不了时提供"改用共享模式"：被占用、不允许独占，以及无信号——有的设备独占时根本不交付数据
- * （2026-11-08 E2E：Realtek USB Audio 的 Rear Mic 独占时事件驱动和轮询都读不到包，共享时正常）
+ * （实测 Realtek USB Audio 的 Rear Mic 独占时事件驱动和轮询都读不到包，共享时正常）
  */
 const canUseShared = computed(() => {
   const status = node.value.status
@@ -482,7 +482,7 @@ function onKeyDown(event: KeyboardEvent): void {
   color: var(--text-3);
 }
 
-/* 端口：覆盖 Vue Flow 默认的手柄样式，位置与原型一致（距顶部 26 px） */
+/* 端口：覆盖 Vue Flow 默认的手柄样式，距顶部 26 px，与标题行对齐 */
 .port {
   top: 26px;
   width: 12px;

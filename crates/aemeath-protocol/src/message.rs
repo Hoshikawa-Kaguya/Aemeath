@@ -2,7 +2,7 @@
 //!
 //! 连接建立后，主程序先发 [`AppToEngine::Hello`]；引擎回 [`EngineToApp::Welcome`] 后才处理其他命令。
 //! 命令都带 [`RequestId`]，引擎用 [`EngineToApp::Ack`] 或 [`EngineToApp::Rejected`] 应答；
-//! 设备状态等事件由引擎主动推送，不需要应答。电平和录音数据不走这里，走共享内存（ADR-0003）。
+//! 设备状态等事件由引擎主动推送，不需要应答。电平和录音数据不走这里，走共享内存。
 
 use serde::{Deserialize, Serialize};
 
@@ -25,7 +25,7 @@ pub enum AppToEngine {
         request: RequestId,
         topology: RouteTopology,
     },
-    /// 心跳。主程序据此判断引擎是否假死（ADR-0008）。
+    /// 心跳。主程序据此判断引擎是否假死。
     Ping {
         request: RequestId,
     },
@@ -40,7 +40,7 @@ pub enum AppToEngine {
         endpoint: EndpointId,
         direction: EndpointDirection,
     },
-    /// 立即重新检测离线的外部设备（选型报告 6.5 节的手动检测）；`node` 为 None 表示全部。
+    /// 立即重新检测离线的外部设备，不等下一次自动重试；`node` 为 None 表示全部。
     Redetect {
         request: RequestId,
         node: Option<NodeId>,
@@ -94,7 +94,7 @@ pub enum EngineToApp {
     Pong { request: RequestId },
     /// IO 节点所代表端点的状态发生变化。
     EndpointStatus { node: NodeId, status: EndpointStatus },
-    /// USB/IP 服务端上某个槽位的连接状态发生变化（ADR-0007：挂载成功以服务端实际收到 import 为准）。
+    /// USB/IP 服务端上某个槽位的连接状态发生变化（挂载成功以服务端实际收到 import 为准）。
     SlotConnection { slot: SlotId, connected: bool },
     /// 主机为槽位选定的流格式（设备页显示）；为 None 表示流已停止。
     SlotFormat { slot: SlotId, format: Option<DeviceFormat> },
@@ -107,7 +107,7 @@ pub enum EngineToApp {
     },
 }
 
-/// 外部设备的能力（ADR-0014：独占时的格式和缓冲由用户在其中选择）。
+/// 外部设备的能力（独占时的格式和缓冲由用户在其中选择）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DeviceCapabilities {
@@ -122,7 +122,7 @@ pub struct DeviceCapabilities {
 }
 
 impl DeviceCapabilities {
-    /// 推荐的独占格式（ADR-0014）：采样率优先用引擎采样率，其次用共享格式的采样率，再其次取最高的；
+    /// 推荐的独占格式：采样率优先用引擎采样率，其次用共享格式的采样率，再其次取最高的；
     /// 样本格式取位深最高的（32 位整数优先于 32 位浮点，其次是 24 位）。
     pub fn recommended(&self, engine_rate: SampleRate) -> Option<DeviceFormat> {
         let shared_rate = self.shared_format.map(|format| format.sample_rate);
@@ -172,7 +172,7 @@ pub enum RecorderState {
     },
 }
 
-/// 录音出错的原因（M3 计划 R10）。
+/// 录音出错的原因。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RecordingFailure {
@@ -180,7 +180,7 @@ pub enum RecordingFailure {
     WriteFailed,
 }
 
-/// 端点的状态（GLOSSARY：离线；选型报告 6.5 节）。
+/// 端点的状态（GLOSSARY：离线）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
 pub enum EndpointStatus {
@@ -208,7 +208,7 @@ pub enum OfflineReason {
     NoSignal,
 }
 
-/// 设备格式：端点实际收发所用的采样率和样本格式（共享时由 Windows 确定，独占时由用户选定；ADR-0010、ADR-0014）。
+/// 设备格式：端点实际收发所用的采样率和样本格式（共享时由 Windows 确定，独占时由用户选定）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DeviceFormat {

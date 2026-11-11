@@ -1,4 +1,4 @@
-//! 启动时检查 usbip-win2 驱动（ADR-0011；方法见 `agent_tmp/docs/usbip-win2集成与升级.md` 第 5、7 节）。
+//! 启动时检查 usbip-win2 驱动是否已安装、版本是否够新、驱动服务能否运行。
 //!
 //! 先收集观测（注册表、`usbip.exe`、驱动服务、命令行自检），再由纯函数 [`evaluate`] 判定，便于测试。
 //! 任何一项不满足都拒绝启动：没有可用的驱动，虚拟设备就不存在，Aemeath 不提供降级模式。
@@ -90,7 +90,7 @@ pub async fn check(cli: Option<&UsbipCli>) -> Result<UsbipVersion, DriverProblem
         self_test,
     };
     info!(?inspection, "usbip-win2 inspected");
-    // 注册表与命令行的版本不一致时以命令行为准（集成文档第 5 节），只记日志
+    // 注册表与命令行的版本不一致时以命令行为准（它反映实际在用的文件），只记日志
     if let (Some(registered), Some(Ok(cli_version))) = (&inspection.registry_version, &inspection.cli_version)
         && registered.parse::<UsbipVersion>().ok() != Some(*cli_version)
     {

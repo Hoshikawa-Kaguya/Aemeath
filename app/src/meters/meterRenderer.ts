@@ -1,4 +1,4 @@
-// 电平表的绘制（ADR-0013）：数据由后端经 Channel 约 30 Hz 推送，这里用一个 requestAnimationFrame 循环
+// 电平表的绘制：数据由后端经 Channel 约 30 Hz 推送，这里用一个 requestAnimationFrame 循环
 // 统一绘制所有已注册的 <canvas>，完全绕过 Vue 的响应式更新。
 //
 // - 每次推送的是"自上次以来的峰值"，显示值取它与衰减后旧值中的较大者，两次推送之间按 DECAY_DB_PER_SECOND 衰减；
@@ -21,10 +21,12 @@ const SILENT_TEXT = '−∞'
 /** 立体声：两根条之间的间隔（CSS 像素） */
 const BAR_GAP = 1
 
+/** 线性峰值换算成 dBFS；0 为 −∞ */
 export function toDb(linear: number): number {
   return linear > 0 ? 20 * Math.log10(linear) : -Infinity
 }
 
+/** dBFS 在电平条上的位置（0 是最底端的 FLOOR_DB，1 是 0 dBFS） */
 function fraction(db: number): number {
   return Math.max(0, Math.min(1, (db - FLOOR_DB) / -FLOOR_DB))
 }
@@ -250,6 +252,7 @@ class MeterRenderer {
   }
 }
 
+/** 从当前主题的 CSS 变量读出电平表的颜色；canvas 不能直接引用 CSS 变量 */
 function readPalette(): Palette {
   const style = getComputedStyle(document.documentElement)
   const read = (name: string) => style.getPropertyValue(name).trim()

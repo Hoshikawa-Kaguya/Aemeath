@@ -15,7 +15,7 @@ path = "src/main.rs"
 embed-resource = { workspace = true }
 
 [features]
-# 打包脚本打开，见 M4 计划 I5：开发构建永远使用开发身份
+# 只由打包脚本打开：开发构建永远使用开发身份，不会和正式安装的虚拟设备混在一起
 production-identity = ["aemeath-runtime/production-identity"]
 
 [dependencies]

@@ -1,5 +1,5 @@
 //! 控制线程一侧对外部设备的管理：每个"端点 + 方向"一个 IO 线程（`aemeath-io`），主时钟跟随线程，
-//! 以及端点变化的监听（变化时立即重新检测离线设备，选型报告 6.5 节）。
+//! 以及端点变化的监听（变化时立即重新检测离线设备）。
 //!
 //! 换拓扑时：
 //! - 配置（引擎采样率、重采样算法、独占设置）没变、继续使用的设备，IO 线程不重启；它在引擎一侧的端口
@@ -82,6 +82,7 @@ struct AppBridge {
     config: AppSourceConfig,
 }
 
+/// 引擎里全部外部设备和应用源的 IO 线程，按路由拓扑增减；还负责选出主时钟设备并运行跟随线程。
 pub struct ExternalDevices {
     bridges: HashMap<DeviceKey, Bridge>,
     apps: HashMap<ProgramPath, AppBridge>,
@@ -112,7 +113,7 @@ impl ExternalDevices {
         }
     }
 
-    /// 回答设备能力查询（主程序的"添加节点"和节点设置用，ADR-0014）。
+    /// 回答设备能力查询（主程序的"添加节点"和节点设置用）。
     pub fn prober(&self) -> DeviceProber {
         DeviceProber::new(self.context.capabilities.clone())
     }

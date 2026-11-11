@@ -23,6 +23,7 @@ const CHUNKS_PER_SECOND: u32 = 1000;
 /// 读设备数据的初始缓冲：100 ms，不够时再增长
 const INITIAL_READ_MS: u32 = 100;
 
+/// 一路录音流从设备到环形缓冲的搬运者，状态（重采样器、控制器、统计）跨多次读包保留。
 pub struct CapturePump {
     codec: FrameCodec,
     block_align: usize,

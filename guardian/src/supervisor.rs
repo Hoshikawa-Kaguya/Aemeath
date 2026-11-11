@@ -1,4 +1,4 @@
-//! 拉起并监视引擎与主程序（ADR-0003、ADR-0008）。
+//! 拉起并监视引擎与主程序。
 //!
 //! - 先拉起引擎，再拉起主程序。
 //! - 任一进程异常退出时按退避间隔重新拉起；连续运行超过 [`Timing::healthy_after`] 后退避清零。
@@ -71,6 +71,7 @@ impl Managed {
         }
     }
 
+    /// 进程没在运行并且退避时间已到，就拉起它；拉起失败也按退避安排下一次。
     fn start_if_due(&mut self, launch: &mut impl FnMut(Role) -> io::Result<Child>, timing: &Timing) {
         let now = Instant::now();
         if self.child.is_some() || now < self.next_start {
@@ -106,6 +107,7 @@ impl Managed {
         }
     }
 
+    /// 按连续失败次数退避，安排下一次拉起；上次连续运行够久就从头计数。`minimum` 是至少要等的时间。
     fn schedule_restart(&mut self, now: Instant, timing: &Timing, minimum: Duration) {
         if now.duration_since(self.started) >= timing.healthy_after {
             self.failures = 0;

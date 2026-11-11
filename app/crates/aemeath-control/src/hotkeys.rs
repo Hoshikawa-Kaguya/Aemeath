@@ -1,4 +1,4 @@
-//! 热键服务（M3 计划 2.6）：把绑定列表注册到系统，把原始输入翻译成"触发、按下、松开"。
+//! 热键服务：把绑定列表注册到系统，把原始输入翻译成"触发、按下、松开"。
 //!
 //! 键盘的切换型用 `RegisterHotKey`（会吞掉按键，所以必须带修饰键）；按住型和鼠标侧键用低级钩子（不吞键）。
 //! 钩子只在有绑定需要时才安装，没有这类绑定时进程不挂任何全局钩子。
@@ -94,6 +94,7 @@ impl Matcher {
             .copied()
     }
 
+    /// 钩子收到的一次按下或松开：按下时匹配当前修饰键，切换型触发一次，按住型开始；松开时结束按住型。
     fn on_key(&mut self, key: KeyCode, down: bool, events: &mut Vec<HotkeyEvent>) {
         if down {
             let Some(hotkey) = self.find(key) else {
@@ -120,6 +121,7 @@ impl Matcher {
         }
     }
 
+    /// 把一条原始输入（`RegisterHotKey` 的消息或钩子事件）翻译成热键事件。
     fn on_input(&mut self, input: RawInput) -> Vec<HotkeyEvent> {
         let mut events = Vec::new();
         match input {
@@ -166,6 +168,7 @@ pub struct HotkeyService {
 }
 
 impl HotkeyService {
+    /// 启动输入线程。一开始没有绑定，由 [`Self::set_bindings`] 设定；触发的热键送往 `events`。
     pub fn start(events: mpsc::UnboundedSender<HotkeyEvent>) -> Result<Self, InputThreadError> {
         let (input, raw) = InputThread::start()?;
         let shared = Arc::new(Mutex::new(Shared {
@@ -204,12 +207,14 @@ impl HotkeyService {
         }
     }
 
+    /// 结束 [`Self::pause`]，按当前绑定重新注册。
     pub fn resume(&self) {
         let mut shared = self.shared.lock().unwrap_or_else(PoisonError::into_inner);
         apply(&mut shared, &self.input);
     }
 }
 
+/// 注销全部热键，清空匹配状态。
 fn release_all(shared: &mut Shared, input: &InputThread) {
     for id in std::mem::take(&mut shared.registered_ids) {
         input.unregister(id);
@@ -261,6 +266,7 @@ fn apply(shared: &mut Shared, input: &InputThread) {
     }
 }
 
+/// 转发线程：把输入线程的原始输入翻译后送给控制面。输入线程只管收消息，不在钩子回调里做匹配，免得拖慢系统输入。
 fn forward(raw: &Receiver<RawInput>, shared: &Mutex<Shared>, events: &mpsc::UnboundedSender<HotkeyEvent>) {
     while let Ok(event) = raw.recv() {
         let out = shared

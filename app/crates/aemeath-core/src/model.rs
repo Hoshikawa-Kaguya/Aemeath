@@ -53,7 +53,7 @@ impl From<NodeName> for String {
 #[error("node names must be 1 to {max} characters", max = NodeName::MAX_CHARS)]
 pub struct InvalidName;
 
-/// 外部设备：Windows 端点 ID，加上设备名。端点 ID 找不到时按设备名加方向做后备匹配（选型报告 6.5 节）。
+/// 外部设备：Windows 端点 ID，加上设备名。端点 ID 找不到时按设备名加方向做后备匹配。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DeviceRef {
@@ -73,6 +73,7 @@ pub struct Position {
     pub y: f64,
 }
 
+/// 工作台上的一个节点：路由拓扑需要的内容，加上名称、位置这些只给界面用的数据。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Node {
@@ -81,7 +82,7 @@ pub struct Node {
     pub kind: NodeKind,
     #[serde(default)]
     pub strip: Strip,
-    /// 外部设备节点的设备设置（ADR-0014）；其他节点为 None。外部设备节点缺少它时按默认值（独占）
+    /// 外部设备节点的设备设置；其他节点为 None。外部设备节点缺少它时按默认值（独占）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub io: Option<DeviceSettings>,
     /// 占用槽位的节点的格式与重采样算法；随节点换槽位、删除、撤销删除。其他节点为 None

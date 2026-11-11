@@ -35,9 +35,9 @@ import {
   type WorkbenchActions,
 } from '@/workbench/context'
 
-// 工作台（原型的连线图）：节点与连线、拖线校验并说明原因、选中后按 Del 删除、撤销（ADR-0013）。
+// 工作台：节点与连线、拖线校验并说明原因、选中后按 Del 删除、撤销。
 // 连线规则只在后端定义一次（aemeath_protocol::topology::check_route）：拖线开始时取回全部候选节点的判定，
-// 拖动中按指针下方的节点即时提示。放在整个节点上即可连线，不必对准端口（与原型一致）。
+// 拖动中按指针下方的节点即时提示。放在整个节点上即可连线，不必对准端口，小小的端口不好瞄准。
 
 /** 点阵背景的间距（工作台坐标） */
 const GRID = 20
@@ -344,6 +344,7 @@ function openSelectionMenu(): boolean {
   return false
 }
 
+/** 拖线期间跟踪指针：记下位置（画虚线用）和指针下方的节点（判定能否连线用） */
 function trackPointer(event: PointerEvent): void {
   const rect = pane.value?.getBoundingClientRect()
   pointer.value = { x: event.clientX - (rect?.left ?? 0), y: event.clientY - (rect?.top ?? 0) }
@@ -352,6 +353,10 @@ function trackPointer(event: PointerEvent): void {
   hovered.value = id === undefined ? null : Number(id)
 }
 
+/**
+ * 开始拖线：向后端要所有节点的连线判定，拖动中据此即时提示。
+ * 判定是异步取回的，用 `attempt` 丢掉上一次拖线迟到的结果
+ */
 function onConnectStart(params: { event?: MouseEvent | TouchEvent } & OnConnectStartParams): void {
   if (params.nodeId === undefined) {
     return
@@ -371,6 +376,7 @@ function onConnectStart(params: { event?: MouseEvent | TouchEvent } & OnConnectS
     .catch((error: unknown) => store.showToast(store.errorText(error)))
 }
 
+/** 松开拖线：落在允许连线的节点上就建立连线并选中它，否则什么都不做 */
 function onConnectEnd(): void {
   const current = connecting.value
   const target = hovered.value
@@ -395,6 +401,7 @@ function onNodeDragStart(event: NodeDragEvent): void {
   dragging.value = Number(event.node.id)
 }
 
+/** 拖完节点后把新位置存到后端 */
 async function onNodeDragStop(event: NodeDragEvent): Promise<void> {
   const id = Number(event.node.id)
   const { x, y } = event.node.position
@@ -453,10 +460,12 @@ function onNodesInitialized(): void {
   }
 }
 
+/** 焦点在输入框或对话框里时，工作台的快捷键不生效，免得打字时误删节点 */
 function isTyping(target: EventTarget | null): boolean {
   return target instanceof Element && target.closest('input, textarea, select, fluent-dialog') !== null
 }
 
+/** 工作台的快捷键：Ctrl+Z 撤销、Esc 取消选中、菜单键打开菜单、Del 删除选中的对象 */
 function onKeyDown(event: KeyboardEvent): void {
   if (isTyping(event.target)) {
     return
@@ -613,7 +622,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-/* 三栏布局（原型的 #page-workbench）：工作台 | 路由矩阵，下方整行是控制台 */
+/* 三栏布局：工作台 | 路由矩阵，下方整行是控制台 */
 .workbench {
   display: grid;
   grid-template-columns: minmax(0, 1fr) fit-content(50%);

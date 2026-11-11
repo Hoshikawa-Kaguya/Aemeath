@@ -1,6 +1,6 @@
 //! 驱动不可用时对话框的文案（中文、英文）。守护进程没有界面语言包，文案写在这里。
 //!
-//! 未安装或版本过旧时引导安装附带的驱动（ADR-0011，M4 计划 G1–G5）；其余情况只说明原因。
+//! 未安装或版本过旧时引导安装附带的驱动；其余情况只说明原因。
 
 use aemeath_control::usbip_cli::UsbipVersion;
 use aemeath_core::preferences::LanguagePreference;
@@ -32,6 +32,7 @@ pub fn pick_language(preference: Option<&LanguagePreference>, system: &[String])
     }
 }
 
+/// 说明驱动问题的对话框文案。
 pub fn dialog(problem: &DriverProblem, language: Language) -> ErrorDialog {
     let bundled = UsbipVersion::BUNDLED;
     let minimum = UsbipVersion::MINIMUM;
@@ -110,7 +111,7 @@ pub fn dialog(problem: &DriverProblem, language: Language) -> ErrorDialog {
     }
 }
 
-/// 第一个对话框：说明需要安装驱动，提供"安装驱动"和"退出"（G1、G4）。
+/// 第一个对话框：说明需要安装驱动，提供"安装驱动"和"退出"。
 pub fn install_prompt(problem: &DriverProblem, language: Language) -> ChoiceDialog {
     let bundled = UsbipVersion::BUNDLED;
     let upgrading = matches!(problem, DriverProblem::TooOld { .. });
@@ -159,6 +160,7 @@ pub fn install_prompt(problem: &DriverProblem, language: Language) -> ChoiceDial
     }
 }
 
+/// 安装驱动期间显示的进度对话框文案。
 pub fn installing(language: Language) -> ProgressDialog {
     let (heading, content) = match language {
         Language::Chinese => ("正在安装 usbip-win2…", "这可能需要一分钟左右，请不要关闭电脑。"),
@@ -174,7 +176,7 @@ pub fn installing(language: Language) -> ProgressDialog {
     }
 }
 
-/// 安装失败：显示退出码和日志路径，按钮是"重试"和"退出"（G5）。
+/// 安装失败：显示退出码和日志路径，按钮是"重试"和"退出"。
 pub fn install_failed(detail: &str, log: &Path, language: Language) -> ChoiceDialog {
     let log = log.display();
     let (heading, content, primary, close) = match language {
@@ -201,7 +203,7 @@ pub fn install_failed(detail: &str, log: &Path, language: Language) -> ChoiceDia
     }
 }
 
-/// 安装后驱动没有运行：分不清"需要重启"和"真的装不上"，提示重启并附日志路径（G3）。
+/// 安装后驱动没有运行：分不清"需要重启"和"真的装不上"，提示重启并附日志路径。
 pub fn restart_needed(log: &Path, language: Language) -> ErrorDialog {
     let log = log.display();
     let (heading, content) = match language {
@@ -226,7 +228,7 @@ pub fn restart_needed(log: &Path, language: Language) -> ErrorDialog {
     }
 }
 
-/// 移除虚拟设备时有实例卸载失败（C2）。
+/// 移除虚拟设备时有实例卸载失败。
 pub fn cleanup_failed(failures: usize, log: &Path, language: Language) -> ErrorDialog {
     let log = log.display();
     let (heading, content) = match language {

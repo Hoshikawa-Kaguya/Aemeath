@@ -3,6 +3,7 @@
 
 const INTERVAL_MS = 50
 
+/** 包装 `send`：返回的函数可以随意频繁调用，实际发送受上述频率限制 */
 export function throttled<T>(send: (value: T) => void): (value: T) => void {
   let timer = 0
   let pending: { value: T } | null = null

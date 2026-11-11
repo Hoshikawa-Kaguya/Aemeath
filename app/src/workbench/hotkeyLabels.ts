@@ -71,6 +71,7 @@ function keyName(vk: number): string {
   return NAMED_KEYS[vk] ?? `VK 0x${vk.toString(HEX).toUpperCase()}`
 }
 
+/** 热键的显示文字，例如"Ctrl + Shift + M"；修饰键按 Windows 的习惯顺序排列 */
 export function formatHotkey(hotkey: HotkeyView): string {
   const { t } = i18n.global
   const parts: string[] = []

@@ -23,9 +23,9 @@ import { pickProgram } from './pickProgram'
 import ResamplerField from './ResamplerField.vue'
 import SlotSettingsFields from './SlotSettingsFields.vue'
 
-// 节点设置（M2 计划 2.2）：从节点的"⋯"按钮或右键菜单打开，尺寸固定，点"确定"才生效。
-// 内容随节点类型而定：名称；虚拟节点改选槽位；输入节点的门限；外部设备的独占、格式、缓冲与重采样算法（ADR-0014）；
-// 应用源的程序与重采样算法（M3 计划 A8）；是否固定到控制台。改了设备设置时，该设备的流淡出、重新打开、再淡入。
+// 节点设置：从节点的"⋯"按钮或右键菜单打开，尺寸固定，点"确定"才生效。
+// 内容随节点类型而定：名称；虚拟节点改选槽位；输入节点的门限；外部设备的独占、格式、缓冲与重采样算法；
+// 应用源的程序与重采样算法；是否固定到控制台。改了设备设置时，该设备的流淡出、重新打开、再淡入。
 interface FluentDialog extends HTMLElement {
   show(): void
   hide(): void
@@ -51,7 +51,7 @@ const recorder = ref<RecorderSettingsView>({ format: 'flac', depth: 'int24' })
 
 const node = computed(() => (nodeId.value === null ? undefined : store.nodeById.get(nodeId.value)))
 const deviceDirection = computed(() => (node.value?.kind === 'externalOutput' ? 'output' : 'input'))
-/** 外部插入的送出端在 Windows 里的设备名，用户要在外部程序里选它（M3 计划 X3） */
+/** 外部插入的送出端在 Windows 里的设备名，用户要在外部程序里选它 */
 const sendDevice = computed(() => {
   const current = node.value
   if (current?.kind !== 'externalInsert' || current.slot === null) {
@@ -62,13 +62,14 @@ const sendDevice = computed(() => {
   return row?.deviceName ?? slotName(current.slot)
 })
 
-/** FLAC 不支持浮点（M3 计划 R2） */
+/** FLAC 不支持浮点 */
 function fixDepth(): void {
   if (recorder.value.format === 'flac' && recorder.value.depth === 'float32') {
     recorder.value.depth = 'int24'
   }
 }
 
+/** 复制送出端的设备名，方便粘贴到外部程序里查找 */
 function copySend(): void {
   if (sendDevice.value !== null) {
     navigator.clipboard.writeText(sendDevice.value).catch(() => store.showToast(t('nodeSettings.copyFailed')))
@@ -91,6 +92,7 @@ const gateText = computed(() => {
 })
 const canConfirm = computed(() => node.value !== undefined && name.value.trim() !== '')
 
+/** 用节点当前的设置填好表单后打开；改动要点"确定"才生效 */
 function open(target: NodeView): void {
   nodeId.value = target.id
   name.value = target.name
@@ -116,12 +118,13 @@ async function chooseProgram(): Promise<void> {
   }
 }
 
+/** 只提交改过的设置；改格式会打断正在使用设备的应用，先确认 */
 async function confirm(): Promise<void> {
   const current = node.value
   if (current === undefined) {
     return
   }
-  // 改格式会让端点上已有的流作废，正在使用这个设备的应用要重新打开（S2）
+  // 改格式会让端点上已有的流作废，正在使用这个设备的应用要重新打开
   const formatChanged =
     current.slotSettings !== null &&
     JSON.stringify(slotSettings.value.format) !== JSON.stringify(current.slotSettings.format)

@@ -1,6 +1,6 @@
-//! 检查更新（M4 计划 1.6 节）：Velopack 的 `UpdateManager`，检查和下载都在阻塞线程上进行，不经过控制面的 actor。
+//! 检查更新：Velopack 的 `UpdateManager`，检查和下载都在阻塞线程上进行，不经过控制面的 actor。
 //!
-//! 正式构建连 GitHub Releases；开发构建不连网，用环境变量 `AEMEATH_UPDATE_DIR` 指定的本地目录（U7）。
+//! 正式构建连 GitHub Releases；开发构建不连网，用环境变量 `AEMEATH_UPDATE_DIR` 指定的本地目录。
 //! 没有打包时（开发运行）`UpdateManager` 建不起来，界面不显示更新操作。
 
 use std::sync::mpsc::channel;
@@ -18,13 +18,14 @@ use crate::recording::RecorderStateView;
 const RELEASES_PAGE: &str = "https://github.com/Hoshikawa-Kaguya/Aemeath/releases";
 const UPDATE_EVENT: &str = "update-changed";
 
-/// 只看最新的正式 release（U1、U2），打包时用 `--delta none`
+/// 只看最新的正式 release，打包时用 `--delta none`
 #[cfg(feature = "production-identity")]
 fn update_source() -> Option<Box<dyn UpdateSource>> {
     const RELEASE_FEED: &str = "https://github.com/Hoshikawa-Kaguya/Aemeath/releases/latest/download";
     Some(Box::new(velopack::sources::HttpSource::new(RELEASE_FEED)))
 }
 
+/// 开发构建不连网：只在设置了环境变量时，从它指向的本地目录检查更新，用来测试升级流程。
 #[cfg(not(feature = "production-identity"))]
 fn update_source() -> Option<Box<dyn UpdateSource>> {
     const UPDATE_DIR_VARIABLE: &str = "AEMEATH_UPDATE_DIR";
@@ -143,7 +144,7 @@ impl UpdateService {
                 service.set_state(UpdateState::Available { version });
             }
             Ok(UpdateCheck::NoUpdateAvailable | UpdateCheck::RemoteIsEmpty) => service.set_state(UpdateState::UpToDate),
-            // 检查失败不打扰，只在设置页显示（U6）
+            // 检查失败不打扰，只在设置页显示
             Err(error) => {
                 warn!(%error, "the update check failed");
                 service.set_state(UpdateState::Failed);
@@ -198,7 +199,7 @@ impl UpdateService {
         });
     }
 
-    /// 应用已下载的更新：安排 Velopack 在本进程退出后替换文件并重启，然后整体退出。录音进行中时禁止（U3）。
+    /// 应用已下载的更新：安排 Velopack 在本进程退出后替换文件并重启，然后整体退出。录音进行中时禁止。
     pub async fn apply(&self, controller: &ControllerHandle) -> Result<(), CommandError> {
         let failed = |message: String| CommandError::Failed { message };
         let manager = self

@@ -1,4 +1,4 @@
-//! 驱动不可用时的引导（ADR-0011，M4 计划 G1–G5）：对话框 → UAC → 静默安装 → 再次检查 → 继续启动或提示重启。
+//! 驱动不可用时的引导：对话框 → UAC → 静默安装 → 再次检查 → 继续启动或提示重启。
 
 use std::path::Path;
 
@@ -11,12 +11,12 @@ use crate::driver::DriverProblem;
 use crate::elevated::{INSTALL_DRIVER_ARGUMENT, installer_log, installer_path};
 use crate::messages::{self, Language};
 
-/// 这个问题能否靠运行附带的安装程序解决（G4）。服务无法运行时重新安装也解决不了。
+/// 这个问题能否靠运行附带的安装程序解决。服务无法运行时重新安装也解决不了。
 pub fn can_install(problem: &DriverProblem) -> bool {
     matches!(problem, DriverProblem::NotInstalled | DriverProblem::TooOld { .. })
 }
 
-/// 安装程序运行完后，再次检查的结果决定下一步（G3）。
+/// 安装程序运行完后，再次检查的结果决定下一步。
 #[derive(Debug, PartialEq, Eq)]
 pub enum AfterInstall {
     Continue,
@@ -25,6 +25,7 @@ pub enum AfterInstall {
     Explain(DriverProblem),
 }
 
+/// 安装后再检查一次，决定下一步：驱动可用就继续启动；服务没起来或还查不到安装，多半要重启电脑；其他问题照常说明。
 pub fn after_install(recheck: Result<(), DriverProblem>) -> AfterInstall {
     match recheck {
         Ok(()) => AfterInstall::Continue,
@@ -40,6 +41,7 @@ enum Attempt {
     Failed(String),
 }
 
+/// 经 UAC 启动提权的自己去安装驱动，并等它结束。用户在 UAC 里选"否"时返回 `Declined`。
 fn attempt(program: &Path, config: &RuntimeConfig) -> Attempt {
     let arguments = format!("{INSTALL_DRIVER_ARGUMENT} \"{}\"", config.data_dir.display());
     match run_elevated(program, &arguments) {
@@ -97,7 +99,7 @@ pub fn resolve(
                     }
                 };
             }
-            // UAC 选"否"回到第一个对话框（G5）
+            // UAC 选"否"回到第一个对话框
             Attempt::Declined => ask_first = true,
             Attempt::Failed(detail) => {
                 error!(%detail, "the driver installation failed");

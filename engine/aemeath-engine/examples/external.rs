@@ -10,7 +10,7 @@
 //! 用法：`cargo run -p aemeath-engine --example external --release -- [秒数] [--output 名称] [--input 名称] [--exclusive]
 //! [--output-rate 采样率] [--resampler poly|sinc|fft]`
 //! 默认两台外部设备都以共享方式打开（为了环回检查）；`--exclusive` 时独占打开，不做环回检查。
-//! `--output-rate` 让外部输出独占并固定在这个采样率（高采样率断音的复现，M4 计划 1.2 节），外部输入不受影响。
+//! `--output-rate` 让外部输出独占并固定在这个采样率（高采样率断音的复现），外部输入不受影响。
 //! 不指定名称时用系统默认的播放和录音设备。外部输出会发出很轻的 1 kHz 提示音。agent 执行时不超过 5 分钟。
 
 mod common;
@@ -49,7 +49,7 @@ struct Options {
     seconds: f64,
     output: Option<String>,
     input: Option<String>,
-    /// 两台外部设备都以独占方式打开（ADR-0014）。独占的流不经过 Windows 混音器，环回录不到，
+    /// 两台外部设备都以独占方式打开。独占的流不经过 Windows 混音器，环回录不到，
     /// 所以这时不做环回检查，只检查两台设备都在线、没有离线
     exclusive: bool,
     output_rate: Option<u32>,

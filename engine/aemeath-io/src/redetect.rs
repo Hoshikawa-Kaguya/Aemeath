@@ -1,4 +1,4 @@
-//! 离线设备的重新检测（选型报告 6.5 节）。
+//! 离线设备的重新检测。
 //!
 //! - 定时重试：节点进入离线后，前 [`FAST_RETRY_FOR`] 每 [`FAST_RETRY`] 一次，之后每 [`SLOW_RETRY`] 一次。
 //!   其他程序释放设备时系统不发通知，只能靠定时重试发现。
@@ -11,8 +11,11 @@ use std::time::{Duration, Instant};
 
 use aemeath_protocol::ids::{EndpointId, ProgramPath};
 
+/// 刚离线时的重试间隔：设备多半只是被拔出又插回，尽快恢复出声
 pub const FAST_RETRY: Duration = Duration::from_secs(2);
+/// 离线超过这么久就改用慢速重试
 pub const FAST_RETRY_FOR: Duration = Duration::from_secs(120);
+/// 长时间离线后的重试间隔：设备可能已经不在了，不必频繁打扰系统
 pub const SLOW_RETRY: Duration = Duration::from_secs(10);
 /// 等待期间检查停止信号的间隔
 const STOP_POLL: Duration = Duration::from_millis(100);
@@ -55,6 +58,7 @@ impl Redetect {
         self.wake(Scope::Targets(targets));
     }
 
+    /// 递增代数并唤醒所有等待者，各自按 `scope` 判断这次是不是叫自己。
     fn wake(&self, scope: Scope) {
         let (lock, condvar) = &*self.shared;
         let mut state = lock.lock().unwrap_or_else(PoisonError::into_inner);
@@ -94,6 +98,7 @@ impl Redetect {
     }
 }
 
+/// 这次重新检测是否包含 `target`。
 fn applies(scope: Option<&Scope>, target: &RedetectTarget) -> bool {
     match scope {
         None | Some(Scope::All) => true,

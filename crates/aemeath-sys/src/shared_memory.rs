@@ -1,4 +1,4 @@
-//! 只允许当前用户访问的命名共享内存，以 `AtomicU32` 数组的形式访问（电平等高频数据，ADR-0003）。
+//! 只允许当前用户访问的命名共享内存，以 `AtomicU32` 数组的形式访问（电平等高频数据）。
 //!
 //! 两个进程只通过原子操作读写这块内存，内容的布局由调用方约定（见 `aemeath_protocol::meters`）。
 
@@ -73,6 +73,7 @@ impl SharedMemory {
         Self::map(handle, words, true)
     }
 
+    /// 把映射对象映射进本进程；`existed` 记下这块内存是不是别的进程先建的。
     fn map(handle: HANDLE, words: usize, existed: bool) -> io::Result<Self> {
         let bytes = byte_len(words)?;
         // SAFETY: handle 是有效的映射对象句柄；映射的长度不超过对象大小，否则调用失败并返回空地址
@@ -96,6 +97,7 @@ impl SharedMemory {
         self.existed
     }
 
+    /// 以原子量数组访问整块共享内存。
     pub fn words(&self) -> &[AtomicU32] {
         // SAFETY: 映射至少有 words 个字，按页对齐（满足 AtomicU32 的对齐）；映射在 self 存活期间有效；
         // 内容只以原子类型访问，其他进程的并发写入不会造成数据竞争

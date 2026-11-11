@@ -1,4 +1,4 @@
-//! 判断一个槽位的挂载是否正常（ADR-0007），纯函数，不做 IO。
+//! 判断一个槽位的挂载是否正常，纯函数，不做 IO。
 //!
 //! 被占用的槽位，三者同时满足才算正常：
 //! 1. usbip-win2 的已导入列表里，有且只有一个指向 Aemeath 服务端口和该 busid 的条目；
@@ -6,7 +6,7 @@
 //! 3. 对应的音频端点处于 ACTIVE 状态。刚挂上时 Windows 需要一点时间（首次安装驱动可能接近 1 分钟），
 //!    所以连接建立后的一段宽限期内只算"等待端点出现"。
 //!
-//! 没有被占用的槽位保持卸下（ADR-0009"拔出"）：列表里还有它的条目就要卸下。
+//! 没有被占用的槽位保持卸下：列表里还有它的条目就要卸下。
 
 use std::time::Duration;
 
@@ -39,11 +39,14 @@ pub enum RepairReason {
     EndpointInactive,
 }
 
+/// 对一个槽位的判断结果，决定挂载维护下一步做什么。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Assessment {
+    /// 被占用，挂载正常
     Healthy,
     /// 连接已建立，等待端点出现
     Settling,
+    /// 被占用，但挂载不正常：需要重新挂载（有残留条目时先卸下）
     Repair(RepairReason),
     /// 没有被占用，但列表里还有条目：需要卸下
     Unplug,
@@ -51,6 +54,7 @@ pub enum Assessment {
     Unplugged,
 }
 
+/// 根据一次观测判断槽位的状态。`endpoint_grace` 是连接建立后允许端点还没出现的时间。
 pub fn assess(observation: &Observation<'_>, endpoint_grace: Duration) -> Assessment {
     if !observation.occupied {
         return if observation.ports.is_empty() {

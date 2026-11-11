@@ -123,10 +123,12 @@ export const backend = {
     invoke<void>('set_tray_labels', { labels }),
 }
 
+/** 订阅后端推送的完整状态；返回取消订阅的函数 */
 export function onStateChanged(handler: (state: ViewState) => void): Promise<UnlistenFn> {
   return listen<ViewState>(STATE_EVENT, (event) => handler(event.payload))
 }
 
+/** 订阅检查更新的进展（检查、下载、待重启） */
 export function onUpdateChanged(handler: (update: UpdateView) => void): Promise<UnlistenFn> {
   return listen<UpdateView>(UPDATE_EVENT, (event) => handler(event.payload))
 }

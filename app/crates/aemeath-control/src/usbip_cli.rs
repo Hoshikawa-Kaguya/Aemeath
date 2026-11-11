@@ -1,8 +1,8 @@
-//! `usbip.exe` 命令行封装（契约见 `agent_tmp/docs/usbip-win2集成与升级.md` 第 3、4、7 节）。
+//! `usbip.exe` 命令行封装。usbip-win2 的 C++ 接口无法直接调用，命令行是它唯一稳定的对外接口。
 //!
 //! 只使用 5 种调用：`--version`、`port`、`attach --once`、`attach --stop`、`detach -p`。
 //! `--stop-all`、`detach --all`、`port --stash`、`attach --persistent` 会影响其他 usbip-win2 用户
-//! 或已被证明不可靠（ADR-0007），这里不提供。
+//! 或已被证明不可靠，这里不提供。
 //!
 //! - 只按退出码判断成败：错误文本会随系统语言本地化，只写日志。
 //! - "设备已挂载"和"busid 不存在"的输出完全相同，挂载是否成功由调用方以服务端实际收到 import 为准。
@@ -77,14 +77,14 @@ pub struct UsbipVersion {
 }
 
 impl UsbipVersion {
-    /// Aemeath 随包附带并测试过的版本（ADR-0011）
+    /// Aemeath 随包附带并测试过的版本
     pub const BUNDLED: Self = Self {
         major: 0,
         minor: 9,
         patch: 8,
         build: 1,
     };
-    /// 支持的最低版本（集成文档第 5 节）
+    /// 支持的最低版本；更早的 0.9.7.8 有已知问题
     pub const MINIMUM: Self = Self {
         major: 0,
         minor: 9,
@@ -192,7 +192,7 @@ impl UsbipCli {
         Ok(parse_port_list(&output.stdout))
     }
 
-    /// 启动自检（集成文档第 7 节）：`port` 的输出要么为空，要么至少能解析出一个条目。
+    /// 启动自检，确认这个版本的输出格式还认得：`port` 的输出要么为空，要么至少能解析出一个条目。
     /// 否则说明命令行与 Aemeath 不兼容，Aemeath 无法管理虚拟设备。
     pub async fn self_test(&self) -> Result<(), CliError> {
         let output = self.run(&["port"]).await?;
@@ -204,7 +204,7 @@ impl UsbipCli {
     }
 
     /// `attach --once`：挂载一次，返回 vhci 端口号。成功只说明驱动接受了请求，
-    /// 是否真正挂上要看服务端有没有收到 import（ADR-0007）。
+    /// 是否真正挂上要看服务端有没有收到 import。
     pub async fn attach(&self, busid: &BusId) -> Result<VhciPort, CliError> {
         let port = self.server_port.to_string();
         let args = [
@@ -246,6 +246,7 @@ impl UsbipCli {
         self.run(&["detach", "-p", port.as_str()]).await.map(drop)
     }
 
+    /// 运行一次 `usbip.exe` 并收集输出；超时就结束它。每次调用的参数、耗时和成败都写进调试日志。
     async fn run(&self, args: &[&str]) -> Result<Output, CliError> {
         let started = Instant::now();
         let child = tokio::process::Command::new(&self.program)
@@ -390,7 +391,7 @@ fn parse_url_line(line: &str) -> Option<(String, u16, String)> {
 mod tests {
     use super::*;
 
-    /// 样本格式：`# 命令`、`# exit=...`、`## stdout`、输出、`## stderr`、输出（S3 的录制脚本）
+    /// 样本格式：`# 命令`、`# exit=...`、`## stdout`、输出、`## stderr`、输出（录制样本时的固定格式）
     fn stdout_of(sample: &str) -> &str {
         let start = sample
             .find("## stdout\n")

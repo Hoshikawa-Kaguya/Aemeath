@@ -18,6 +18,7 @@ pub struct LocalDateTime {
     pub second: u16,
 }
 
+/// 当前的本地时间，用于录音文件名等给用户看的时间。
 pub fn local_date_time() -> LocalDateTime {
     // SAFETY: GetLocalTime 没有前置条件，总是成功
     let now = unsafe { GetLocalTime() };

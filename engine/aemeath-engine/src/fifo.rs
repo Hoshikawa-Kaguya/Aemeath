@@ -4,6 +4,7 @@
 
 use crate::STEREO;
 
+/// 定长的交错立体声帧队列，满了丢最旧的帧。
 #[derive(Debug, Clone)]
 pub struct FrameFifo {
     samples: Vec<f32>,
@@ -31,6 +32,7 @@ impl FrameFifo {
         self.len_frames == 0
     }
 
+    /// 清空队列，不释放内存。
     pub fn clear(&mut self) {
         self.read = 0;
         self.len_frames = 0;

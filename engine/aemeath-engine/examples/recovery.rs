@@ -305,7 +305,7 @@ fn engine_topology(fake_output: EndpointId, fake_input: EndpointId) -> Result<Ro
                     slot: slot(SlotDirection::In, 1)?,
                 },
             ),
-            // 外部输出按默认值独占打开（ADR-0014）；外部输入改为共享，
+            // 外部输出按默认值独占打开；外部输入改为共享，
             // 因为测试还要以共享方式直接录这台"外部设备"（第一跳），独占时它打不开
             node(external_output, NodeKind::ExternalOutput { device: fake_output }),
             TopologyNode {

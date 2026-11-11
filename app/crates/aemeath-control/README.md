@@ -1,12 +1,12 @@
 # aemeath-control
 
-主程序的控制面：`usbip.exe` 命令行封装、与引擎的 IPC、电平读取、槽位的挂载维护与首次注册（ADR-0007、ADR-0009）。
+主程序的控制面：`usbip.exe` 命令行封装、与引擎的 IPC、电平读取、槽位的挂载维护与首次注册。
 
 ## 模块
 
 | 模块 | 内容 |
 |---|---|
-| `usbip_cli` | 只用 5 种调用：`--version`、`port`、`attach --once`、`attach --stop`、`detach -p`（契约见 `agent_tmp/docs/usbip-win2集成与升级.md`）。只按退出码判断成败；调用不弹控制台窗口，10 s 超时 |
+| `usbip_cli` | 只用 5 种调用：`--version`、`port`、`attach --once`、`attach --stop`、`detach -p`。只按退出码判断成败；调用不弹控制台窗口，10 s 超时 |
 | `engine_client` | 握手、心跳（1 s 一次，3 s 收不到任何消息判为假死）、断线重连（500 ms）。调用方只提交"当前想要的拓扑"，断线期间提交多次时重连后只下发最后一份；修订号由客户端分配，跨连接也递增 |
 | `meters` | 读取引擎写在共享内存里的节点电平。读取时取走峰值，读得慢也不会漏掉 |
 | `slots` | 挂载维护与首次注册，见下 |
@@ -46,10 +46,10 @@
 ## 测试
 
 - 单元测试：
-  - 命令行输出的解析，用 `testdata/usbip-cli/<版本>/` 里的真机样本。这些样本保留 CRLF 原始字节，`.gitattributes` 里设为 `-text`；
+  - 命令行输出的解析，用 `testdata/usbip-cli/<版本>/` 里从真实的 `usbip.exe` 录下的输出。这些样本保留 CRLF 原始字节，`.gitattributes` 里设为 `-text`；
   - 挂载判定、注册进度、端点匹配。
 - 集成测试 `tests/engine_client.rs`：对照一个假的引擎服务端，覆盖握手、下发、断线重连、心跳超时、协议版本不符、退出。
-- 真机示例（开发身份）：
+- 在本机实际运行的示例（开发身份）：
   - `usbip-status`：打印 usbip-win2 版本和已挂载设备；
   - `slot-maintenance`：拉起 `aemeath-host` 子进程，依次验证注册、按占用拔出、引擎崩溃恢复、清理，约 25 s。
 

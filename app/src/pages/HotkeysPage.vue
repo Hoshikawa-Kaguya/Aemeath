@@ -6,7 +6,7 @@ import { useAppStore } from '@/stores/app'
 import HotkeyField from '@/workbench/HotkeyField.vue'
 import { describeTarget } from '@/workbench/hotkeyLabels'
 
-// 热键页（M3 计划 H7）：分"全局"和"专属"两组，每行可以直接修改，与节点设置里改的是同一份数据。
+// 热键页：分"全局"和"专属"两组，每行可以直接修改，与节点设置里改的是同一份数据。
 const { t } = useI18n()
 const store = useAppStore()
 

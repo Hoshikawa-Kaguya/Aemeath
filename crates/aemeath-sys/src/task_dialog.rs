@@ -1,4 +1,4 @@
-//! 原生的 TaskDialog（守护进程的驱动说明和引导安装对话框，ADR-0011）。
+//! 原生的 TaskDialog（守护进程的驱动说明和引导安装对话框）。
 //!
 //! 需要 Common Controls 6：调用方的 exe 必须嵌入启用 Common Controls 6 的清单，否则 TaskDialogIndirect 不存在。
 
@@ -108,7 +108,7 @@ unsafe extern "system" fn progress_callback(
             send(window, TDM_CLICK_BUTTON.0, IDOK.0 as usize, 0);
             S_OK
         }
-        // 不能取消（M4 计划 G1）：标题栏的关闭按钮也走这里
+        // 不能取消：标题栏的关闭按钮也走这里
         TDN_BUTTON_CLICKED if !finished && (wparam.0 == IDCANCEL.0 as usize || wparam.0 == IDOK.0 as usize) => S_FALSE,
         _ => S_OK,
     }

@@ -22,6 +22,7 @@ pub struct ResamplerWorker {
 }
 
 impl ResamplerWorker {
+    /// 启动辅助线程。
     pub fn start() -> io::Result<Self> {
         let (jobs, requests) = channel();
         let (finished, built) = channel();
@@ -31,6 +32,7 @@ impl ResamplerWorker {
         Ok(Self { jobs, built })
     }
 
+    /// 交出槽位流要求的工作：先释放换下来的旧重采样器，再请求构建新的。结果由 [`Self::try_receive`] 取回。
     pub fn submit(&self, connection: ConnectionId, work: ResamplerWork) {
         if let Some(retired) = work.retired {
             self.retire(retired);
@@ -40,6 +42,7 @@ impl ResamplerWorker {
         }
     }
 
+    /// 把不再使用的重采样器交给辅助线程释放。
     pub fn retire(&self, resampler: SlotResampler) {
         let _ = self.jobs.send(Job::Retire(resampler));
     }
@@ -50,6 +53,7 @@ impl ResamplerWorker {
     }
 }
 
+/// 辅助线程的主循环：依次构建或释放重采样器，直到请求通道关闭。
 fn run(requests: &Receiver<Job>, finished: &Sender<(ConnectionId, SlotResampler)>) {
     while let Ok(job) = requests.recv() {
         match job {

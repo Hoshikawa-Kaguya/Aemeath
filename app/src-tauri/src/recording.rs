@@ -1,4 +1,4 @@
-//! 录音节点在界面上的表示，以及录音文件路径的拼接（M3 计划 R6）。
+//! 录音节点在界面上的表示，以及录音文件路径的拼接。
 
 use std::path::{Path, PathBuf};
 
@@ -119,7 +119,7 @@ pub struct RecordingView {
     pub defaults: RecorderSettingsView,
 }
 
-/// 录音文件夹：用户设置的，否则是 `%USERPROFILE%\Music\Aemeath`（M3 计划 R6）。
+/// 录音文件夹：用户设置的，否则是 `%USERPROFILE%\Music\Aemeath`。
 pub fn recording_folder(preferences: &Preferences) -> PathBuf {
     match &preferences.recording_folder {
         Some(folder) => PathBuf::from(folder),
