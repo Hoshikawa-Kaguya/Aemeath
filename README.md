@@ -61,7 +61,7 @@ pnpm tauri dev                # 开发运行主程序（前端热更新）
 pnpm tauri build --no-bundle  # 发布构建；安装包由 Velopack 另行打包
 ```
 
-主程序需要和引擎同时运行并连接才能出声。通常使用guardian启动，guardian进程会依次拉起引擎和主程序；开发时也可以手动先运行引擎（`cargo run -p aemeath-host`），再运行主程序。两者不带参数时，按开发身份算出相同的数据目录（`%APPDATA%\Aemeath Dev`）、管道名和共享内存名。开发身份的虚拟设备叫 `Aemeath Dev In/Out N`，不会和正式安装的设备混在一起。
+主程序需要和引擎同时运行。通常使用guardian启动，guardian进程会依次拉起引擎和主程序；开发时也可以手动先运行引擎（`cargo run -p aemeath-host`），再运行主程序。两者不带参数时，按开发身份算出相同的数据目录（`%APPDATA%\Aemeath Dev`）、管道名和共享内存名。开发身份的虚拟设备叫 `Aemeath Dev In/Out N`，不会和正式安装的设备混在一起。
 
 如果只需要调试前端，在 `app/` 下运行 `pnpm preview`，它会启动开发服务器并在浏览器中打开 `http://localhost:21364/preview.html`：预览页用 Tauri 的 `mockIPC` 模拟后端（`src/dev/preview.ts`），只由开发服务器提供。
 
