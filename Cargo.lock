@@ -17,6 +17,8 @@ dependencies = [
  "aemeath-protocol",
  "aemeath-runtime",
  "aemeath-sys",
+ "percent-encoding",
+ "png",
  "serde",
  "serde_json",
  "tauri",

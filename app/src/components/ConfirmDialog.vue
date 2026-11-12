@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { useTemplateRef, watch } from 'vue'
+import { ref, useTemplateRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 
@@ -12,20 +12,28 @@ interface FluentDialog extends HTMLElement {
 const { t } = useI18n()
 const store = useAppStore()
 const dialog = useTemplateRef<FluentDialog>('dialog')
+// 关闭后保留上一次的内容，收起过渡期间文字和按钮不会先消失
+const shown = ref(store.confirmation)
 
 watch(
   () => store.confirmation,
-  (current) => (current === null ? dialog.value?.hide() : dialog.value?.show()),
+  (current) => {
+    if (current === null) {
+      dialog.value?.hide()
+    } else {
+      shown.value = current
+      dialog.value?.show()
+    }
+  },
 )
 </script>
-
 <template>
   <fluent-dialog ref="dialog" type="modal">
     <fluent-dialog-body>
-      <p class="message">{{ store.confirmation?.message }}</p>
+      <p class="message">{{ shown?.message }}</p>
       <fluent-button slot="action" @click="store.answerConfirmation(false)">{{ t('add.cancel') }}</fluent-button>
       <fluent-button slot="action" appearance="primary" @click="store.answerConfirmation(true)">
-        {{ store.confirmation?.action }}
+        {{ shown?.action }}
       </fluent-button>
     </fluent-dialog-body>
   </fluent-dialog>

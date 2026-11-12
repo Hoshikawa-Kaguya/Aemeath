@@ -11,6 +11,7 @@ pub mod clock;
 pub mod com;
 pub mod devices;
 pub mod elevation;
+pub mod icon;
 pub mod input_hooks;
 pub mod pipe;
 pub mod policy_config;

@@ -39,6 +39,8 @@ export interface NodeData {
   renaming: boolean
   /** 路由矩阵里悬停的格子以它为一端 */
   highlighted: boolean
+  /** 已从快照里删除，正在淡出 */
+  leaving: boolean
 }
 
 /** Vue Flow 连线的 data */

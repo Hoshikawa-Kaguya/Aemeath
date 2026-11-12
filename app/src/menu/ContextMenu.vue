@@ -150,31 +150,33 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div
-    v-if="openedMenu"
-    ref="root"
-    class="menu"
-    role="menu"
-    :style="{ left: `${position.left}px`, top: `${position.top}px` }"
-    @keydown="onKeyDown"
-    @contextmenu.prevent.stop
-    @wheel.prevent
-  >
-    <template v-for="(item, index) in openedMenu.items" :key="index">
-      <div v-if="item.kind === 'separator'" class="sep" role="separator"></div>
-      <button
-        v-else
-        type="button"
-        role="menuitem"
-        class="item ellipsis"
-        :class="{ danger: item.danger }"
-        :disabled="item.disabled"
-        @click="choose(item)"
-      >
-        {{ item.label }}
-      </button>
-    </template>
-  </div>
+  <Transition name="menu">
+    <div
+      v-if="openedMenu"
+      ref="root"
+      class="menu"
+      role="menu"
+      :style="{ left: `${position.left}px`, top: `${position.top}px` }"
+      @keydown="onKeyDown"
+      @contextmenu.prevent.stop
+      @wheel.prevent
+    >
+      <template v-for="(item, index) in openedMenu.items" :key="index">
+        <div v-if="item.kind === 'separator'" class="sep" role="separator"></div>
+        <button
+          v-else
+          type="button"
+          role="menuitem"
+          class="item ellipsis"
+          :class="{ danger: item.danger }"
+          :disabled="item.disabled"
+          @click="choose(item)"
+        >
+          {{ item.label }}
+        </button>
+      </template>
+    </div>
+  </Transition>
 </template>
 
 <style scoped>
@@ -224,6 +226,19 @@ onBeforeUnmount(() => {
   height: 1px;
   margin: 4px -4px;
   background: var(--stroke);
+}
+
+/* 收起比弹出快；收起期间不再响应点击 */
+.menu-leave-active {
+  pointer-events: none;
+  transition:
+    opacity var(--dur-fast) var(--ease-exit),
+    transform var(--dur-fast) var(--ease-exit);
+}
+
+.menu-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
 }
 
 @keyframes menu-in {

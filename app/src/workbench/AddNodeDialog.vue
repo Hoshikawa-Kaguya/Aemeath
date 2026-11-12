@@ -12,6 +12,7 @@ import {
   type Resampler,
   type SlotSettings,
 } from '@/api/types'
+import ProgramIcon from '@/components/ProgramIcon.vue'
 import { useAppStore } from '@/stores/app'
 import { slotName } from '@/stores/nodeLabels'
 import DeviceSettingsFields from './DeviceSettingsFields.vue'
@@ -277,8 +278,11 @@ defineExpose({ open })
           <label for="add-program">{{ t('add.program') }}</label>
           <div class="program-row">
             <select id="add-program" v-model="program" class="select">
+              <button><selectedcontent></selectedcontent></button>
               <option value="" disabled>{{ t('add.programPlaceholder') }}</option>
-              <option v-for="choice in programs" :key="choice.path" :value="choice.path">{{ choice.label }}</option>
+              <option v-for="choice in programs" :key="choice.path" :value="choice.path">
+                <ProgramIcon :path="choice.path" /><span class="ellipsis">{{ choice.label }}</span>
+              </option>
             </select>
             <fluent-button @click="browse">{{ t('add.browse') }}</fluent-button>
           </div>

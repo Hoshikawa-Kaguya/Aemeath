@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { backend } from '@/api/backend'
 import { roleOf } from '@/api/types'
 import AppIcon, { type IconName } from '@/components/AppIcon.vue'
+import ProgramIcon from '@/components/ProgramIcon.vue'
 import { formatDuration, formatKhz } from '@/format/format'
 import { isMenuKey } from '@/menu/contextMenu'
 import NodeMeter from '@/meters/NodeMeter.vue'
@@ -22,6 +23,8 @@ const actions = inject(workbenchKey)
 
 const node = computed(() => props.data.node)
 const role = computed(() => roleOf(node.value.kind))
+/** 应用源的限制（延迟、抓不到独占播放）在节点上悬停可见 */
+const kindHint = computed(() => (node.value.kind === 'appSource' ? t('add.appSourceNote') : undefined))
 const icon = computed<IconName>(() => {
   switch (node.value.kind) {
     case 'externalInput':
@@ -155,6 +158,7 @@ function onKeyDown(event: KeyboardEvent): void {
       idle: notRunning,
       'drop-ok': data.drop === 'ok',
       'drop-bad': data.drop === 'bad',
+      leaving: data.leaving,
     }"
     role="group"
     :aria-label="t('node.aria', { kind: t(`kind.${node.kind}`), name: node.name })"
@@ -163,7 +167,9 @@ function onKeyDown(event: KeyboardEvent): void {
     @keydown="onKeyDown"
   >
     <div class="node-head">
-      <span class="kind-ico"><AppIcon :name="icon" /></span>
+      <span class="kind-ico" :title="kindHint">
+        <ProgramIcon v-if="node.kind === 'appSource'" :path="node.program?.path" /><AppIcon v-else :name="icon" />
+      </span>
       <div class="node-title">
         <input
           v-if="editing"
@@ -178,7 +184,7 @@ function onKeyDown(event: KeyboardEvent): void {
         <b v-else class="ellipsis" :title="t('node.rename', { name: node.name })" @dblclick="startRename">{{
           node.name
         }}</b>
-        <span class="ellipsis">{{ data.subtitle.kind }}</span>
+        <span class="ellipsis" :title="kindHint">{{ data.subtitle.kind }}</span>
         <span v-if="data.subtitle.detail" class="ellipsis" :title="data.subtitle.detail">{{
           data.subtitle.detail
         }}</span>
@@ -284,7 +290,7 @@ function onKeyDown(event: KeyboardEvent): void {
   box-shadow: var(--shadow);
   user-select: none;
   cursor: grab;
-  /* 新节点淡入（删除时由 Vue Flow 直接移除，不做淡出） */
+  /* 新节点淡入；删除后由工作台保留一会儿，用 .leaving 淡出 */
   animation: node-in var(--dur) var(--ease-enter);
   transition:
     outline-color var(--dur-fast) linear,
@@ -293,6 +299,19 @@ function onKeyDown(event: KeyboardEvent): void {
 
 @keyframes node-in {
   from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+/* 收起比弹出快，期间不可交互 */
+.node.leaving {
+  pointer-events: none;
+  animation: node-out var(--dur-fast) var(--ease-exit) forwards;
+}
+
+@keyframes node-out {
+  to {
     opacity: 0;
     transform: scale(0.96);
   }

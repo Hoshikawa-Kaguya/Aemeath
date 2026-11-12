@@ -16,6 +16,7 @@ mod device_settings;
 mod hotkey_views;
 mod instance;
 mod meters;
+mod program_icon;
 mod recording;
 mod tray;
 mod updates;
@@ -61,6 +62,10 @@ fn main() -> ExitCode {
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .register_asynchronous_uri_scheme_protocol(program_icon::SCHEME, |_context, request, responder| {
+            let path = request.uri().path().to_owned();
+            tauri::async_runtime::spawn_blocking(move || responder.respond(program_icon::respond(&path)));
+        })
         .setup(move |app| {
             if let Some(event) = activation {
                 let handle = app.handle().clone();

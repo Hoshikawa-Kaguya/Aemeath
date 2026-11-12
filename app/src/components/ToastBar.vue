@@ -9,13 +9,17 @@ const store = useAppStore()
 </script>
 
 <template>
-  <div v-if="store.toast" class="toast" role="status" aria-live="polite">
-    <span class="message">{{ store.toast.message }}</span>
-    <fluent-button v-if="store.toast.undoable" size="small" @click="store.undo()">{{ t('toast.undo') }}</fluent-button>
-    <button type="button" class="close" :aria-label="t('toast.dismiss')" @click="store.hideToast()">
-      <AppIcon name="x" />
-    </button>
-  </div>
+  <Transition name="toast">
+    <div v-if="store.toast" class="toast" role="status" aria-live="polite">
+      <span class="message">{{ store.toast.message }}</span>
+      <fluent-button v-if="store.toast.undoable" size="small" @click="store.undo()">{{
+        t('toast.undo')
+      }}</fluent-button>
+      <button type="button" class="close" :aria-label="t('toast.dismiss')" @click="store.hideToast()">
+        <AppIcon name="x" />
+      </button>
+    </div>
+  </Transition>
 </template>
 
 <style scoped>
@@ -35,6 +39,19 @@ const store = useAppStore()
   box-shadow: var(--shadow);
   font-size: var(--fontSizeBase200);
   animation: toast-in var(--dur-slow) var(--ease-enter);
+}
+
+/* 收起时向下淡出，比滑入快；期间不再响应点击 */
+.toast-leave-active {
+  pointer-events: none;
+  transition:
+    opacity var(--dur-fast) var(--ease-exit),
+    transform var(--dur-fast) var(--ease-exit);
+}
+
+.toast-leave-to {
+  opacity: 0;
+  transform: translateY(16px);
 }
 
 /* 提示条从下方滑入 */

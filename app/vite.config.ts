@@ -11,7 +11,8 @@ export default defineConfig({
       template: {
         compilerOptions: {
           // Fluent 2 的 Web Components（fluent-button 等）由浏览器渲染，Vue 不当作组件解析
-          isCustomElement: (tag) => tag.startsWith('fluent-'),
+          // selectedcontent：可自定义下拉框里显示所选项的元素
+          isCustomElement: (tag) => tag.startsWith('fluent-') || tag === 'selectedcontent',
         },
       },
     }),

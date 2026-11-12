@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { backend } from '@/api/backend'
 import type { AppView, AppsView, LandingChoice } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
+import ProgramIcon from '@/components/ProgramIcon.vue'
 import { useAppStore } from '@/stores/app'
 import { usePolling } from './usePolling'
 
@@ -130,7 +131,7 @@ async function addSource(app: AppView): Promise<void> {
       <p v-else-if="view !== null && view.apps.length === 0" class="caption">{{ t('apps.empty') }}</p>
       <div class="cardlist">
         <div v-for="app in view?.apps ?? []" :key="`${app.processId}-${app.system}`" class="card-row">
-          <span class="ico"><AppIcon :name="app.system ? 'spk' : 'apps'" /></span>
+          <span class="ico"><AppIcon v-if="app.system" name="spk" /><ProgramIcon v-else :path="app.executable" /></span>
           <div class="who">
             <b class="ellipsis" :title="app.system ? t('apps.system') : app.name">
               {{ app.system ? t('apps.system') : app.name }}
@@ -237,7 +238,7 @@ async function addSource(app: AppView): Promise<void> {
   color: var(--text-2);
 }
 
-.ico svg {
+.ico .i {
   width: 18px;
   height: 18px;
 }

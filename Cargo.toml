@@ -66,6 +66,9 @@ embed-resource = "3.0.12"
 velopack = "=1.2.161"
 # 校验随包附带的驱动安装程序（纯 Rust）
 sha2 = "0.11"
+# 程序图标编码成 PNG、解码 icon 协议里的路径（都已在 Tauri 的依赖树里）
+png = "0.18.1"
+percent-encoding = "2.3.2"
 
 # 除 aemeath-sys 外一律禁止 unsafe：Windows 调用都集中在 aemeath-sys，由它提供安全的封装
 [workspace.lints.rust]

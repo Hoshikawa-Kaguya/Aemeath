@@ -24,6 +24,8 @@ aemeath-core = { workspace = true }
 aemeath-protocol = { workspace = true }
 aemeath-runtime = { workspace = true }
 aemeath-sys = { workspace = true }
+percent-encoding = { workspace = true }
+png = { workspace = true }
 serde = { workspace = true }
 tauri = { workspace = true, features = ["tray-icon", "protocol-asset"] }
 tauri-plugin-dialog = { workspace = true }

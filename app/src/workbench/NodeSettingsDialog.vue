@@ -14,6 +14,7 @@ import {
   type SlotSettings,
 } from '@/api/types'
 import { formatThreshold } from '@/format/format'
+import ProgramIcon from '@/components/ProgramIcon.vue'
 import { useAppStore } from '@/stores/app'
 import { slotName } from '@/stores/nodeLabels'
 import DeviceSettingsFields from './DeviceSettingsFields.vue'
@@ -227,7 +228,10 @@ defineExpose({ open })
 
         <div v-if="node.program" class="field">
           <span>{{ t('add.program') }}</span>
-          <span class="caption ellipsis" :title="node.program.path">{{ node.program.path }}</span>
+          <span class="program-path">
+            <ProgramIcon :path="node.program.path" />
+            <span class="caption ellipsis" :title="node.program.path">{{ node.program.path }}</span>
+          </span>
           <span v-if="node.status.state === 'programMissing'" class="caption missing">
             {{ t('node.programMissing') }}
           </span>
@@ -370,6 +374,13 @@ defineExpose({ open })
 
 .candidates .select {
   flex: 1;
+  min-width: 0;
+}
+
+.program-path {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   min-width: 0;
 }
 

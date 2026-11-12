@@ -65,6 +65,13 @@
   margin-inline: auto;
 }
 
+/* 图标统一 16 px；程序图标（img.i）与线条图标同尺寸 */
+img.i {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
 svg.i {
   width: 16px;
   height: 16px;
@@ -233,6 +240,113 @@ fluent-dialog-body {
   width: 100%;
 }
 
+/* 可自定义下拉框（Chromium 135+）：选项里可以放图标，弹出层与右键菜单同样式（圆角卡片、阴影 16、选项高 32 px），
+   弹出和收起都有过渡（收起更快）。不支持的 WebView2 忽略这些规则，退回原生下拉框 */
+.select,
+.select::picker(select) {
+  appearance: base-select;
+}
+
+.select {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 自带的 <button><selectedcontent> 只负责显示所选项，外观由 .select 决定 */
+.select > button {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+}
+
+.select selectedcontent {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.select::picker-icon {
+  color: var(--text-2);
+  transition: rotate var(--dur-fast) var(--ease);
+}
+
+.select:open::picker-icon {
+  rotate: 180deg;
+}
+
+.select::picker(select) {
+  margin-block: 4px;
+  padding: 4px;
+  max-height: 320px;
+  max-width: min(480px, calc(100vw - 32px));
+  border-radius: var(--r-card);
+  border: 1px solid var(--stroke);
+  background: var(--card-solid);
+  color: var(--text);
+  box-shadow: var(--shadow16);
+  opacity: 0;
+  translate: 0 -4px;
+  transition:
+    opacity var(--dur-fast) var(--ease-exit),
+    translate var(--dur-fast) var(--ease-exit),
+    display var(--dur-fast) allow-discrete,
+    overlay var(--dur-fast) allow-discrete;
+}
+
+.select:open::picker(select) {
+  opacity: 1;
+  translate: 0 0;
+  transition-duration: var(--dur);
+  transition-timing-function: var(--ease);
+}
+
+@starting-style {
+  .select:open::picker(select) {
+    opacity: 0;
+    translate: 0 -4px;
+  }
+}
+
+/* 长选项（设备名、程序路径）截断，不撑宽弹出层 */
+.select option {
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: var(--r-ctl);
+  font-size: var(--fontSizeBase300);
+  line-height: 32px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 带图标的选项：图标与文字横排，文字放在 .ellipsis 里截断 */
+.select option:has(> .i) {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.select option:hover:not(:disabled),
+.select option:focus-visible {
+  background: var(--card-hover);
+  outline: none;
+}
+
+.select option:disabled {
+  color: var(--text-dis);
+}
+
+.select option::checkmark {
+  color: var(--accent-text);
+}
+
 /* 原生滑块：强调色 */
 .slider {
   width: 100%;
@@ -264,5 +378,10 @@ button,
   *::after {
     transition: none !important;
     animation: none !important;
+  }
+
+  .select::picker(select),
+  .select::picker-icon {
+    transition: none !important;
   }
 }

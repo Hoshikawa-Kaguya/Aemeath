@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, provide, ref, useTemplateRef, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, provide, ref, shallowRef, useTemplateRef, watch } from 'vue'
 import {
   ConnectionMode,
   VueFlow,
@@ -145,7 +145,50 @@ const dragTip = computed(() => {
   return { text: t('drag.hint'), bad: false }
 })
 
-const flowNodes = computed<Node<NodeData>[]>(() =>
+/** 节点从快照里消失（删除、撤销添加）后，先以不可交互的"幽灵"淡出再移除；连线随快照立即消失 */
+const leavingNodes = shallowRef<Node<NodeData>[]>([])
+watch(
+  () => store.nodes,
+  (now, before) => {
+    const present = new Set(now.map((node) => node.id))
+    const isLeaving = (id: number) => leavingNodes.value.some((ghost) => ghost.data?.node.id === id)
+    // 撤销删除时节点回来了：立即去掉它的幽灵，避免同一个 ID 出现两次
+    leavingNodes.value = leavingNodes.value.filter((ghost) => !present.has(ghost.data?.node.id ?? -1))
+    const duration = exitDuration()
+    if (duration === 0) return
+    for (const node of before ?? []) {
+      if (present.has(node.id) || isLeaving(node.id)) continue
+      const ghost: Node<NodeData> = {
+        id: String(node.id),
+        type: 'io',
+        position: { x: node.x, y: node.y },
+        draggable: false,
+        selectable: false,
+        connectable: false,
+        data: {
+          node,
+          code: nodeCode(node, before ?? []),
+          subtitle: nodeSubtitle(node),
+          selected: false,
+          drop: null,
+          renaming: false,
+          highlighted: false,
+          leaving: true,
+        },
+      }
+      leavingNodes.value = [...leavingNodes.value, ghost]
+      setTimeout(() => (leavingNodes.value = leavingNodes.value.filter((other) => other !== ghost)), duration)
+    }
+  },
+)
+
+/** 收起动画的时长（ms，即 `--dur-fast`）；Windows 关闭"动画效果"时为 0 */
+function exitDuration(): number {
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return 0
+  return parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--dur-fast')) || 0
+}
+
+const liveNodes = computed<Node<NodeData>[]>(() =>
   store.nodes.map((node) => {
     const drop =
       connecting.value !== null && hovered.value === node.id && hoveredVerdict.value !== undefined
@@ -165,10 +208,12 @@ const flowNodes = computed<Node<NodeData>[]>(() =>
         drop,
         renaming: renaming.value === node.id,
         highlighted: matrixHover.value?.from === node.id || matrixHover.value?.to === node.id,
+        leaving: false,
       },
     }
   }),
 )
+const flowNodes = computed(() => [...liveNodes.value, ...leavingNodes.value])
 
 const { findNode } = useVueFlow()
 function currentPosition(node: NodeView) {
