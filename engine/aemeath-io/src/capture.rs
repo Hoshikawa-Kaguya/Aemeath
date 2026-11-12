@@ -6,6 +6,7 @@
 //! FFT 的产出成批到达，缓冲占用呈锯齿形：会话开始时先写入"目标占用 + 一批"的静音，引擎的启动门槛不用改，
 //! 锯齿的谷值也不低于目标占用；控制目标取锯齿的平均值。
 
+use std::sync::Arc;
 use std::time::Instant;
 
 use aemeath_dsp::resample::{BridgeResampler, FixedSide, RateController, relative_ratio};
@@ -14,7 +15,7 @@ use aemeath_protocol::units::SampleRate;
 use rtrb::Producer;
 use wasapi::AudioCaptureClient;
 
-use crate::bridge::{BridgeError, BridgeLog, CONTROL_PERIOD};
+use crate::bridge::{BridgeError, BridgeLog, BufferLevel, CONTROL_PERIOD};
 use crate::device::{FrameCodec, OpenStream};
 use crate::{STEREO, TARGET_LEVEL_MS, frames_to_ms, ms_to_frames};
 
@@ -45,6 +46,7 @@ impl CapturePump {
         quality: Resampler,
         producer: &mut Producer<f32>,
         label: &str,
+        level: Arc<BufferLevel>,
     ) -> Result<Self, BridgeError> {
         let device_rate = stream.sample_rate();
         let chunk_frames = (device_rate.hz() / CHUNKS_PER_SECOND).max(1) as usize;
@@ -56,6 +58,7 @@ impl CapturePump {
                 chunk.fill_from_iter(std::iter::repeat(0.0));
             }
         }
+        let target_ms = TARGET_LEVEL_MS + burst_ms / 2.0;
         let bytes = vec![0u8; stream.block_align * (device_rate.hz() / (1000 / INITIAL_READ_MS)) as usize];
         let staging = Vec::with_capacity(bytes.len() / stream.block_align * STEREO);
         let produced = Vec::with_capacity(resampler.output_frames_max() * STEREO * 8);
@@ -68,8 +71,8 @@ impl CapturePump {
             staging,
             produced,
             capacity: producer.buffer().capacity(),
-            controller: RateController::new(TARGET_LEVEL_MS + burst_ms / 2.0),
-            log: BridgeLog::new(label),
+            controller: RateController::new(target_ms),
+            log: BridgeLog::new(label, target_ms, level),
         })
     }
 
@@ -95,7 +98,11 @@ impl CapturePump {
     }
 
     /// 把攒够的数据重采样并写进环形缓冲，按缓冲占用调整比率。
+    ///
+    /// 写入前后各记一次占用：写入前是锯齿的谷、写入后是峰，两者平均才是时间平均。
+    /// 只记写入后的峰值时，控制器会把峰值拉到目标，实际平均占用低约半个设备周期。
     pub fn deliver(&mut self, producer: &mut Producer<f32>) -> Result<(), BridgeError> {
+        self.log.level(self.level_ms(producer));
         let mut consumed = 0;
         loop {
             let needed = self.resampler.input_frames_next() * STEREO;
@@ -120,8 +127,7 @@ impl CapturePump {
         }
         self.produced.clear();
 
-        let level_ms = frames_to_ms((self.capacity - producer.slots()) / STEREO, self.engine_rate);
-        self.log.level(level_ms);
+        self.log.level(self.level_ms(producer));
         if self.log.control_due() {
             let update = self
                 .controller
@@ -131,5 +137,10 @@ impl CapturePump {
             self.log.after_control(update);
         }
         Ok(())
+    }
+
+    /// 环形缓冲当前的占用（ms）。
+    fn level_ms(&self, producer: &Producer<f32>) -> f64 {
+        frames_to_ms((self.capacity - producer.slots()) / STEREO, self.engine_rate)
     }
 }

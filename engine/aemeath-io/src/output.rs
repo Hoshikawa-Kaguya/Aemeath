@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use aemeath_dsp::resample::{BridgeResampler, FixedSide, RateController, relative_ratio};
 use rtrb::Consumer;
 
-use crate::bridge::{BridgeError, BridgeLog, CONTROL_PERIOD};
+use crate::bridge::{BridgeError, BridgeLog, BufferLevel, CONTROL_PERIOD};
 use crate::clock::{ClockReader, ClockTap};
 use crate::device::{self, EventWatch, IoContext, OpenStream, SessionEnd, Waited};
 use crate::{
@@ -39,10 +39,22 @@ pub fn spawn_output(
 ) -> io::Result<BridgeHandle> {
     let stop = device::stop_flag();
     let thread_stop = stop.clone();
+    let level = Arc::new(BufferLevel::default());
+    let thread_level = level.clone();
     let thread = thread::Builder::new()
         .name("aemeath-output".to_owned())
-        .spawn(move || run(&config, consumer, &active, &thread_stop, &context, &clock))?;
-    Ok(BridgeHandle::new(stop, thread))
+        .spawn(move || {
+            run(
+                &config,
+                consumer,
+                &active,
+                &thread_stop,
+                &context,
+                &clock,
+                &thread_level,
+            )
+        })?;
+    Ok(BridgeHandle::new(stop, level, thread))
 }
 
 /// 会话期间把 `active` 置为 true，会话结束（包括出错）时清除。
@@ -69,12 +81,13 @@ fn run(
     stop: &AtomicBool,
     context: &IoContext,
     clock: &ClockTap,
+    level: &Arc<BufferLevel>,
 ) {
     let _priority = aemeath_sys::thread_priority::promote_current_thread()
         .inspect_err(|error| tracing::warn!(%error, "cannot raise the output thread priority"));
     device::run_with_retry(&config.request(IoDirection::Output), stop, context, |stream| {
         let _active = ActiveGuard::set(active);
-        match run_session(config, stream, &mut consumer, stop, clock) {
+        match run_session(config, stream, &mut consumer, stop, clock, level) {
             Ok(end) => end,
             Err(error) => SessionEnd::failed(&error),
         }
@@ -87,6 +100,7 @@ fn run_session(
     consumer: &mut Consumer<f32>,
     stop: &AtomicBool,
     clock: &ClockTap,
+    level: &Arc<BufferLevel>,
 ) -> Result<SessionEnd, BridgeError> {
     let render = stream.client.get_audiorenderclient()?;
     let mut clock_reader = ClockReader::new(&stream.client)?;
@@ -109,7 +123,7 @@ fn run_session(
     let mut bytes: Vec<u8> = Vec::with_capacity(buffer_frames * stream.block_align);
     let target_ms = TARGET_LEVEL_MS + resampler.burst_ms();
     let mut controller = RateController::new(target_ms);
-    let mut log = BridgeLog::new(&config.endpoint.0);
+    let mut log = BridgeLog::new(&config.endpoint.0, target_ms, level.clone());
 
     // 先攒够目标占用再开流，控制器从零误差开始
     let prime_samples = ms_to_frames(target_ms, config.engine_rate) * STEREO;
@@ -132,6 +146,14 @@ fn run_session(
     render.write_to_device(&bytes, None)?;
     stream.client.start_stream()?;
 
+    // 取数前后各记一次占用：取数前是锯齿的峰、写进设备后是谷，两者平均才是时间平均。
+    // 只记谷值时，控制器会把谷值拉到目标，实际平均占用高约半个设备周期
+    let level = |consumer: &Consumer<f32>, resampler: &BridgeResampler, queue: &VecDeque<f32>| {
+        frames_to_ms(
+            consumer.slots() / STEREO + resampler.pending_frames(),
+            config.engine_rate,
+        ) + frames_to_ms(queue.len() / STEREO, device_rate)
+    };
     let mut watch = EventWatch::new();
     loop {
         if stop.load(Ordering::Relaxed) || consumer.is_abandoned() {
@@ -141,6 +163,7 @@ fn run_session(
         if let Waited::Timeout = watch.wait(stream)? {
             continue;
         }
+        log.level(level(consumer, &resampler, &queue));
 
         let skipped = skip_backlog(consumer, prime_samples);
         if skipped > 0 {
@@ -179,11 +202,7 @@ fn run_session(
         render.write_to_device(&bytes, None)?;
         clock_reader.poll(clock);
 
-        let level_ms = frames_to_ms(
-            consumer.slots() / STEREO + resampler.pending_frames(),
-            config.engine_rate,
-        ) + frames_to_ms(queue.len() / STEREO, device_rate);
-        log.level(level_ms);
+        log.level(level(consumer, &resampler, &queue));
         if log.control_due() {
             let update = controller.update(log.take_average(), CONTROL_PERIOD.as_secs_f64());
             resampler.set_relative_ratio(relative_ratio(update.correction_ppm))?;

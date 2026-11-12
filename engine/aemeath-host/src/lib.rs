@@ -5,6 +5,7 @@
 //! - [`status`]：状态缓存与事件到 IPC 消息的转换。
 //! - [`session`]：一个客户端连接的协议处理。
 //! - [`meter_publisher`]：把节点电平转写到共享内存。
+//! - `stats`：每秒一次的性能统计。
 //! - [`run`]：主循环。
 
 pub mod meter_publisher;
@@ -13,5 +14,6 @@ pub mod status;
 pub mod topology_cache;
 
 mod host;
+mod stats;
 
 pub use host::run;

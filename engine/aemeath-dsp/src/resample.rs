@@ -555,6 +555,75 @@ mod tests {
         }
     }
 
+    /// 闭环模拟：设备每 `period_ms` 写一包（按校正量重采样）、引擎每 1 ms 读 1 ms，
+    /// 每次写入前后各记一次占用，每秒更新一次控制器。设备时钟比引擎快 `drift_ppm`，两者的相位因此慢慢移动；
+    /// `jitter_ms` 是设备交付时刻的随机抖动。返回稳态（后 20 分钟）的
+    /// (平均占用误差 ms, 校正量相对漂移的 RMS ppm, 漂移估计的平均 ppm)。
+    fn closed_loop(drift_ppm: f64, jitter_ms: f64) -> (f64, f64, f64) {
+        const PERIOD_MS: f64 = 10.0;
+        const TOTAL_MS: f64 = 30.0 * 60_000.0;
+        const STEADY_FROM_MS: f64 = 10.0 * 60_000.0;
+        let mut controller = RateController::new(15.0);
+        let mut update = RateUpdate::default();
+        let mut level = 15.0;
+        let (mut next_engine, mut next_device, mut next_control) = (0.3, 0.0, 1000.0);
+        let (mut sum, mut count, mut offset) = (0.0, 0u32, 0.0);
+        let (mut error_sum, mut wobble_sum, mut integral_sum, mut controls) = (0.0, 0.0, 0.0, 0.0);
+        let mut seed = 12_345u64;
+        let device_period_ms = PERIOD_MS / (1.0 + drift_ppm * PPM);
+        loop {
+            let next = f64::min(next_engine, next_device + offset).min(next_control);
+            if next >= TOTAL_MS {
+                break;
+            }
+            if next == next_control {
+                update = controller.update(sum / f64::from(count.max(1)), 1.0);
+                (sum, count) = (0.0, 0);
+                if next > STEADY_FROM_MS {
+                    error_sum += update.error_ms;
+                    wobble_sum += (update.correction_ppm - drift_ppm).powi(2);
+                    integral_sum += update.integral_ppm;
+                    controls += 1.0;
+                }
+                next_control += 1000.0;
+            } else if next == next_engine {
+                level -= 1.0;
+                next_engine += 1.0;
+            } else {
+                sum += level;
+                level += PERIOD_MS * relative_ratio(update.correction_ppm);
+                sum += level;
+                count += 2;
+                next_device += device_period_ms;
+                // 线性同余发生器：确定性的伪随机抖动
+                seed = seed
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
+                offset = ((seed >> 11) as f64 / (1u64 << 53) as f64 - 0.5) * 2.0 * jitter_ms;
+            }
+        }
+        (
+            error_sum / controls,
+            (wobble_sum / controls).sqrt(),
+            integral_sum / controls,
+        )
+    }
+
+    #[test]
+    fn controller_holds_the_target_accurately_while_the_phase_drifts() {
+        for drift_ppm in [10.0, 30.0, -100.0] {
+            for jitter_ms in [0.0, 0.2] {
+                let (error_ms, wobble_ppm, drift_estimate) = closed_loop(drift_ppm, jitter_ms);
+                let case = format!("drift {drift_ppm} ppm, jitter {jitter_ms} ms");
+                assert!(error_ms.abs() <= 0.1, "{case}: mean error {error_ms} ms");
+                assert!(wobble_ppm <= 20.0, "{case}: ratio wobble {wobble_ppm} ppm");
+                assert!(
+                    (drift_estimate - drift_ppm).abs() <= 0.05 * drift_ppm.abs(),
+                    "{case}: drift estimate {drift_estimate} ppm"
+                );
+            }
+        }
+    }
     #[test]
     fn controller_converges_to_the_drift() {
         // 模拟：两台时钟相差 +50 ppm，缓冲占用按 de/dt = (d − c)·1e-3 变化

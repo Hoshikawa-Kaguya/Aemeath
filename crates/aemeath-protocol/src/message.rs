@@ -105,6 +105,24 @@ pub enum EngineToApp {
         request: RequestId,
         capabilities: Option<DeviceCapabilities>,
     },
+    /// 性能统计，引擎每秒发一次。
+    EngineStats {
+        /// 引擎进程的 CPU 占用（按全部逻辑处理器归一化，同任务管理器）
+        cpu_percent: f32,
+        /// 调度线程这一秒内单轮耗时的峰值占混音块周期（1 ms）的百分比
+        realtime_peak_percent: f32,
+        /// 每个 IO 节点的 ASRC 缓冲；没有 ASRC 缓冲的节点不出现
+        buffers: Vec<BufferStat>,
+    },
+}
+
+/// 一个 IO 节点的 ASRC 缓冲这一秒的平均占用与目标占用。
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BufferStat {
+    pub node: NodeId,
+    pub level_ms: f32,
+    pub target_ms: f32,
 }
 
 /// 外部设备的能力（独占时的格式和缓冲由用户在其中选择）。

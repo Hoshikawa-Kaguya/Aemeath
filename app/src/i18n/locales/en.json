@@ -27,7 +27,12 @@
     "notRunningTip": "These app sources connect by themselves when their program starts.",
     "recording": "Recording: {n}",
     "panicMute": "All outputs muted",
-    "panicMuteTip": "Click to turn the panic mute off."
+    "panicMuteTip": "Click to turn the panic mute off.",
+    "asrc": "ASRC {percent}%",
+    "asrcTip": "ASRC buffer (fill / target)",
+    "asrcTipRow": "{name}: {level} / {target} ms ({percent}%)",
+    "cpu": "CPU {percent}%",
+    "cpuTip": "Engine process CPU {cpu}%, real-time thread peak load {peak}%"
   },
   "nav": {
     "aria": "Main navigation",

@@ -71,15 +71,22 @@ enum Clock {
 }
 
 struct Bridge {
-    /// 只为持有：丢弃时停止 IO 线程并等它释放设备
-    _thread: BridgeHandle,
+    /// 丢弃时停止 IO 线程并等它释放设备
+    thread: BridgeHandle,
     config: BridgeConfig,
 }
 
 struct AppBridge {
-    /// 只为持有：丢弃时停止寻找线程和全部采集线程
-    _thread: BridgeHandle,
+    /// 丢弃时停止寻找线程和全部采集线程
+    thread: BridgeHandle,
     config: AppSourceConfig,
+}
+
+/// 一个 ASRC 缓冲属于哪台外部设备或哪个应用源。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BufferSource {
+    Device(EndpointId, IoDirection),
+    Program(ProgramPath),
 }
 
 /// 引擎里全部外部设备和应用源的 IO 线程，按路由拓扑增减；还负责选出主时钟设备并运行跟随线程。
@@ -111,6 +118,19 @@ impl ExternalDevices {
             context,
             watcher,
         }
+    }
+
+    /// 各外部设备、应用源的 ASRC 缓冲最近一秒的 (平均占用 ms, 目标占用 ms)；离线或刚打开不满一秒的不在其中。
+    pub fn buffer_levels(&self) -> Vec<(BufferSource, (f32, f32))> {
+        let devices = self.bridges.iter().filter_map(|((endpoint, direction), bridge)| {
+            let source = BufferSource::Device(endpoint.clone(), *direction);
+            bridge.thread.buffer_level().map(|level| (source, level))
+        });
+        let programs = self.apps.iter().filter_map(|(program, app)| {
+            let source = BufferSource::Program(program.clone());
+            app.thread.buffer_level().map(|level| (source, level))
+        });
+        devices.chain(programs).collect()
     }
 
     /// 回答设备能力查询（主程序的"添加节点"和节点设置用）。
@@ -169,13 +189,7 @@ impl ExternalDevices {
             mixer.attach_port(node, Port::summed(inputs, MAX_BLOCK_FRAMES * STEREO));
             match spawn_app_source(config.clone(), producers, self.context.clone()) {
                 Ok(handle) => {
-                    self.apps.insert(
-                        key,
-                        AppBridge {
-                            _thread: handle,
-                            config,
-                        },
-                    );
+                    self.apps.insert(key, AppBridge { thread: handle, config });
                 }
                 Err(error) => tracing::error!(%error, "cannot start the app source thread"),
             }
@@ -249,13 +263,7 @@ impl ExternalDevices {
             };
             match spawned {
                 Ok(handle) => {
-                    self.bridges.insert(
-                        key,
-                        Bridge {
-                            _thread: handle,
-                            config,
-                        },
-                    );
+                    self.bridges.insert(key, Bridge { thread: handle, config });
                 }
                 Err(error) => tracing::error!(endpoint = %key.0.0, %error, "cannot start the device thread"),
             }

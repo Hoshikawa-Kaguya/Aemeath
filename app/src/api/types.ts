@@ -308,9 +308,28 @@ export interface Appearance {
   overlayPercent: number
 }
 
+/** 标题栏 CPU、ASRC 标签的数据；百分比和警告由后端算好 */
+export interface EngineStats {
+  cpuPercent: number
+  realtimePeakPercent: number
+  realtimeWarn: boolean
+  /** 没有任何 ASRC 缓冲时为 null；`percent` 是偏离 100% 最远的那个缓冲的占用比 */
+  asrc: {
+    percent: number
+    warn: boolean
+    buffers: { node: number; levelMs: number; targetMs: number; percent: number }[]
+  } | null
+}
+
 export interface ViewState {
-  /** `clockMaster` 是主时钟节点的 ID；null 表示按系统时钟运行 */
-  engine: { state: EngineState; sampleRate: number; resampler: Resampler; clockMaster: number | null }
+  /** `clockMaster` 是主时钟节点的 ID；null 表示按系统时钟运行。`stats` 是最近一次性能统计，引擎没有上报时为 null */
+  engine: {
+    state: EngineState
+    sampleRate: number
+    resampler: Resampler
+    clockMaster: number | null
+    stats: EngineStats | null
+  }
   registration: RegistrationView | null
   canUndo: boolean
   usbipVersion: string | null

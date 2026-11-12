@@ -12,8 +12,8 @@ use aemeath_protocol::PROTOCOL_VERSION;
 use aemeath_protocol::frame::{self, FrameDecoder};
 use aemeath_protocol::ids::{EndpointId, NodeId, ProtocolVersion, RequestId, SlotId, TopologyRevision};
 use aemeath_protocol::message::{
-    AppToEngine, DeviceCapabilities, DeviceFormat, EndpointDirection, EndpointStatus, EngineToApp, RecorderState,
-    RejectReason,
+    AppToEngine, BufferStat, DeviceCapabilities, DeviceFormat, EndpointDirection, EndpointStatus, EngineToApp,
+    RecorderState, RejectReason,
 };
 use aemeath_protocol::topology::RouteTopology;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -111,6 +111,12 @@ pub enum ClientEvent {
     SlotFormat {
         slot: SlotId,
         format: Option<DeviceFormat>,
+    },
+    /// 每秒一次的性能统计
+    EngineStats {
+        cpu_percent: f32,
+        realtime_peak_percent: f32,
+        buffers: Vec<BufferStat>,
     },
 }
 
@@ -479,6 +485,15 @@ fn handle(
         EngineToApp::SlotConnection { slot, connected } => ClientEvent::SlotConnection { slot, connected },
         EngineToApp::SlotFormat { slot, format } => ClientEvent::SlotFormat { slot, format },
         EngineToApp::RecorderStatus { node, status } => ClientEvent::RecorderStatus { node, status },
+        EngineToApp::EngineStats {
+            cpu_percent,
+            realtime_peak_percent,
+            buffers,
+        } => ClientEvent::EngineStats {
+            cpu_percent,
+            realtime_peak_percent,
+            buffers,
+        },
         EngineToApp::Pong { .. } | EngineToApp::Welcome { .. } | EngineToApp::HelloRejected { .. } => return,
     };
     let _ = events.send(event);

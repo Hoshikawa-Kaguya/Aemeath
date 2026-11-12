@@ -9,6 +9,7 @@
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::time::Duration;
 
@@ -37,6 +38,23 @@ const MAX_SLEEP_HNS: i64 = 5_000;
 const MAX_CATCH_UP_MICROFRAMES: i64 = 80;
 /// 外部设备端口的问题最多每隔这么久记一次日志（100 ns 单位，5 s）
 const PORT_ISSUE_LOG_INTERVAL_HNS: i64 = 50_000_000;
+
+/// 调度线程单轮耗时的峰值（µs）：调度线程每轮写入，控制线程每秒取走。
+#[derive(Debug, Default)]
+pub struct RealtimeLoad(AtomicU32);
+
+impl RealtimeLoad {
+    fn record(&self, busy_hns: i64) {
+        let micros = u32::try_from((busy_hns / HNS_PER_MICROSECOND).max(0)).unwrap_or(u32::MAX);
+        self.0.fetch_max(micros, Ordering::Relaxed);
+    }
+
+    /// 上次取走以来单轮耗时的峰值占混音块周期（1 ms）的百分比，并清零。
+    pub fn take_peak_percent(&self) -> f32 {
+        const PERCENT_PER_MICROSECOND: f32 = 100.0 / 1000.0;
+        self.0.swap(0, Ordering::Relaxed) as f32 * PERCENT_PER_MICROSECOND
+    }
+}
 
 /// 控制线程发给调度线程的命令。
 #[derive(Debug)]
@@ -73,6 +91,7 @@ pub struct Scheduler {
     port_issues: PortIssues,
     last_port_log: i64,
     resamplers: ResamplerWorker,
+    load: Arc<RealtimeLoad>,
 }
 
 impl Scheduler {
@@ -83,6 +102,7 @@ impl Scheduler {
         retired: Sender<Box<Mixer>>,
         events: Sender<EngineEvent>,
         resamplers: ResamplerWorker,
+        load: Arc<RealtimeLoad>,
     ) -> Self {
         Self {
             timeline,
@@ -100,6 +120,7 @@ impl Scheduler {
             port_issues: PortIssues::default(),
             last_port_log: 0,
             resamplers,
+            load,
         }
     }
 
@@ -131,7 +152,9 @@ impl Scheduler {
             last_iteration = now;
             self.run_blocks(self.timeline.microframe_at(now));
             self.complete_due(now);
-            self.sleep(timer.as_ref());
+            let done = now_hns();
+            self.load.record(done - now);
+            self.sleep(timer.as_ref(), done);
         }
         tracing::info!("scheduler stopped");
     }
@@ -354,8 +377,7 @@ impl Scheduler {
 
     /// 睡到下一个 URB 到期或下一个混音块该运行的时刻，最多睡 [`MAX_SLEEP_HNS`]，以便及时处理新事件。
     /// 高精度定时器不可用时退回普通 `sleep`。
-    fn sleep(&self, timer: Option<&HighResolutionTimer>) {
-        let now = now_hns();
+    fn sleep(&self, timer: Option<&HighResolutionTimer>, now: i64) {
         let mut wake = now + MAX_SLEEP_HNS;
         if let Some(Reverse((deadline, _, _))) = self.deadlines.peek() {
             wake = wake.min(*deadline);
@@ -414,4 +436,19 @@ impl Scheduler {
 fn hns_to_duration(hns: i64) -> Duration {
     const NANOS_PER_HNS: u64 = 100;
     Duration::from_nanos(u64::try_from(hns).unwrap_or(0) * NANOS_PER_HNS)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn realtime_load_reports_the_peak_and_clears() {
+        let load = RealtimeLoad::default();
+        load.record(1_200);
+        load.record(4_200);
+        load.record(-10);
+        assert!((load.take_peak_percent() - 42.0).abs() < 1e-3);
+        assert_eq!(load.take_peak_percent(), 0.0);
+    }
 }

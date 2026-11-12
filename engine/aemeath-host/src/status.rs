@@ -117,7 +117,7 @@ pub fn to_messages(event: &EngineEvent, topology: Option<&RouteTopology>) -> Vec
 }
 
 /// 当前拓扑里绑定这个程序的应用源节点。
-fn node_for_program(topology: Option<&RouteTopology>, program: &ProgramPath) -> Option<NodeId> {
+pub(crate) fn node_for_program(topology: Option<&RouteTopology>, program: &ProgramPath) -> Option<NodeId> {
     topology?
         .nodes
         .iter()
@@ -126,7 +126,7 @@ fn node_for_program(topology: Option<&RouteTopology>, program: &ProgramPath) -> 
 }
 
 /// 当前拓扑里在这个方向上使用这个端点的节点。外部插入的取回端也算在输入方向里。
-fn nodes_for<'a>(
+pub(crate) fn nodes_for<'a>(
     topology: Option<&'a RouteTopology>,
     endpoint: &'a EndpointId,
     direction: IoDirection,

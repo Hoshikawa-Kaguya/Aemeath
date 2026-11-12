@@ -24,4 +24,5 @@ pub mod units;
 /// 2：通道条带门限，外部设备节点带设备设置。
 /// 3：新增应用源、外部插入、录音节点及其状态和命令。
 /// 4：重采样算法改为算法加重采样预设。
-pub const PROTOCOL_VERSION: ids::ProtocolVersion = ids::ProtocolVersion(4);
+/// 5：新增性能统计 [`message::EngineToApp::EngineStats`]。
+pub const PROTOCOL_VERSION: ids::ProtocolVersion = ids::ProtocolVersion(5);

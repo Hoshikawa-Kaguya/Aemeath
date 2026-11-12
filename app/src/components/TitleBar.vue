@@ -47,6 +47,30 @@ const slotsTip = computed(() => {
 })
 const rate = computed(() => t('chip.rate', { rate: formatKhz(store.state?.engine.sampleRate ?? 0) }))
 const clockName = computed(() => store.nodes.find((node) => node.id === store.state?.engine.clockMaster)?.name ?? null)
+const stats = computed(() => (engine.value === 'running' ? (store.state?.engine.stats ?? null) : null))
+const asrc = computed(() => stats.value?.asrc ?? null)
+const asrcTip = computed(() => {
+  const rows = (asrc.value?.buffers ?? []).flatMap((buffer) => {
+    const name = store.nodes.find((node) => node.id === buffer.node)?.name
+    return name === undefined
+      ? []
+      : [
+          t('chip.asrcTipRow', {
+            name,
+            level: buffer.levelMs.toFixed(1),
+            target: buffer.targetMs.toFixed(1),
+            percent: Math.round(buffer.percent),
+          }),
+        ]
+  })
+  return [t('chip.asrcTip'), ...rows].join('\n')
+})
+const cpuTip = computed(() =>
+  t('chip.cpuTip', {
+    cpu: Math.round(stats.value?.cpuPercent ?? 0),
+    peak: Math.round(stats.value?.realtimePeakPercent ?? 0),
+  }),
+)
 
 async function refreshMaximized(): Promise<void> {
   isMaximized.value = await appWindow.isMaximized()
@@ -100,6 +124,12 @@ onUnmounted(() => {
       <button type="button" class="chip chip-btn" :title="t('chip.rateTip')" @click="store.rateDialogOpen = true">
         {{ store.rateSwitching ? t('chip.rateSwitching') : rate }}
       </button>
+      <span v-if="asrc" class="chip" :class="{ warn: asrc.warn }" :title="asrcTip">
+        <AppIcon v-if="asrc.warn" name="warn" />{{ t('chip.asrc', { percent: Math.round(asrc.percent) }) }}
+      </span>
+      <span v-if="stats" class="chip" :class="{ warn: stats.realtimeWarn }" :title="cpuTip">
+        <AppIcon v-if="stats.realtimeWarn" name="warn" />{{ t('chip.cpu', { percent: Math.round(stats.cpuPercent) }) }}
+      </span>
     </div>
     <div class="spacer" data-tauri-drag-region></div>
     <div class="caption-buttons">

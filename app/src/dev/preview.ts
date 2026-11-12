@@ -155,6 +155,20 @@ let state: ViewState = {
     sampleRate: 48000,
     resampler: { algorithm: 'sincAsync', preset: 'balanced' },
     clockMaster: null,
+    stats: {
+      cpuPercent: 2.6,
+      realtimePeakPercent: 18.4,
+      realtimeWarn: false,
+      asrc: {
+        percent: 112.7,
+        warn: false,
+        buffers: [
+          { node: 1, levelMs: 15.2, targetMs: 15.0, percent: 101.3 },
+          { node: 4, levelMs: 17.9, targetMs: 15.9, percent: 112.7 },
+          { node: 7, levelMs: 14.1, targetMs: 15.0, percent: 94.0 },
+        ],
+      },
+    },
   },
   registration: null,
   canUndo: false,

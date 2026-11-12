@@ -1,16 +1,16 @@
-//! 进程快照、进程路径、进程退出检测与文件说明（应用源按路径寻找进程）。
+//! 进程快照、进程路径、进程退出检测与文件说明（应用源按路径寻找进程），以及本进程的 CPU 时间。
 
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
 
-use windows::Win32::Foundation::{CloseHandle, HANDLE, MAX_PATH, WAIT_OBJECT_0};
+use windows::Win32::Foundation::{CloseHandle, FILETIME, HANDLE, MAX_PATH, WAIT_OBJECT_0};
 use windows::Win32::Storage::FileSystem::{GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW};
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
 };
 use windows::Win32::System::Threading::{
-    OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
-    QueryFullProcessImageNameW, WaitForSingleObject,
+    GetCurrentProcess, GetProcessTimes, OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+    PROCESS_SYNCHRONIZE, QueryFullProcessImageNameW, WaitForSingleObject,
 };
 use windows::core::{HSTRING, PCWSTR, PWSTR};
 
@@ -51,6 +51,16 @@ pub fn process_snapshot() -> windows::core::Result<Vec<ProcessEntry>> {
     // SAFETY: snapshot 是上面创建的有效句柄，此后不再使用
     let _ = unsafe { CloseHandle(snapshot) };
     Ok(entries)
+}
+
+/// 当前进程累计使用的 CPU 时间（内核 + 用户，所有线程合计），单位 100 ns；查询失败时为 None。
+pub fn current_process_cpu_hns() -> Option<u64> {
+    let mut times = [FILETIME::default(); 4];
+    let [creation, exit, kernel, user] = &mut times;
+    // SAFETY: GetCurrentProcess 返回伪句柄，无需关闭；四个指针都指向有效的可写 FILETIME
+    unsafe { GetProcessTimes(GetCurrentProcess(), creation, exit, kernel, user) }.ok()?;
+    let hns = |time: &FILETIME| (u64::from(time.dwHighDateTime) << 32) | u64::from(time.dwLowDateTime);
+    Some(hns(kernel) + hns(user))
 }
 
 /// 进程可执行文件的完整路径；进程已退出或无权查询时为 None。

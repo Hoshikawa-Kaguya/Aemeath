@@ -23,7 +23,7 @@ use aemeath_sys::process::{ProcessEntry, ProcessExit, process_path, process_snap
 use rtrb::{Consumer, Producer};
 use wasapi::{AudioClient, Direction, StreamMode, WasapiError};
 
-use crate::bridge::BridgeError;
+use crate::bridge::{BridgeError, BufferLevel};
 use crate::capture::CapturePump;
 use crate::device::{self, EVENT_WAIT_MS, IoContext, OpenStream};
 use crate::format::to_wave_format;
@@ -67,10 +67,12 @@ pub fn spawn_app_source(
 ) -> io::Result<BridgeHandle> {
     let stop = device::stop_flag();
     let thread_stop = stop.clone();
+    let level = Arc::new(BufferLevel::default());
+    let thread_level = level.clone();
     let thread = thread::Builder::new()
         .name("aemeath-app-find".to_owned())
-        .spawn(move || Finder::new(config, producers, context).run(&thread_stop))?;
-    Ok(BridgeHandle::new(stop, thread))
+        .spawn(move || Finder::new(config, producers, context, thread_level).run(&thread_stop))?;
+    Ok(BridgeHandle::new(stop, level, thread))
 }
 
 /// 根进程：匹配的进程里，父进程不是同一个 exe 的那些（`include_tree` 会带上它们的子进程）。
@@ -125,10 +127,12 @@ struct Finder {
     /// 最近一次采集失败、进程却还在：报告离线，下一轮扫描再试
     open_failed: bool,
     reported: Option<EndpointStatus>,
+    /// 各路采集共用一份读数（多个根进程时后写的覆盖先写的）
+    level: Arc<BufferLevel>,
 }
 
 impl Finder {
-    fn new(config: AppSourceConfig, free: Vec<Producer<f32>>, context: IoContext) -> Self {
+    fn new(config: AppSourceConfig, free: Vec<Producer<f32>>, context: IoContext, level: Arc<BufferLevel>) -> Self {
         let target = RedetectTarget::Program(config.program.clone());
         Self {
             config,
@@ -138,6 +142,7 @@ impl Finder {
             roots: Vec::new(),
             open_failed: false,
             reported: None,
+            level,
         }
     }
 
@@ -198,26 +203,14 @@ impl Finder {
         let stop = device::stop_flag();
         let opened = Arc::new(AtomicBool::new(false));
         let (thread_stop, thread_opened) = (Arc::clone(&stop), Arc::clone(&opened));
-        let (program, engine_rate, quality) = (
-            self.config.program.clone(),
-            self.config.engine_rate,
-            self.config.quality,
-        );
+        let (config, level) = (self.config.clone(), Arc::clone(&self.level));
         let thread = thread::Builder::new()
             .name("aemeath-app-capture".to_owned())
             .spawn(move || {
                 let mut producer = producer;
-                let result = capture_root(
-                    process_id,
-                    &program,
-                    engine_rate,
-                    quality,
-                    &mut producer,
-                    &thread_stop,
-                    &thread_opened,
-                );
+                let result = capture_root(process_id, &config, &mut producer, &thread_stop, &thread_opened, level);
                 if let Err(error) = &result {
-                    tracing::warn!(program = %program.as_str(), process_id, %error, "process loopback failed");
+                    tracing::warn!(program = %config.program.as_str(), process_id, %error, "process loopback failed");
                 }
                 RootEnd {
                     producer,
@@ -291,12 +284,11 @@ fn loopback_format(engine_rate: SampleRate) -> DeviceFormat {
 /// 采集一个根进程（连同子进程）的声音，直到进程退出、出错或收到停止信号。打开成功后置位 `opened`。
 fn capture_root(
     process_id: u32,
-    program: &ProgramPath,
-    engine_rate: SampleRate,
-    quality: Resampler,
+    config: &AppSourceConfig,
     producer: &mut Producer<f32>,
     stop: &AtomicBool,
     opened: &AtomicBool,
+    level: Arc<BufferLevel>,
 ) -> Result<(), BridgeError> {
     let _priority = aemeath_sys::thread_priority::promote_current_thread()
         .inspect_err(|error| tracing::warn!(%error, "cannot raise the app capture thread priority"));
@@ -306,7 +298,7 @@ fn capture_root(
         return Ok(());
     };
     let mut client = AudioClient::new_application_loopback_client(process_id, true)?;
-    let format = loopback_format(engine_rate);
+    let format = loopback_format(config.engine_rate);
     client.initialize_client(
         &to_wave_format(format),
         Direction::Capture,
@@ -325,10 +317,11 @@ fn capture_root(
         exclusive: false,
     };
     let capture = stream.client.get_audiocaptureclient()?;
-    let mut pump = CapturePump::new(&stream, engine_rate, quality, producer, program.as_str())?;
+    let program = config.program.as_str();
+    let mut pump = CapturePump::new(&stream, config.engine_rate, config.quality, producer, program, level)?;
     stream.client.start_stream()?;
     opened.store(true, Ordering::Relaxed);
-    tracing::info!(program = %program.as_str(), process_id, "process loopback started");
+    tracing::info!(program, process_id, "process loopback started");
 
     loop {
         if stop.load(Ordering::Relaxed) || producer.is_abandoned() || exit.has_exited() {

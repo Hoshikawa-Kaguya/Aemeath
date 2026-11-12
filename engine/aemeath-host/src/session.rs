@@ -25,6 +25,7 @@ use tokio::net::windows::named_pipe::NamedPipeServer;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::watch;
 
+use crate::stats::{STATS_PERIOD, StatsSampler};
 use crate::status::{StatusCache, to_messages};
 use crate::topology_cache::TopologyCache;
 
@@ -122,6 +123,9 @@ pub async fn serve<F: Future<Output = ()>>(
     let mut buffer = vec![0u8; READ_BUFFER];
     let hello_deadline = tokio::time::sleep(HELLO_TIMEOUT);
     tokio::pin!(hello_deadline);
+    let mut stats = StatsSampler::new();
+    let mut stats_tick = tokio::time::interval_at(tokio::time::Instant::now() + STATS_PERIOD, STATS_PERIOD);
+    stats_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     loop {
         tokio::select! {
@@ -142,6 +146,12 @@ pub async fn serve<F: Future<Output = ()>>(
                             return SessionEnd::Disconnected;
                         }
                     }
+                }
+            }
+            _ = stats_tick.tick(), if session.handshaken => {
+                let message = stats.sample(&state.engine, state.topology.as_ref());
+                if send(pipe, &message).await.is_err() {
+                    return SessionEnd::Disconnected;
                 }
             }
             read = pipe.read(&mut buffer) => {

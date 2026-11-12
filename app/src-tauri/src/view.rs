@@ -8,7 +8,7 @@ use aemeath_control::slots::{SlotHealth, SlotStatus};
 use aemeath_core::model::{Node, NodeKind, Route};
 use aemeath_core::preferences::{LanguagePreference, ThemeMode};
 use aemeath_protocol::ids::{SlotDirection, SlotId};
-use aemeath_protocol::message::{DeviceFormat, EndpointStatus, OfflineReason, SampleFormat};
+use aemeath_protocol::message::{BufferStat, DeviceFormat, EndpointStatus, OfflineReason, SampleFormat};
 use aemeath_protocol::topology::RouteRejection;
 use aemeath_protocol::units::{SampleRate, SampleRateError};
 use serde::{Deserialize, Serialize};
@@ -148,6 +148,71 @@ pub struct EngineView {
     pub resampler: ResamplerView,
     /// 主时钟节点；None 表示按系统时钟运行
     pub clock_master: Option<u32>,
+    /// 最近一次性能统计；引擎没有连上或还没上报时为 None
+    pub stats: Option<EngineStatsView>,
+}
+
+/// 实时线程峰值负载超过这个百分比时标题栏的 CPU 标签显示警告
+const REALTIME_WARN_PERCENT: f32 = 80.0;
+/// ASRC 缓冲占用比（占用 ÷ 目标）超出这个范围时显示警告。稳态实测最多偏离约 29%，不会误报
+const ASRC_WARN_RANGE: std::ops::RangeInclusive<f32> = 50.0..=150.0;
+
+/// 标题栏的 CPU 和 ASRC 标签。
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EngineStatsView {
+    pub cpu_percent: f32,
+    pub realtime_peak_percent: f32,
+    pub realtime_warn: bool,
+    /// 没有任何 ASRC 缓冲时为 None
+    pub asrc: Option<AsrcView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AsrcView {
+    /// 偏离 100% 最远的那个缓冲的占用比
+    pub percent: f32,
+    pub warn: bool,
+    pub buffers: Vec<AsrcBufferView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AsrcBufferView {
+    pub node: u32,
+    pub level_ms: f32,
+    pub target_ms: f32,
+    pub percent: f32,
+}
+
+impl EngineStatsView {
+    pub fn new(cpu_percent: f32, realtime_peak_percent: f32, buffers: &[BufferStat]) -> Self {
+        let buffers: Vec<AsrcBufferView> = buffers
+            .iter()
+            .filter(|buffer| buffer.target_ms > 0.0)
+            .map(|buffer| AsrcBufferView {
+                node: buffer.node.0,
+                level_ms: buffer.level_ms,
+                target_ms: buffer.target_ms,
+                percent: buffer.level_ms / buffer.target_ms * 100.0,
+            })
+            .collect();
+        let worst = buffers
+            .iter()
+            .map(|buffer| buffer.percent)
+            .max_by(|a, b| (a - 100.0).abs().total_cmp(&(b - 100.0).abs()));
+        Self {
+            cpu_percent,
+            realtime_peak_percent,
+            realtime_warn: realtime_peak_percent > REALTIME_WARN_PERCENT,
+            asrc: worst.map(|percent| AsrcView {
+                percent,
+                warn: !ASRC_WARN_RANGE.contains(&percent),
+                buffers,
+            }),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -496,5 +561,49 @@ impl From<RouteRejection> for RejectionView {
             RouteRejection::Duplicate => Self::Duplicate,
             RouteRejection::Loop => Self::Loop,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use aemeath_protocol::ids::NodeId;
+
+    use super::*;
+
+    fn buffer(node: u32, level_ms: f32, target_ms: f32) -> BufferStat {
+        BufferStat {
+            node: NodeId(node),
+            level_ms,
+            target_ms,
+        }
+    }
+
+    #[test]
+    fn asrc_shows_the_buffer_furthest_from_its_target() {
+        let stats = EngineStatsView::new(
+            3.0,
+            10.0,
+            &[buffer(1, 14.0, 15.0), buffer(2, 20.0, 16.0), buffer(3, 9.0, 0.0)],
+        );
+        let asrc = stats.asrc.unwrap();
+        assert_eq!(asrc.percent, 125.0);
+        assert!(!asrc.warn);
+        assert_eq!(asrc.buffers.len(), 2, "a buffer without a target is skipped");
+        assert!(!stats.realtime_warn);
+    }
+
+    #[test]
+    fn warns_outside_the_thresholds() {
+        let low = EngineStatsView::new(0.0, 81.0, &[buffer(1, 7.0, 15.0)]);
+        assert!(low.asrc.unwrap().warn);
+        assert!(low.realtime_warn);
+        let high = EngineStatsView::new(0.0, 80.0, &[buffer(1, 23.0, 15.0)]);
+        assert!(high.asrc.unwrap().warn);
+        assert!(!high.realtime_warn);
+    }
+
+    #[test]
+    fn no_buffers_means_no_asrc_chip() {
+        assert_eq!(EngineStatsView::new(1.0, 1.0, &[]).asrc, None);
     }
 }

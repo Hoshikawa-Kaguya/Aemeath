@@ -30,6 +30,7 @@ use aemeath_protocol::topology::{DeviceAccess, Resampler};
 use aemeath_protocol::units::SampleRate;
 use rtrb::{Consumer, Producer, RingBuffer};
 
+use crate::bridge::BufferLevel;
 use crate::device::DeviceRequest;
 
 /// 环形缓冲的目标占用，实测能吸收设备周期抖动又不增加太多延迟。外部输入在引擎一侧先攒够这么多才开始读取。
@@ -86,15 +87,22 @@ impl BridgeConfig {
 #[derive(Debug)]
 pub struct BridgeHandle {
     stop: Arc<AtomicBool>,
+    level: Arc<BufferLevel>,
     thread: Option<JoinHandle<()>>,
 }
 
 impl BridgeHandle {
-    fn new(stop: Arc<AtomicBool>, thread: JoinHandle<()>) -> Self {
+    fn new(stop: Arc<AtomicBool>, level: Arc<BufferLevel>, thread: JoinHandle<()>) -> Self {
         Self {
             stop,
+            level,
             thread: Some(thread),
         }
+    }
+
+    /// ASRC 缓冲最近一秒的 (平均占用 ms, 目标占用 ms)；设备离线或还没满一秒时为 None。
+    pub fn buffer_level(&self) -> Option<(f32, f32)> {
+        self.level.read()
     }
 }
 

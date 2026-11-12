@@ -27,7 +27,12 @@
     "notRunningTip": "程序启动后，这些应用源会自动接入。",
     "recording": "录音中 {n}",
     "panicMute": "已全部静音",
-    "panicMuteTip": "点击解除紧急静音。"
+    "panicMuteTip": "点击解除紧急静音。",
+    "asrc": "ASRC {percent}%",
+    "asrcTip": "ASRC 缓冲（占用 / 目标）",
+    "asrcTipRow": "{name}：{level} / {target} ms（{percent}%）",
+    "cpu": "CPU {percent}%",
+    "cpuTip": "引擎进程 CPU {cpu}%，实时线程峰值负载 {peak}%"
   },
   "nav": {
     "aria": "主导航",

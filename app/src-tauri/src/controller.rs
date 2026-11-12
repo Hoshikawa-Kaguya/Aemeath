@@ -45,9 +45,9 @@ use crate::device_settings::{CapabilitiesView, DeviceSettingsView, ResamplerView
 use crate::hotkey_views::{HotkeyBindingView, HotkeyRowView, HotkeyTargetView};
 use crate::recording::{RecorderStateView, RecorderView, RecordingView, prepare_recording_path, recording_folder};
 use crate::view::{
-    AppearanceView, DeviceView, DuplicateView, EngineState, EngineView, FormatView, NodeStatus, NodeView, NoticeKind,
-    NoticeView, PairVerdict, ProgramView, RegistrationView, RouteVerdict, RouteView, SlotRef, SlotView, ThemeModeView,
-    ViewState, kind_view,
+    AppearanceView, DeviceView, DuplicateView, EngineState, EngineStatsView, EngineView, FormatView, NodeStatus,
+    NodeView, NoticeKind, NoticeView, PairVerdict, ProgramView, RegistrationView, RouteVerdict, RouteView, SlotRef,
+    SlotView, ThemeModeView, ViewState, kind_view,
 };
 
 /// 数据目录下存放背景图的文件夹
@@ -573,6 +573,7 @@ struct Controller {
     engine_state: EngineState,
     endpoint_status: HashMap<NodeId, EndpointStatus>,
     recorder_status: HashMap<NodeId, RecorderState>,
+    engine_stats: Option<EngineStatsView>,
     background_dir: PathBuf,
     slot_status: BTreeMap<SlotId, SlotStatus>,
     registration: Option<RegistrationProgress>,
@@ -735,6 +736,7 @@ impl Controller {
             usbip_version,
             engine_state: EngineState::Connecting,
             endpoint_status: HashMap::new(),
+            engine_stats: None,
             recorder_status: HashMap::new(),
             slot_status: BTreeMap::new(),
             registration,
@@ -1273,6 +1275,7 @@ impl Controller {
                 self.engine_state = EngineState::after_disconnect(&reason);
                 self.endpoint_status.clear();
                 self.recorder_status.clear();
+                self.engine_stats = None;
             }
             ClientEvent::EndpointStatus { node, status } => {
                 if let EndpointStatus::Offline {
@@ -1304,6 +1307,13 @@ impl Controller {
                 detail,
             } => {
                 error!(revision = revision.0, ?reason, %detail, "the engine rejected the topology");
+            }
+            ClientEvent::EngineStats {
+                cpu_percent,
+                realtime_peak_percent,
+                buffers,
+            } => {
+                self.engine_stats = Some(EngineStatsView::new(cpu_percent, realtime_peak_percent, &buffers));
             }
             ClientEvent::TopologyApplied { .. }
             | ClientEvent::SlotConnection { .. }
@@ -1821,6 +1831,7 @@ impl Controller {
                 sample_rate: workspace.engine.sample_rate.hz(),
                 resampler: ResamplerView::from(workspace.engine.resampler),
                 clock_master: workspace.engine.clock_master.map(|node| node.0),
+                stats: self.engine_stats.clone(),
             },
             registration: self.registration.as_ref().map(|progress| RegistrationView {
                 completed: progress.completed(),

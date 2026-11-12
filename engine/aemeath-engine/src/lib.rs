@@ -40,12 +40,12 @@ use aemeath_sys::clock::now_hns;
 use aemeath_usbip::identity::IdentityProfile;
 use aemeath_usbip::server::{ServerConfig, UsbipServer};
 
-use crate::devices::{ExternalDevices, TimelineClock};
+use crate::devices::{BufferSource, ExternalDevices, TimelineClock};
 use crate::meters::MeterBank;
 use crate::mixer::{Mixer, MixerLayout};
 use crate::recorder::Recorders;
 use crate::resampler_worker::ResamplerWorker;
-use crate::scheduler::{Command, Scheduler};
+use crate::scheduler::{Command, RealtimeLoad, Scheduler};
 use crate::timeline::Timeline;
 
 /// 引擎内部一律是立体声；多声道节点目前不支持
@@ -94,6 +94,7 @@ pub struct Engine {
     devices: ExternalDevices,
     recorders: Recorders,
     scheduler: Option<JoinHandle<()>>,
+    load: Arc<RealtimeLoad>,
 }
 
 impl Engine {
@@ -126,6 +127,7 @@ impl Engine {
                 let _ = app_events.send(EngineEvent::AppSource(event));
             }),
         );
+        let load = Arc::new(RealtimeLoad::default());
         let scheduler = Scheduler::new(
             timeline,
             command_receiver,
@@ -133,6 +135,7 @@ impl Engine {
             retired_sender,
             event_sender,
             ResamplerWorker::start()?,
+            Arc::clone(&load),
         );
         let handle = thread::Builder::new()
             .name("aemeath-scheduler".to_owned())
@@ -149,6 +152,7 @@ impl Engine {
                 let _ = recorder_events.send(EngineEvent::Recorder { node, state });
             })),
             scheduler: Some(handle),
+            load,
         })
     }
 
@@ -232,6 +236,16 @@ impl Engine {
     /// 当前拓扑的电平（节点顺序与拓扑一致）。
     pub fn meters(&self) -> Option<&Arc<MeterBank>> {
         self.meters.as_ref()
+    }
+
+    /// 调度线程上次取走以来单轮耗时的峰值占混音块周期（1 ms）的百分比，并清零。
+    pub fn take_realtime_peak_percent(&self) -> f32 {
+        self.load.take_peak_percent()
+    }
+
+    /// 外部设备和应用源的 ASRC 缓冲最近一秒的 (平均占用 ms, 目标占用 ms)；离线或刚打开不满一秒的不在其中。
+    pub fn buffer_levels(&self) -> Vec<(BufferSource, (f32, f32))> {
+        self.devices.buffer_levels()
     }
 }
 
