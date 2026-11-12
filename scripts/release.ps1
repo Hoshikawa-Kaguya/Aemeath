@@ -4,6 +4,7 @@
 #   pwsh scripts/release.ps1 [-Identity production|development]
 # 版本号取自同目录的 version.json，程序里显示的版本也来自它（构建时读取），两边不会对不上。
 # 产物在 target\release-package\<身份>\<版本>\artifacts，vpk 装在 target\tools\vpk；release.yml 依赖这两个位置。
+# 调试符号（.pdb）不进安装包，单独打包成同一版本目录下的 <包名>-<版本>-symbols.zip，由 CI 作为 release 附件上传。
 [CmdletBinding()]
 param(
     [ValidateSet('production', 'development')][string]$Identity = 'production'
@@ -55,6 +56,13 @@ try {
         foreach ($exe in 'Aemeath.exe', 'aemeath-host.exe', 'aemeath-app.exe') {
             Copy-Item (Join-Path 'target\release' $exe) $Publish
         }
+    }
+    Invoke-Step 'Collect the debug symbols' {
+        # rustc 给 .pdb 起名时把可执行文件名里的 - 换成 _
+        $pdbs = foreach ($exe in 'Aemeath', 'aemeath-host', 'aemeath-app') {
+            Join-Path 'target\release' (($exe -replace '-', '_') + '.pdb')
+        }
+        Compress-Archive -Path $pdbs -DestinationPath (Join-Path $Stage "$PackId-$Version-symbols.zip") -Force
     }
     Invoke-Step 'Download and verify the usbip-win2 installer' {
         $installer = Join-Path $Publish "redist\$UsbipInstaller"

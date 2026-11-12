@@ -81,5 +81,11 @@ panic = "deny"
 opt-level = 3
 
 [profile.release]
+opt-level = 3
+# 整个程序一起优化：编译慢很多，但跨 crate 内联能让混音和格式转换的热路径更快
+lto = "fat"
+codegen-units = 1
+# 只带函数名和行号的 .pdb，不随程序分发
+debug = "line-tables-only"
 # 引擎要求出错时快速失败、干净退出，由守护进程拉起；主程序和守护进程同样适用
 panic = "abort"

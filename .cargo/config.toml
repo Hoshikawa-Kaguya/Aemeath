@@ -1,0 +1,4 @@
+# 按 x86-64-v3 生成代码（AVX2、FMA、BMI2 等）
+# 设置了 RUSTFLAGS 环境变量时（例如 cargo fuzz）这里不生效。
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-cpu=x86-64-v3"]

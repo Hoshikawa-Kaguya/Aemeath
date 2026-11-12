@@ -80,6 +80,16 @@ jobs:
             throw "vpk upload failed with exit code $LASTEXITCODE"
           }
 
+      # 调试符号不进安装包，作为 release 附件单独上传，用来分析用户发来的崩溃转储
+      - name: Upload debug symbols
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $version = '${{ steps.version.outputs.version }}'
+          gh release upload '${{ github.ref_name }}' "target\release-package\production\$version\Aemeath-$version-symbols.zip"
+
       # vpk 不能生成发布说明：按上一个 tag 以来的提交和 PR 由 GitHub 生成，之后可以在网页上修改
       - name: Write release notes
         shell: pwsh

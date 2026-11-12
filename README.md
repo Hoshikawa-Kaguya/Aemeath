@@ -37,6 +37,7 @@
 ## 系统要求
 
 - Windows 11 x64
+- AVX2 x64 CPU
 - usbip-win2 驱动：已随 Aemeath 附带，首次启动时会引导安装
 
 ## 下载

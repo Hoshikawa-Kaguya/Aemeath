@@ -37,6 +37,7 @@
 ## Requirements
 
 - Windows 11 x64
+- AVX2 x64 CPU
 - usbip-win2 driver: bundled with Aemeath and installed through a first-run guide
 
 ## Download
