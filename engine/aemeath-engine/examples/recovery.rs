@@ -43,7 +43,7 @@ const AMPLITUDE: f64 = 0.5;
 const RECORD_SECONDS: f64 = 75.0;
 const UNPLUG_AT: Duration = Duration::from_secs(20);
 const UNPLUGGED_FOR: Duration = Duration::from_secs(6);
-/// 恢复在线后跳过这段再检查（两级 ASRC 攒水位、控制器回到稳态）
+/// 恢复在线后跳过这段再检查（两级 ASRC 攒够缓冲、控制器回到稳态）
 const SETTLE_AFTER_RECOVERY_S: f64 = 3.0;
 /// 拔出前检查的时段（从录音开始算起）
 const BEFORE_FROM_S: f64 = 5.0;

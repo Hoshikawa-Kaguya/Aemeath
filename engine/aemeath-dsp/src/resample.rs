@@ -309,27 +309,27 @@ impl BridgeResampler {
 
 /// 时钟漂移的 PI 控制器。
 ///
-/// 反馈量是桥接缓冲的水位（ms）；输出是比率校正量（ppm）。校正量为正表示"消耗输入更快"，即把输出/输入比率调低。
+/// 反馈量是桥接缓冲的占用（ms）；输出是比率校正量（ppm）。校正量为正表示"消耗输入更快"，即把输出/输入比率调低。
 ///
-/// 连续时间模型：水位误差 e 的变化率 de/dt = (d − c)·1e-3 ms/s，d 为两时钟的相对漂移（ppm），c 为校正量。
+/// 连续时间模型：缓冲占用误差 e 的变化率 de/dt = (d − c)·1e-3 ms/s，d 为两时钟的相对漂移（ppm），c 为校正量。
 /// 取 c = Kp·e + Ki·∫e dt。默认 Kp = 40 ppm/ms、Ki = 1 ppm/(ms·s)：自然频率约 0.032 rad/s、阻尼比约 0.63，
-/// 时间常数约 1 分钟，校正量不会因水位的毫秒级抖动而大幅跳动。
+/// 时间常数约 1 分钟，校正量不会因缓冲占用的毫秒级抖动而大幅跳动。
 ///
 /// 条件积分：误差超过 [`INTEGRATE_WITHIN_MS`] 时视为突发事件（例如其他程序改变了设备的引擎周期，
-/// 数据短暂中断、水位阶跃），只让比例项负责回填，不累积积分。
+/// 数据短暂中断、缓冲占用阶跃），只让比例项负责回填，不累积积分。
 #[derive(Debug, Clone)]
 pub struct RateController {
     target_ms: f64,
     integral: f64,
 }
 
-/// 比例系数：水位每偏离 1 ms，校正 40 ppm（取值理由见 [`RateController`]）
+/// 比例系数：缓冲占用每偏离 1 ms，校正 40 ppm（取值理由见 [`RateController`]）
 pub const DEFAULT_KP_PPM_PER_MS: f64 = 40.0;
-/// 积分系数：水位偏离 1 ms 持续 1 s，积分项增加 1 ppm
+/// 积分系数：缓冲占用偏离 1 ms 持续 1 s，积分项增加 1 ppm
 pub const DEFAULT_KI_PPM_PER_MS_S: f64 = 1.0;
 /// 校正量上限（比率调节范围按 ±1000 ppm 设计）
 pub const MAX_CORRECTION_PPM: f64 = 1000.0;
-/// 只有水位误差在这个范围内才累积积分（ms）
+/// 只有缓冲占用误差在这个范围内才累积积分（ms）
 pub const INTEGRATE_WITHIN_MS: f64 = 3.0;
 const PPM: f64 = 1e-6;
 
@@ -344,7 +344,7 @@ pub struct RateUpdate {
 }
 
 impl RateController {
-    /// 以 `target_ms` 为目标水位，积分从零开始。
+    /// 以 `target_ms` 为目标占用，积分从零开始。
     pub fn new(target_ms: f64) -> Self {
         Self {
             target_ms,
@@ -352,7 +352,7 @@ impl RateController {
         }
     }
 
-    /// `average_level_ms`：上一个调整周期内的平均水位；`period_s`：调整周期（秒）。
+    /// `average_level_ms`：上一个调整周期内的平均缓冲占用；`period_s`：调整周期（秒）。
     pub fn update(&mut self, average_level_ms: f64, period_s: f64) -> RateUpdate {
         let error_ms = average_level_ms - self.target_ms;
         if error_ms.abs() <= INTEGRATE_WITHIN_MS {
@@ -557,7 +557,7 @@ mod tests {
 
     #[test]
     fn controller_converges_to_the_drift() {
-        // 模拟：两台时钟相差 +50 ppm，水位按 de/dt = (d − c)·1e-3 变化
+        // 模拟：两台时钟相差 +50 ppm，缓冲占用按 de/dt = (d − c)·1e-3 变化
         let drift_ppm = 50.0;
         let mut controller = RateController::new(15.0);
         let mut level = 15.0;

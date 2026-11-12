@@ -40,7 +40,7 @@ const AMPLITUDE: f64 = 0.5;
 /// 送往外部输出的增益：只发出很轻的提示音
 const OUTPUT_GAIN_DB: f32 = -30.0;
 const TAIL_SECONDS: f64 = 1.0;
-/// 信号出现后跳过的时间，外加外部输出开流前攒水位、主时钟跟随启动的时间
+/// 信号出现后跳过的时间，外加外部输出开流前攒够缓冲、主时钟跟随启动的时间
 const SETTLE_SECONDS: f64 = 1.5;
 const ENGINE_RATE: u32 = 48_000;
 const DECIBELS_PER_DECADE: f64 = 20.0;

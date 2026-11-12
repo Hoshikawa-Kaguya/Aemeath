@@ -1,6 +1,6 @@
 //! 桥接线程共用的错误类型与统计日志。
 //!
-//! 长时间运行出问题时要靠日志排查：每分钟记一次水位、漂移估计和校正量的摘要；溢出、欠载立即记录（限频）。
+//! 长时间运行出问题时要靠日志排查：每分钟记一次缓冲占用、漂移估计和校正量的摘要；溢出、欠载立即记录（限频）。
 
 use std::time::{Duration, Instant};
 
@@ -45,7 +45,7 @@ impl From<ResampleError> for BridgeError {
     }
 }
 
-/// 桥接的统计与日志：每秒给控制器一个平均水位，每分钟记一次摘要；溢出、欠载立即记录（限频）。
+/// 桥接的统计与日志：每秒给控制器一个平均缓冲占用，每分钟记一次摘要；溢出、欠载立即记录（限频）。
 pub struct BridgeLog {
     endpoint: String,
     session_started: Instant,
@@ -98,7 +98,7 @@ impl BridgeLog {
         self.session_block_max = self.session_block_max.max(elapsed);
     }
 
-    /// 记录一次环形缓冲的水位（ms），攒到下一次控制时取平均。
+    /// 记录一次环形缓冲的占用（ms），攒到下一次控制时取平均。
     pub fn level(&mut self, level_ms: f64) {
         self.level_sum += level_ms;
         self.level_count += 1;
@@ -106,12 +106,12 @@ impl BridgeLog {
         self.level_max = self.level_max.max(level_ms);
     }
 
-    /// 是否该调整一次重采样比率：距上次已满一个控制周期，并且这期间记录过水位。
+    /// 是否该调整一次重采样比率：距上次已满一个控制周期，并且这期间记录过缓冲占用。
     pub fn control_due(&self) -> bool {
         self.last_control.elapsed() >= CONTROL_PERIOD && self.level_count > 0
     }
 
-    /// 取出这个控制周期的平均水位（ms），并开始下一个周期。平均能滤掉设备按块交付造成的锯齿。
+    /// 取出这个控制周期的平均缓冲占用（ms），并开始下一个周期。平均能滤掉设备按块交付造成的锯齿。
     pub fn take_average(&mut self) -> f64 {
         let average = self.level_sum / self.level_count.max(1) as f64;
         self.level_sum = 0.0;

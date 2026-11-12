@@ -4,7 +4,7 @@
 //! - 外部输入：设备 → 转立体声 → ASRC 到引擎采样率 → 环形缓冲 → 调度线程每 1 ms 取一块。
 //! - 外部输出：调度线程每 1 ms 推一块 → 环形缓冲 → ASRC 到设备采样率 → 设备。
 //!
-//! ASRC 的比率由 IO 线程里的 PI 控制器按环形缓冲的水位调整，调度线程不参与。
+//! ASRC 的比率由 IO 线程里的 PI 控制器按环形缓冲的占用调整，调度线程不参与。
 //! 环形缓冲在引擎一侧的那一端被丢弃时（拓扑不再使用这台设备），IO 线程自行关闭设备并退出。
 //! IO 线程每秒把设备时钟的读数写进 [`clock::ClockTap`]，主时钟跟随线程从那里读取。
 
@@ -32,9 +32,9 @@ use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::device::DeviceRequest;
 
-/// 环形缓冲的目标水位，实测能吸收设备周期抖动又不增加太多延迟。外部输入在引擎一侧先攒够这么多才开始读取。
+/// 环形缓冲的目标占用，实测能吸收设备周期抖动又不增加太多延迟。外部输入在引擎一侧先攒够这么多才开始读取。
 pub const TARGET_LEVEL_MS: f64 = 15.0;
-/// 环形缓冲容量（ms），远大于目标水位
+/// 环形缓冲容量（ms），远大于目标占用
 const RING_CAPACITY_MS: usize = 200;
 const MILLISECONDS_PER_SECOND: usize = 1000;
 /// 引擎内部一律是立体声
@@ -113,7 +113,7 @@ pub fn stereo_ring(engine_rate: SampleRate) -> (Producer<f32>, Consumer<f32>) {
     RingBuffer::new(frames * STEREO)
 }
 
-/// 缓冲里的样本超过目标水位的这么多倍时，丢到目标水位（例如某一侧的线程曾被耽搁）。
+/// 缓冲里的样本超过目标占用的这么多倍时，丢到目标占用（例如某一侧的线程曾被耽搁）。
 /// 只靠重采样追赶每秒只能降约 1 ms，积压几十毫秒就要等上一分钟。
 const BACKLOG_LIMIT_FACTOR: usize = 4;
 
@@ -133,7 +133,7 @@ pub fn skip_backlog(consumer: &mut Consumer<f32>, target_samples: usize) -> usiz
     }
 }
 
-/// 目标水位对应的帧数。
+/// 目标占用对应的帧数。
 pub fn target_frames(rate: SampleRate) -> usize {
     ms_to_frames(TARGET_LEVEL_MS, rate)
 }

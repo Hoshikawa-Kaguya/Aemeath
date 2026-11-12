@@ -1,8 +1,8 @@
 //! 外部输出（播放端点）的 IO 线程：环形缓冲 → ASRC 到设备采样率 → 设备。
 //!
 //! 重采样在消费方（本线程）进行，固定每次产出 1 ms 的设备帧，放进一个小队列，再按设备每次要的帧数写出。
-//! 水位 = 环形缓冲中的引擎帧 + 两级重采样之间的帧 + 已重采样但尚未写给设备的帧。
-//! 水位偏高说明引擎比设备快，就把比率调低、多消耗输入。FFT 要攒够一批才有产出，目标水位相应加上一批的时长。
+//! 缓冲占用 = 环形缓冲中的引擎帧 + 两级重采样之间的帧 + 已重采样但尚未写给设备的帧。
+//! 缓冲占用偏高说明引擎比设备快，就把比率调低、多消耗输入。FFT 要攒够一批才有产出，目标占用相应加上一批的时长。
 
 use std::collections::VecDeque;
 use std::io;
@@ -23,7 +23,7 @@ use crate::{
 
 /// 每次重采样产出的设备帧数：1 ms
 const CHUNKS_PER_SECOND: u32 = 1000;
-/// 开流前等待环形缓冲攒够目标水位时的轮询间隔
+/// 开流前等待环形缓冲攒够目标占用时的轮询间隔
 const PRIME_POLL: Duration = Duration::from_millis(1);
 
 /// 启动外部输出的 IO 线程。
@@ -111,7 +111,7 @@ fn run_session(
     let mut controller = RateController::new(target_ms);
     let mut log = BridgeLog::new(&config.endpoint.0);
 
-    // 先攒够目标水位再开流，控制器从零误差开始
+    // 先攒够目标占用再开流，控制器从零误差开始
     let prime_samples = ms_to_frames(target_ms, config.engine_rate) * STEREO;
     while consumer.slots() < prime_samples {
         if stop.load(Ordering::Relaxed) || consumer.is_abandoned() {
@@ -119,7 +119,7 @@ fn run_session(
         }
         thread::sleep(PRIME_POLL);
     }
-    // 设备离线期间引擎仍在写入，缓冲里可能积压了几百毫秒的旧数据；丢到目标水位，避免重新上线后延迟一直偏大
+    // 设备离线期间引擎仍在写入，缓冲里可能积压了几百毫秒的旧数据；丢到目标占用，避免重新上线后延迟一直偏大
     let backlog = consumer.slots() - prime_samples;
     if backlog > 0
         && let Ok(chunk) = consumer.read_chunk(backlog)
@@ -151,7 +151,7 @@ fn run_session(
         while queue.len() / STEREO < available {
             let needed = resampler.input_frames_next() * STEREO;
             if consumer.slots() < needed {
-                // 欠载：用静音补足本次所需，不消耗输入，等引擎把水位补回来
+                // 欠载：用静音补足本次所需，不消耗输入，等引擎把缓冲占用补回来
                 log.underflow();
                 let missing = available - queue.len() / STEREO;
                 queue.extend(std::iter::repeat_n(0.0, missing * STEREO));
