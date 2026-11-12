@@ -9,7 +9,7 @@ import { formatKhz } from '@/format/format'
 import { useAppStore } from '@/stores/app'
 import ResamplerField from '@/workbench/ResamplerField.vue'
 
-// 设置页：音频（引擎采样率、全局重采样算法）、设备检测（立即重新检测全部设备；自动检测始终开启，不提供开关）、界面语言。
+// 设置页：音频（引擎采样率、全局重采样算法、主时钟）、设备检测（立即重新检测全部设备；自动检测始终开启，不提供开关）、界面语言。
 const SYSTEM = 'system'
 
 const { t } = useI18n()
@@ -34,6 +34,16 @@ const globalResampler = computed<Resampler | null>({
     }
   },
 })
+
+/** 可以当主时钟的节点：外部输入和外部输出 */
+const clockChoices = computed(() =>
+  store.nodes.filter((node) => node.kind === 'externalInput' || node.kind === 'externalOutput'),
+)
+
+function chooseClock(event: Event): void {
+  const value = (event.target as HTMLSelectElement).value
+  void store.run(() => backend.setClockMaster(value === SYSTEM ? null : Number(value)))
+}
 
 const update = computed(() => store.update)
 const recording = computed(() => store.nodes.some((node) => node.recorder?.state.state === 'recording'))
@@ -194,6 +204,22 @@ function redetectAll(): void {
             <span class="caption">{{ t('set.resamplerSub') }}</span>
           </div>
           <ResamplerField v-model="globalResampler" class="resampler" :allow-follow="false" />
+        </div>
+        <div class="set-row">
+          <AppIcon name="clock" />
+          <div class="text">
+            <span>{{ t('set.clock') }}</span>
+            <span class="caption">{{ t('set.clockSub') }}</span>
+          </div>
+          <select
+            class="select clock-select"
+            :value="store.state?.engine.clockMaster ?? SYSTEM"
+            :aria-label="t('set.clock')"
+            @change="chooseClock"
+          >
+            <option :value="SYSTEM">{{ t('set.clockSystem') }}</option>
+            <option v-for="node in clockChoices" :key="node.id" :value="node.id">{{ node.name }}</option>
+          </select>
         </div>
       </div>
       <div class="set-group">
@@ -451,6 +477,10 @@ function redetectAll(): void {
 
 .resampler {
   width: 280px;
+}
+
+.clock-select {
+  max-width: 280px;
 }
 
 .buttons {

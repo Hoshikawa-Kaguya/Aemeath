@@ -16,6 +16,7 @@ export type IconName =
   | 'check'
   | 'unplug'
   | 'sync'
+  | 'clock'
   | 'info'
   | 'lang'
   | 'undo'

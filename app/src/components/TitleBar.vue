@@ -46,6 +46,7 @@ const slotsTip = computed(() => {
   return version ? t('chip.slotsTip', { version }) : t('chip.slotsTipNoDriver')
 })
 const rate = computed(() => t('chip.rate', { rate: formatKhz(store.state?.engine.sampleRate ?? 0) }))
+const clockName = computed(() => store.nodes.find((node) => node.id === store.state?.engine.clockMaster)?.name ?? null)
 
 async function refreshMaximized(): Promise<void> {
   isMaximized.value = await appWindow.isMaximized()
@@ -86,6 +87,15 @@ onUnmounted(() => {
       <button type="button" class="chip chip-btn" :title="slotsTip" @click="store.page = 'devices'">
         <span class="dot" :class="store.state?.usbipVersion ? 'running' : 'unresponsive'" aria-hidden="true"></span>
         <AppIcon name="slots" />{{ t('chip.slots', { used: slotsUsed }) }}
+      </button>
+      <button
+        v-if="clockName !== null"
+        type="button"
+        class="chip chip-btn clock"
+        :title="t('chip.clockTip', { name: clockName })"
+        @click="store.page = 'settings'"
+      >
+        <AppIcon name="clock" /><span class="ellipsis">{{ t('chip.clock', { name: clockName }) }}</span>
       </button>
       <button type="button" class="chip chip-btn" :title="t('chip.rateTip')" @click="store.rateDialogOpen = true">
         {{ store.rateSwitching ? t('chip.rateSwitching') : rate }}
@@ -164,6 +174,14 @@ onUnmounted(() => {
 .chip svg {
   width: 14px;
   height: 14px;
+}
+
+.chip.clock {
+  max-width: 240px;
+}
+
+.chip.clock svg {
+  flex: none;
 }
 
 .chip.warn {

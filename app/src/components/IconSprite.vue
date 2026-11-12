@@ -63,9 +63,9 @@
       <symbol id="i-stop" viewBox="0 0 24 24">
         <rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor" stroke="none" />
       </symbol>
-      <symbol id="i-rec" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6" fill="currentColor" stroke="none" /></symbol>
-      <symbol id="i-stop" viewBox="0 0 24 24">
-        <rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor" stroke="none" />
+      <symbol id="i-clock" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="8.5" />
+        <path d="M12 7.5V12l3 2" />
       </symbol>
       <symbol id="i-key" viewBox="0 0 24 24">
         <rect x="3" y="7" width="18" height="11" rx="2" />

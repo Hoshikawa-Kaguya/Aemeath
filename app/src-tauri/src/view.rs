@@ -25,6 +25,8 @@ pub struct ViewState {
     pub registration: Option<RegistrationView>,
     pub can_undo: bool,
     pub usbip_version: Option<String>,
+    /// 驱动版本比 Aemeath 附带的新，没有经过测试
+    pub usbip_untested: bool,
     pub language: LanguagePreference,
     pub check_updates_on_start: bool,
     pub appearance: AppearanceView,
@@ -144,6 +146,8 @@ pub struct EngineView {
     pub sample_rate: u32,
     /// 全局默认的重采样算法
     pub resampler: ResamplerView,
+    /// 主时钟节点；None 表示按系统时钟运行
+    pub clock_master: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize)]

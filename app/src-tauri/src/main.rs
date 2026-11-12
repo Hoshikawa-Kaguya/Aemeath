@@ -122,6 +122,8 @@ fn main() -> ExitCode {
             commands::add_node,
             commands::set_global_resampler,
             commands::set_engine_rate,
+            commands::set_clock_master,
+            commands::open_app_volume_settings,
             commands::get_update_state,
             commands::check_updates,
             commands::download_update,

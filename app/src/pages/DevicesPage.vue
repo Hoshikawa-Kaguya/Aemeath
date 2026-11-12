@@ -130,8 +130,8 @@ const healthText = computed(() => {
           <div class="k">{{ t('dev.driver') }}</div>
           <div class="v">
             <AppIcon
-              :name="store.state?.usbipVersion ? 'check' : 'warn'"
-              :class="store.state?.usbipVersion ? 'ok' : 'warn'"
+              :name="store.state?.usbipVersion && !store.state.usbipUntested ? 'check' : 'warn'"
+              :class="store.state?.usbipVersion && !store.state.usbipUntested ? 'ok' : 'warn'"
             />
             <span class="ellipsis">{{
               store.state?.usbipVersion
@@ -139,6 +139,7 @@ const healthText = computed(() => {
                 : t('dev.driverMissing')
             }}</span>
           </div>
+          <div v-if="store.state?.usbipUntested" class="caption">{{ t('dev.driverUntested') }}</div>
         </div>
         <div>
           <div class="k">{{ t('dev.health') }}</div>

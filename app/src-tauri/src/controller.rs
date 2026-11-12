@@ -17,7 +17,7 @@ use aemeath_control::hotkeys::{HotkeyEvent, HotkeyService};
 use aemeath_control::slots::endpoints::{EndpointProbe, ExternalDevice};
 use aemeath_control::slots::registration::{RegistrationProgress, all_slots, registration_topology};
 use aemeath_control::slots::{MaintainerConfig, MaintainerTiming, SlotMaintainer, SlotStatus, uninstall};
-use aemeath_control::usbip_cli::UsbipCli;
+use aemeath_control::usbip_cli::{UsbipCli, UsbipVersion};
 use aemeath_core::duplicates::{DuplicateRoute, duplicate_routes};
 use aemeath_core::hotkeys::{self, HotkeyBinding, HotkeyError, HotkeyOverlay, HotkeyTarget};
 use aemeath_core::model::{DeviceRef, LabelPosition, Node, NodeKind, NodeName, Position};
@@ -219,6 +219,8 @@ pub enum Edit {
     SetGlobalResampler(Resampler),
     /// 引擎采样率：先停止录音，再下发新拓扑；"跟随引擎"的节点由挂载维护异步改格式
     SetEngineRate(SampleRate),
+    /// 主时钟；None 表示按系统时钟运行
+    SetClockMaster(Option<NodeId>),
     SetRecorderSettings {
         node: NodeId,
         settings: RecorderSettings,
@@ -567,7 +569,7 @@ struct Controller {
     policy: Option<AudioPolicy>,
     /// 用户在应用页的指派走单独的线程：策略线程按顺序处理请求，指派慢时不能拖住会话轮询
     landing_policy: Option<AudioPolicy>,
-    usbip_version: Option<String>,
+    usbip_version: Option<UsbipVersion>,
     engine_state: EngineState,
     endpoint_status: HashMap<NodeId, EndpointStatus>,
     recorder_status: HashMap<NodeId, RecorderState>,
@@ -646,7 +648,7 @@ impl Controller {
         let usbip = UsbipCli::default_program().map(|program| UsbipCli::new(program, runtime.usbip_port));
         let usbip_version = match &usbip {
             Some(cli) => match cli.version().await {
-                Ok(version) => Some(version.to_string()),
+                Ok(version) => Some(version),
                 Err(error) => {
                     warn!(%error, "cannot read the usbip-win2 version");
                     None
@@ -1003,6 +1005,7 @@ impl Controller {
             Edit::SetAppResampler { node, resampler } => workspace.set_app_resampler(node, resampler)?,
             Edit::SetGlobalResampler(resampler) => workspace.engine.resampler = resampler,
             Edit::SetEngineRate(rate) => workspace.engine.sample_rate = rate,
+            Edit::SetClockMaster(master) => workspace.set_clock_master(master)?,
             Edit::SetSlotSettings { node, settings } => workspace.set_slot_settings(node, settings)?,
             Edit::SetRecorderSettings { node, settings } => workspace.set_recorder_settings(node, settings)?,
             Edit::SetHotkey { target, binding } => {
@@ -1817,6 +1820,7 @@ impl Controller {
                 state: self.engine_state,
                 sample_rate: workspace.engine.sample_rate.hz(),
                 resampler: ResamplerView::from(workspace.engine.resampler),
+                clock_master: workspace.engine.clock_master.map(|node| node.0),
             },
             registration: self.registration.as_ref().map(|progress| RegistrationView {
                 completed: progress.completed(),
@@ -1824,7 +1828,10 @@ impl Controller {
                 failing: progress.failing().into_iter().map(SlotRef::from).collect(),
             }),
             can_undo: !self.undo.is_empty(),
-            usbip_version: self.usbip_version.clone(),
+            usbip_version: self.usbip_version.map(|version| version.to_string()),
+            usbip_untested: self
+                .usbip_version
+                .is_some_and(|version| version > UsbipVersion::BUNDLED),
             language: self.config.preferences.language.clone(),
             check_updates_on_start: !self.config.preferences.no_update_check_on_start,
             appearance: self.appearance_view(),

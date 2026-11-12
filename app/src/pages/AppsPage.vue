@@ -92,6 +92,11 @@ async function choose(app: AppView, event: Event): Promise<void> {
   window.setTimeout(() => void refresh(processId), SETTLE_MS)
 }
 
+/** Windows 自带的按应用选择输出设备；按应用指派不可用，或程序不在列表里时用它 */
+function openWindowsSettings(): void {
+  backend.openAppVolumeSettings().catch((error: unknown) => store.showToast(store.errorText(error)))
+}
+
 /** 添加为应用源：放在工作台左上角，用户再拖到合适的位置 */
 async function addSource(app: AppView): Promise<void> {
   if (app.executable === null) {
@@ -118,6 +123,7 @@ async function addSource(app: AppView): Promise<void> {
     <header>
       <h1 class="page-title">{{ t('nav.apps') }}</h1>
       <p class="page-sub">{{ t('apps.sub') }}</p>
+      <button type="button" class="link" @click="openWindowsSettings">{{ t('apps.windowsSettings') }}</button>
     </header>
     <div class="body">
       <p v-if="failed" class="caption">{{ t('apps.unavailable') }}</p>

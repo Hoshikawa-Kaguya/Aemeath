@@ -268,6 +268,16 @@ pub fn open_releases_page(updates: State<'_, UpdateService>) -> Reply<()> {
     Ok(())
 }
 
+/// 打开 Windows 设置的"音量合成器"，用户可以在那里为每个应用选择输出设备。
+#[tauri::command]
+pub fn open_app_volume_settings() -> Reply<()> {
+    std::process::Command::new("explorer")
+        .arg("ms-settings:apps-volume")
+        .spawn()
+        .map_err(invalid)?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn set_check_updates_on_start(controller: State<'_, ControllerHandle>, enabled: bool) -> Reply<ViewState> {
     controller.edit(Edit::SetCheckUpdatesOnStart(enabled)).await
@@ -730,6 +740,12 @@ pub async fn undo(controller: State<'_, ControllerHandle>) -> Reply<ViewState> {
 pub async fn set_engine_rate(controller: State<'_, ControllerHandle>, hz: u32) -> Reply<ViewState> {
     let rate = SampleRate::new(hz).map_err(invalid)?;
     controller.edit(Edit::SetEngineRate(rate)).await
+}
+
+/// 设定主时钟；`node` 为 null 表示按系统时钟运行。
+#[tauri::command]
+pub async fn set_clock_master(controller: State<'_, ControllerHandle>, node: Option<u32>) -> Reply<ViewState> {
+    controller.edit(Edit::SetClockMaster(node.map(NodeId))).await
 }
 
 #[tauri::command]

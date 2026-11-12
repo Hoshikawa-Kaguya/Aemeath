@@ -244,6 +244,7 @@ provide(workbenchKey, actions)
 
 function nodeMenu(node: NodeView): MenuItem[] {
   const pinned = store.state?.console.includes(node.id) === true
+  const isClock = store.state?.engine.clockMaster === node.id
   return [
     { kind: 'action', label: t('menu.nodeSettings'), run: () => settingsDialog.value?.open(node) },
     { kind: 'action', label: t('menu.rename'), run: () => (renaming.value = node.id) },
@@ -252,6 +253,15 @@ function nodeMenu(node: NodeView): MenuItem[] {
       label: t(pinned ? 'menu.unpin' : 'menu.pin'),
       run: () => void store.run(() => backend.pinNode(node.id, !pinned)),
     },
+    ...(node.kind === 'externalInput' || node.kind === 'externalOutput'
+      ? [
+          {
+            kind: 'action' as const,
+            label: t(isClock ? 'menu.clearClock' : 'menu.setClock'),
+            run: () => void store.run(() => backend.setClockMaster(isClock ? null : node.id)),
+          },
+        ]
+      : []),
     ...(node.device === null && node.program === null
       ? []
       : [

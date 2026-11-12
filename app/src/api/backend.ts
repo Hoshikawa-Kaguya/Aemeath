@@ -51,6 +51,9 @@ export const backend = {
     invoke<ViewState>('set_app_resampler', { node, resampler }),
   setGlobalResampler: (resampler: Resampler) => invoke<ViewState>('set_global_resampler', { resampler }),
   setEngineRate: (hz: number) => invoke<ViewState>('set_engine_rate', { hz }),
+  /** `node` 为 null 表示按系统时钟运行 */
+  setClockMaster: (node: number | null) => invoke<ViewState>('set_clock_master', { node }),
+  openAppVolumeSettings: () => invoke<void>('open_app_volume_settings'),
   /** 设备打不开时为 null */
   probeDevice: (endpointId: string, direction: 'input' | 'output') =>
     invoke<Capabilities | null>('probe_device', { endpointId, direction }),

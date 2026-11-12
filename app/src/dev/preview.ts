@@ -150,10 +150,16 @@ const nodes: NodeView[] = [
 ]
 
 let state: ViewState = {
-  engine: { state: 'running', sampleRate: 48000, resampler: { algorithm: 'sincAsync', preset: 'balanced' } },
+  engine: {
+    state: 'running',
+    sampleRate: 48000,
+    resampler: { algorithm: 'sincAsync', preset: 'balanced' },
+    clockMaster: null,
+  },
   registration: null,
   canUndo: false,
   usbipVersion: '0.9.8.1',
+  usbipUntested: false,
   language: { mode: 'system' },
   checkUpdatesOnStart: true,
   appearance: { themeMode: 'system', accent: null, backgroundPath: null, overlayPercent: 60 },
@@ -462,6 +468,7 @@ mockIPC(
       case 'download_update':
       case 'apply_update':
       case 'open_releases_page':
+      case 'open_app_volume_settings':
       case 'open_data_folder':
       case 'open_log_folder':
       case 'open_recording_folder':
@@ -590,6 +597,10 @@ mockIPC(
             nodes: state.nodes.filter((n) => n.id !== args.node),
             routes: state.routes.filter((r) => r.from !== args.node && r.to !== args.node),
             console: state.console.filter((id) => id !== args.node),
+            engine: {
+              ...state.engine,
+              clockMaster: state.engine.clockMaster === args.node ? null : state.engine.clockMaster,
+            },
           },
           true,
         )
@@ -623,6 +634,8 @@ mockIPC(
           false,
         )
       }
+      case 'set_clock_master':
+        return commit({ ...state, engine: { ...state.engine, clockMaster: args.node as number | null } }, false)
       case 'set_global_resampler':
         return commit({ ...state, engine: { ...state.engine, resampler: args.resampler as Resampler } }, false)
       case 'set_language':

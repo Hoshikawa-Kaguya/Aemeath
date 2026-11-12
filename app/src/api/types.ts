@@ -18,8 +18,6 @@ export type NodeKind =
   | 'appSource'
   | 'externalInsert'
   | 'recorder'
-  | 'recorder'
-  | 'recorder'
 
 export type OfflineReason =
   'waitingForDevice' | 'inUseByOtherApp' | 'exclusiveNotAllowed' | 'noSignal' | 'slotRepairing' | 'slotFailing'
@@ -311,10 +309,13 @@ export interface Appearance {
 }
 
 export interface ViewState {
-  engine: { state: EngineState; sampleRate: number; resampler: Resampler }
+  /** `clockMaster` 是主时钟节点的 ID；null 表示按系统时钟运行 */
+  engine: { state: EngineState; sampleRate: number; resampler: Resampler; clockMaster: number | null }
   registration: RegistrationView | null
   canUndo: boolean
   usbipVersion: string | null
+  /** 驱动版本比 Aemeath 附带的新，没有经过测试 */
+  usbipUntested: boolean
   language: LanguagePreference
   checkUpdatesOnStart: boolean
   appearance: Appearance

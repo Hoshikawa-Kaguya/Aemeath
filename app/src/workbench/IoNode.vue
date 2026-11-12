@@ -191,6 +191,14 @@ function onKeyDown(event: KeyboardEvent): void {
         :aria-label="t('node.duplicate', { program: node.duplicate.program, destination: node.duplicate.destination })"
         ><AppIcon name="warn"
       /></span>
+      <span
+        v-if="store.state?.engine.clockMaster === node.id"
+        class="clock"
+        role="img"
+        :title="t('node.clockMaster')"
+        :aria-label="t('node.clockMaster')"
+        ><AppIcon name="clock"
+      /></span>
       <span class="code">{{ data.code }}</span>
       <button
         type="button"
@@ -342,7 +350,14 @@ function onKeyDown(event: KeyboardEvent): void {
   color: var(--warn);
 }
 
-.dup svg {
+.clock {
+  display: grid;
+  flex: none;
+  color: var(--accent);
+}
+
+.dup svg,
+.clock svg {
   width: 16px;
   height: 16px;
 }
