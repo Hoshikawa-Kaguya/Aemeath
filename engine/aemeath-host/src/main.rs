@@ -22,6 +22,9 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    if let Err(error) = aemeath_sys::thread_priority::prioritize_current_process() {
+        tracing::warn!(%error, "cannot raise the engine process priority");
+    }
     let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
         Ok(runtime) => runtime,
         Err(error) => {
