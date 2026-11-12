@@ -212,7 +212,7 @@ function redetectAll(): void {
             <span class="caption">{{ t('set.clockSub') }}</span>
           </div>
           <select
-            class="select clock-select"
+            class="select"
             :value="store.state?.engine.clockMaster ?? SYSTEM"
             :aria-label="t('set.clock')"
             @change="chooseClock"
@@ -478,12 +478,10 @@ function redetectAll(): void {
   flex-direction: column;
 }
 
-.resampler {
+/* 右侧的下拉框（含重采样算法那一组）统一宽度 */
+.resampler,
+.select {
   width: 280px;
-}
-
-.clock-select {
-  max-width: 280px;
 }
 
 .buttons {
