@@ -18,7 +18,7 @@ members = [
 
 [workspace.package]
 # 程序版本号在 scripts/version.json，代码读 aemeath_runtime::VERSION
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 rust-version = "1.90"
 license = "AGPL-3.0-only"
