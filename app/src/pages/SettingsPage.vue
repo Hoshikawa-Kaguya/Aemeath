@@ -217,6 +217,7 @@ function redetectAll(): void {
             :aria-label="t('set.clock')"
             @change="chooseClock"
           >
+            <button><selectedcontent></selectedcontent></button>
             <option :value="SYSTEM">{{ t('set.clockSystem') }}</option>
             <option v-for="node in clockChoices" :key="node.id" :value="node.id">{{ node.name }}</option>
           </select>
@@ -242,6 +243,7 @@ function redetectAll(): void {
             <span class="caption">{{ t('set.langSub') }}</span>
           </div>
           <select class="select" :value="selected" :aria-label="t('set.lang')" @change="choose">
+            <button><selectedcontent></selectedcontent></button>
             <option :value="SYSTEM">{{ t('set.langSys') }}</option>
             <option value="zh-CN">{{ t('set.langZh') }}</option>
             <option value="en">{{ t('set.langEn') }}</option>
@@ -254,6 +256,7 @@ function redetectAll(): void {
             <span class="caption">{{ t('set.themeModeSub') }}</span>
           </div>
           <select class="select" :value="appearance?.themeMode" :aria-label="t('set.themeMode')" @change="setThemeMode">
+            <button><selectedcontent></selectedcontent></button>
             <option value="system">{{ t('set.themeSystem') }}</option>
             <option value="dark">{{ t('set.themeDark') }}</option>
             <option value="light">{{ t('set.themeLight') }}</option>

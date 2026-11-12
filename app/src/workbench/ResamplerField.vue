@@ -81,6 +81,7 @@ function presetName(choice: PresetChoice): string {
     <label class="field">
       <span>{{ t('device.resampler') }}</span>
       <select v-model="algorithm" class="select">
+        <button><selectedcontent></selectedcontent></button>
         <option v-if="props.allowFollow" :value="FOLLOW_GLOBAL">{{ t('device.resamplerGlobal') }}</option>
         <option v-for="choice in ALGORITHMS" :key="choice.id" :value="choice.id">{{ choice.name }}</option>
       </select>
@@ -89,6 +90,7 @@ function presetName(choice: PresetChoice): string {
     <label v-if="resampler !== null" class="field">
       <span>{{ t('resampler.preset.label') }}</span>
       <select v-model="preset" class="select">
+        <button><selectedcontent></selectedcontent></button>
         <option v-for="choice in presets" :key="choice.id" :value="choice.id">{{ presetName(choice) }}</option>
       </select>
       <span class="caption">{{ t('resampler.latency', { ms: latency }) }}</span>

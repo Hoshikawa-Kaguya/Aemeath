@@ -83,6 +83,7 @@ const ROLES: Role[] = ['default', 'communications']
                 :disabled="devices === null"
                 @change="choose(role, $event)"
               >
+                <button><selectedcontent></selectedcontent></button>
                 <option v-if="current(devices?.[flow] ?? [], role) === ''" value="">{{ t('tools.none') }}</option>
                 <option
                   v-for="device in devices?.[flow] ?? []"

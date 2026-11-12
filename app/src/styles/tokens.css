@@ -253,7 +253,7 @@ fluent-dialog-body {
   gap: 6px;
 }
 
-/* 自带的 <button><selectedcontent> 只负责显示所选项，外观由 .select 决定 */
+/* 每个下拉框都自带 <button><selectedcontent>：浏览器内置的按钮无法截断长文字。外观由 .select 决定 */
 .select > button {
   display: flex;
   flex: 1;
@@ -265,11 +265,19 @@ fluent-dialog-body {
   font: inherit;
 }
 
+/* 所选项单行显示，过长时截断；带图标时图标与文字横排 */
 .select selectedcontent {
+  display: block;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.select selectedcontent:has(> .i) {
   display: flex;
   align-items: center;
   gap: 6px;
-  min-width: 0;
 }
 
 .select::picker-icon {

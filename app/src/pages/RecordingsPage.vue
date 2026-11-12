@@ -86,6 +86,7 @@ function isRecording(node: NodeView): boolean {
             :value="recording.defaults.format"
             @change="setDefaults({ format: ($event.target as HTMLSelectElement).value as RecordFormat })"
           >
+            <button><selectedcontent></selectedcontent></button>
             <option v-for="format in FORMATS" :key="format" :value="format">{{ t(`rec.format.${format}`) }}</option>
           </select>
         </label>
@@ -96,6 +97,7 @@ function isRecording(node: NodeView): boolean {
             :value="recording.defaults.depth"
             @change="setDefaults({ depth: ($event.target as HTMLSelectElement).value as RecordDepth })"
           >
+            <button><selectedcontent></selectedcontent></button>
             <option
               v-for="depth in DEPTHS"
               :key="depth"

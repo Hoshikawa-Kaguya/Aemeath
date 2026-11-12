@@ -62,6 +62,7 @@ const resampler = computed({
     <label class="field">
       <span>{{ t('slot.format') }}</span>
       <select v-model="mode" class="select">
+        <button><selectedcontent></selectedcontent></button>
         <option :value="FOLLOW">{{ t('slot.follow') }}</option>
         <option :value="FIXED">{{ t('slot.fixed') }}</option>
       </select>
@@ -71,6 +72,7 @@ const resampler = computed({
       <label class="field">
         <span>{{ t('slot.rate') }}</span>
         <select v-model.number="sampleRate" class="select">
+          <button><selectedcontent></selectedcontent></button>
           <option v-for="rate in RATES" :key="rate" :value="rate">
             {{ t('chip.rate', { rate: formatKhz(rate) }) }}
           </option>
@@ -79,6 +81,7 @@ const resampler = computed({
       <label class="field">
         <span>{{ t('slot.sampleFormat') }}</span>
         <select v-model="sampleFormat" class="select">
+          <button><selectedcontent></selectedcontent></button>
           <option v-for="format in SAMPLE_FORMATS" :key="format" :value="format">
             {{ t(`sampleFormat.${format}`) }}
           </option>

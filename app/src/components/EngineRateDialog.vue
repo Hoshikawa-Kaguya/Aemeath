@@ -48,6 +48,7 @@ function apply(): void {
         <label class="field">
           <span>{{ t('rate.label') }}</span>
           <select v-model.number="rate" class="select">
+            <button><selectedcontent></selectedcontent></button>
             <option v-for="choice in RATES" :key="choice" :value="choice">
               {{ t('chip.rate', { rate: formatKhz(choice) }) }}
             </option>

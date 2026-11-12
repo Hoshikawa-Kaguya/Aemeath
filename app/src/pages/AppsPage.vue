@@ -158,6 +158,7 @@ async function addSource(app: AppView): Promise<void> {
               :aria-label="t('apps.landingAria', { app: app.system ? t('apps.system') : app.name })"
               @change="choose(app, $event)"
             >
+              <button><selectedcontent></selectedcontent></button>
               <option :value="FOLLOW_SYSTEM">{{ t('apps.followSystem') }}</option>
               <optgroup v-if="virtualInputs.length > 0" :label="t('kind.virtualInput')">
                 <option v-for="choice in virtualInputs" :key="choice.endpointId" :value="choice.endpointId">
@@ -203,6 +204,11 @@ async function addSource(app: AppView): Promise<void> {
 .page-sub {
   margin: 0 24px 8px;
   color: var(--text-2);
+}
+
+/* 链接文字与标题对齐：页边距减去链接自身 4 px 的内边距 */
+header .link {
+  margin: 0 20px 8px;
 }
 
 .body {
@@ -268,7 +274,7 @@ async function addSource(app: AppView): Promise<void> {
   border-radius: var(--r-ctl);
   background: transparent;
   color: var(--accent-text);
-  font: var(--fontSizeBase100) / 22px var(--fontFamilyBase);
+  font: var(--fontSizeBase200) / 22px var(--fontFamilyBase);
   cursor: pointer;
 }
 

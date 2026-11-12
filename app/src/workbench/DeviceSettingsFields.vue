@@ -133,6 +133,7 @@ const sharedFormat = computed(() => capabilities.value?.sharedFormat ?? null)
       <label class="field">
         <span>{{ t('device.formatLabel') }}</span>
         <select v-model="formatValue" class="select">
+          <button><selectedcontent></selectedcontent></button>
           <option :value="RECOMMENDED">{{ recommendedLabel }}</option>
           <option v-for="format in formatOptions" :key="formatKey(format)" :value="formatKey(format)">
             {{ formatLabel(format) }}
@@ -148,6 +149,7 @@ const sharedFormat = computed(() => capabilities.value?.sharedFormat ?? null)
         <label for="device-buffer">{{ t('device.buffer') }}</label>
         <div class="row">
           <select id="device-buffer" v-model="bufferValue" class="select">
+            <button><selectedcontent></selectedcontent></button>
             <option value="deviceDefault">
               {{ periodLabel('device.bufferDefault', capabilities?.defaultPeriodMs) }}
             </option>

@@ -211,6 +211,7 @@ defineExpose({ open })
           <span class="caption">{{ t('nodeSettings.candidatesHint', { device: node.device?.name ?? '' }) }}</span>
           <div class="row">
             <select v-model="candidate" class="select">
+              <button><selectedcontent></selectedcontent></button>
               <option v-for="choice in node.candidates" :key="choice.endpointId" :value="choice.endpointId">
                 {{ choice.name }} · {{ choice.endpointId }}
               </option>
@@ -249,6 +250,7 @@ defineExpose({ open })
         <label v-if="slotChoices.length > 0" class="field">
           <span>{{ t('nodeSettings.slot') }}</span>
           <select v-model.number="slotNumber" class="select">
+            <button><selectedcontent></selectedcontent></button>
             <option v-for="slot in slotChoices" :key="slot.number" :value="slot.number">{{ slotName(slot) }}</option>
           </select>
           <span class="caption">{{ t('nodeSettings.slotHint') }}</span>
@@ -297,6 +299,7 @@ defineExpose({ open })
           <label class="field">
             <span>{{ t('rec.defaultFormat') }}</span>
             <select v-model="recorder.format" class="select" @change="fixDepth">
+              <button><selectedcontent></selectedcontent></button>
               <option value="flac">{{ t('rec.format.flac') }}</option>
               <option value="wav">{{ t('rec.format.wav') }}</option>
             </select>
@@ -304,6 +307,7 @@ defineExpose({ open })
           <label class="field">
             <span>{{ t('rec.defaultDepth') }}</span>
             <select v-model="recorder.depth" class="select">
+              <button><selectedcontent></selectedcontent></button>
               <option value="int16">{{ t('rec.depth.int16') }}</option>
               <option value="int24">{{ t('rec.depth.int24') }}</option>
               <option value="float32" :disabled="recorder.format === 'flac'">{{ t('rec.depth.float32') }}</option>

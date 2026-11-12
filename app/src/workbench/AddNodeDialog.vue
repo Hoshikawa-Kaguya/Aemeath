@@ -262,6 +262,7 @@ defineExpose({ open })
         <label v-if="isExternal" class="field">
           <span>{{ t(isInsert ? 'add.returnDevice' : 'add.device') }}</span>
           <select v-if="devices && devices.length > 0" v-model="endpointId" class="select">
+            <button><selectedcontent></selectedcontent></button>
             <option
               v-for="choice in devices"
               :key="choice.endpointId"

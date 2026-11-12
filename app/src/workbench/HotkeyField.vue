@@ -107,6 +107,7 @@ function setMode(event: Event): void {
       :aria-label="t('hotkey.mode')"
       @change="setMode"
     >
+      <button><selectedcontent></selectedcontent></button>
       <option value="toggle">{{ t('hotkey.toggle') }}</option>
       <option value="hold">{{ t('hotkey.hold') }}</option>
     </select>
