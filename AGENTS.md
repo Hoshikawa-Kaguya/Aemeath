@@ -70,7 +70,8 @@
   - 根目录 `Cargo.toml` 中 `[workspace.package]` 的 `version`：各 crate 的版本。
 - 格式是语义化版本 `主.次.修订`，可带 `-预发布` 后缀，不带 `v` 前缀；格式不对时构建会报错。
 - 推送 `v主.次.修订[-后缀]` tag 后，`.github/workflows/release.yml` 核对 tag 与两处版本号，打包并发布到 GitHub Releases；带后缀的标为预发布。tag 由维护者推送。
-- 发版时把 `agent_tmp/docs/修改记录.md` 的"未发布"改成版本号。
+- 发版顺序：改版本号 → 维护者手动运行 `/changelog`（本地 skill：比较上一个 tag 与 HEAD，写入 `CHANGELOG.md`，并把修改记录的"未发布"改成版本号）→ 提交 → 打 tag 并推送。CI 把 `CHANGELOG.md` 里这个版本的一节写进 GitHub Release 的说明。
+- `CHANGELOG.md` 只增量更新：新版本插在文件顶部的标记下面。不要读整个文件，用 `grep -n '^## '` 找到需要的那一节再按行号读。版本标题只用 `## `，版本内部的标题从 `###` 开始。
 
 ## 文档
 

@@ -90,7 +90,7 @@ jobs:
           $version = '${{ steps.version.outputs.version }}'
           gh release upload '${{ github.ref_name }}' "target\release-package\production\$version\Aemeath-$version-symbols.zip"
 
-      # vpk 不能生成发布说明：按上一个 tag 以来的提交和 PR 由 GitHub 生成，之后可以在网页上修改
+      # 发布说明取 CHANGELOG.md 里这个版本的一节（从 "## <版本号>" 到下一个 "## "）；没有时由 GitHub 按提交生成
       - name: Write release notes
         shell: pwsh
         env:
@@ -98,5 +98,17 @@ jobs:
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           $tag = '${{ github.ref_name }}'
-          gh api -X POST "repos/${{ github.repository }}/releases/generate-notes" -f tag_name=$tag --jq .body > notes.md
+          $version = '${{ steps.version.outputs.version }}'
+          $lines = if (Test-Path CHANGELOG.md) { @(Get-Content CHANGELOG.md -Encoding utf8) } else { @() }
+          $start = [array]::FindIndex($lines, [Predicate[string]] { param($line) $line -match "^## $([regex]::Escape($version))( |$)" })
+          if ($start -ge 0) {
+            $section = $lines | Select-Object -Skip ($start + 1)
+            $end = [array]::FindIndex([string[]]$section, [Predicate[string]] { param($line) $line -match '^## ' })
+            if ($end -ge 0) { $section = $section | Select-Object -First $end }
+            ($section -join "`n").Trim() | Set-Content notes.md -Encoding utf8NoBOM
+          }
+          else {
+            Write-Host "CHANGELOG.md has no section for $version; using GitHub's generated notes"
+            gh api -X POST "repos/${{ github.repository }}/releases/generate-notes" -f tag_name=$tag --jq .body > notes.md
+          }
           gh release edit $tag --notes-file notes.md
