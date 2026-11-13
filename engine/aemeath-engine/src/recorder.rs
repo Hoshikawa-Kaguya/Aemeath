@@ -43,6 +43,8 @@ enum WriterCommand {
 struct RecorderHandle {
     commands: Sender<WriterCommand>,
     settings: RecorderSettings,
+    /// 写盘线程按这个采样率写文件头，采样率变了就要换线程
+    rate: SampleRate,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -81,6 +83,7 @@ impl Recorders {
             };
             keep.push(node.id);
             if let Some(handle) = self.handles.get_mut(&node.id)
+                && handle.rate == rate
                 && mixer.inherits_port(index)
             {
                 // 格式设置对下一次录音生效，不影响正在写的文件
@@ -130,6 +133,7 @@ impl Recorders {
         Ok(RecorderHandle {
             commands,
             settings,
+            rate,
             thread: Some(thread),
         })
     }
@@ -341,5 +345,49 @@ mod tests {
             failure_reason(&io::Error::from(io::ErrorKind::PermissionDenied)),
             RecordingFailure::WriteFailed
         );
+    }
+
+    #[test]
+    fn a_new_engine_rate_restarts_the_writer() {
+        use aemeath_protocol::ids::TopologyRevision;
+        use aemeath_protocol::topology::{Resampler, Strip, TopologyNode};
+
+        use crate::meters::MeterBank;
+
+        let recorder = NodeId(1);
+        let topology = |revision, rate| RouteTopology {
+            revision: TopologyRevision(revision),
+            engine_sample_rate: SampleRate::new(rate).unwrap(),
+            clock_master: None,
+            resampler: Resampler::default(),
+            nodes: vec![TopologyNode {
+                id: recorder,
+                kind: NodeKind::Recorder {
+                    settings: RecorderSettings::default(),
+                },
+                strip: Strip::default(),
+                slot_settings: None,
+                io: None,
+            }],
+            routes: vec![],
+        };
+        let writer = |recorders: &Recorders| recorders.handles[&recorder].thread.as_ref().unwrap().thread().id();
+        let meters = || Arc::new(MeterBank::new(vec![recorder]));
+        let mut recorders = Recorders::new(Arc::new(|_, _| {}));
+
+        let first = topology(1, 48_000);
+        let (mut mixer, layout) = Mixer::build(&first, None, meters());
+        recorders.prepare(&first, &mut mixer);
+        let before = writer(&recorders);
+
+        let same_rate = topology(2, 48_000);
+        let (mut mixer, layout) = Mixer::build(&same_rate, Some(&layout), meters());
+        recorders.prepare(&same_rate, &mut mixer);
+        assert_eq!(writer(&recorders), before, "the same rate keeps the writer");
+
+        let faster = topology(3, 96_000);
+        let (mut mixer, _) = Mixer::build(&faster, Some(&layout), meters());
+        recorders.prepare(&faster, &mut mixer);
+        assert_ne!(writer(&recorders), before, "the old writer has the old rate baked in");
     }
 }

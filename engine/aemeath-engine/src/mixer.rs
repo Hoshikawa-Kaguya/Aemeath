@@ -33,7 +33,6 @@ struct MixNode {
     kind: NodeKind,
     /// 门限：只有输入节点有；位于增益之前（门限 → 增益 → 静音）
     gate: Option<Gate>,
-    gate_threshold: Option<f32>,
     strip: SmoothedGain,
     strip_target: f32,
     /// 这个节点本块的信号（通道条之后），交错立体声
@@ -160,7 +159,6 @@ impl Mixer {
                     kind: node.kind.clone(),
                     gate: (node.kind.role() == NodeRole::Input)
                         .then(|| Gate::new(topology.engine_sample_rate.hz(), gate_threshold)),
-                    gate_threshold,
                     strip: SmoothedGain::fixed(strip_target),
                     strip_target,
                     buffer: vec![0.0; MAX_BLOCK_FRAMES * STEREO],
@@ -305,10 +303,9 @@ impl Mixer {
                 let mut strip = old_node.strip;
                 strip.set_target(node.strip_target, self.ramp_frames);
                 node.strip = strip;
-                // 门限接过当前的开合状态，只换阈值，避免换拓扑时门限突然打开或关闭
-                if let (Some(gate), Some(old_gate)) = (&mut node.gate, old_node.gate) {
-                    *gate = old_gate;
-                    gate.set_threshold(node.gate_threshold);
+                // 门限接过当前的开合状态，避免换拓扑时门限突然打开或关闭
+                if let (Some(gate), Some(old_gate)) = (&mut node.gate, &old_node.gate) {
+                    gate.continue_from(old_gate);
                 }
             }
         }

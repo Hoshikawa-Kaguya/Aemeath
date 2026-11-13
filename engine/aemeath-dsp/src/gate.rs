@@ -46,6 +46,12 @@ impl Gate {
         self.threshold = threshold_db.map(db_to_linear);
     }
 
+    /// 接过旧门限的开合状态（换拓扑时调用），步长和保持帧数仍按自己的采样率。
+    pub fn continue_from(&mut self, old: &Self) {
+        self.gain = old.gain;
+        self.hold_remaining = old.hold_remaining.min(self.hold_frames);
+    }
+
     pub fn is_enabled(&self) -> bool {
         self.threshold.is_some()
     }
@@ -143,5 +149,21 @@ mod tests {
             OPEN,
             "turning the gate off reopens with the attack ramp"
         );
+    }
+
+    #[test]
+    fn continuing_at_another_rate_uses_the_new_timing() {
+        let mut old = Gate::new(RATE, Some(THRESHOLD_DB));
+        feed(&mut old, QUIET, frames(1.0));
+        let fast = RATE * 4;
+        let mut gate = Gate::new(fast, Some(THRESHOLD_DB));
+        gate.continue_from(&old);
+        assert_eq!(gate.gain(), CLOSED, "keeps the open/closed state");
+
+        // 一声响过后，保持时间按新采样率算：100 ms 是 19 200 帧，而不是 4 800 帧
+        gate.next_gain(LOUD, LOUD);
+        let hold = (f64::from(fast) * HOLD_SECONDS) as usize;
+        let gains: Vec<f32> = (0..hold).map(|_| gate.next_gain(QUIET, QUIET)).collect();
+        assert!(gains.iter().all(|&gain| gain > CLOSED), "still holding at the new rate");
     }
 }
