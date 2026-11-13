@@ -178,7 +178,10 @@ function onWheel(event: WheelEvent, from: NodeView, to: NodeView): void {
   }
   event.preventDefault()
   emit('select', { from: from.id, to: to.id })
-  nudge(route, event.deltaY < 0 ? 1 : -1)
+  const steps = hoverWheel.steps(event)
+  if (steps !== 0) {
+    nudge(route, steps)
+  }
 }
 
 /** 把增益调整若干个 1 dB，限制在界面允许的范围内 */

@@ -46,7 +46,10 @@ function onWheel(event: WheelEvent): void {
   }
   event.preventDefault()
   event.stopPropagation()
-  actions?.nudgeGain(route.value, event.deltaY < 0 ? 1 : -1)
+  const steps = hoverWheel.steps(event)
+  if (steps !== 0) {
+    actions?.nudgeGain(route.value, steps)
+  }
 }
 
 /** 在标签上按下：移动超过容差就当拖动标签，否则松开时按单击处理（点圆点开关连线，点别处选中连线） */
