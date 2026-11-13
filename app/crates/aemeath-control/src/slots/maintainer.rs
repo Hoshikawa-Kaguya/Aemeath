@@ -157,6 +157,7 @@ impl SlotMaintainer {
             identities,
             timing: config.timing,
             occupied: BTreeSet::new(),
+            occupied_known: false,
             formats: BTreeMap::new(),
             engine_up: false,
             rate: config.engine_rate,
@@ -235,6 +236,8 @@ struct Task {
     identities: Vec<SlotIdentity>,
     timing: MaintainerTiming,
     occupied: BTreeSet<SlotId>,
+    /// 收到过占用的槽位。之前不检查：主程序有意不下发（配置只读启动时）的话，空集合会把引擎还在用的槽位全部卸下
+    occupied_known: bool,
     formats: BTreeMap<SlotId, SlotFormatChoice>,
     engine_up: bool,
     rate: SampleRate,
@@ -268,8 +271,8 @@ impl Task {
             if !self.check_requested {
                 continue;
             }
-            if !self.engine_up {
-                // 引擎连上时会再请求检查
+            if !self.engine_up || !self.occupied_known {
+                // 引擎连上、收到占用的槽位时都会再请求检查
                 self.check_requested = false;
                 continue;
             }
@@ -306,9 +309,10 @@ impl Task {
         let now = Instant::now();
         match input {
             Input::Occupied(slots) => {
-                if slots != self.occupied {
+                if !self.occupied_known || slots != self.occupied {
                     info!(occupied = ?slots, "occupied slots changed");
                     self.occupied = slots;
+                    self.occupied_known = true;
                     self.check_requested = true;
                 }
             }

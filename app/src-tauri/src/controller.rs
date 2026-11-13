@@ -23,7 +23,7 @@ use aemeath_core::hotkeys::{self, HotkeyBinding, HotkeyError, HotkeyOverlay, Hot
 use aemeath_core::model::{DeviceRef, LabelPosition, Node, NodeKind, NodeName, Position};
 use aemeath_core::naming::same_file_name;
 use aemeath_core::preferences::{Appearance, LandingRecord, LanguagePreference, ThemeMode, WindowPlacement};
-use aemeath_core::store::{Config, ConfigStore, Loaded};
+use aemeath_core::store::{Config, ConfigStore, Loaded, StoreError};
 use aemeath_core::workspace::{EditError, NodeSpec, Workspace};
 use aemeath_protocol::ids::{EndpointId, NodeId, ProgramPath, SlotId, SlotNumber, TopologyRevision};
 use aemeath_protocol::message::{EndpointDirection, EndpointStatus, OfflineReason, RecorderState};
@@ -46,9 +46,9 @@ use crate::device_settings::{CapabilitiesView, DeviceSettingsView, ResamplerView
 use crate::hotkey_views::{HotkeyBindingView, HotkeyRowView, HotkeyTargetView};
 use crate::recording::{RecorderStateView, RecorderView, RecordingView, prepare_recording_path, recording_folder};
 use crate::view::{
-    AppearanceView, DeviceView, DuplicateView, EngineState, EngineStatsView, EngineView, FormatView, NodeStatus,
-    NodeView, NoticeKind, NoticeView, PairVerdict, ProgramView, RegistrationView, RouteVerdict, RouteView, SlotRef,
-    SlotView, ThemeModeView, ViewState, kind_view,
+    AppearanceView, ConfigStatusView, DeviceView, DuplicateView, EngineState, EngineStatsView, EngineView, FormatView,
+    NodeStatus, NodeView, NoticeKind, NoticeView, PairVerdict, ProgramView, RegistrationView, RouteVerdict, RouteView,
+    SlotRef, SlotView, ThemeModeView, ViewState, kind_view,
 };
 
 /// 数据目录下存放背景图的文件夹
@@ -551,6 +551,10 @@ struct Controller {
     slot_status: BTreeMap<SlotId, SlotStatus>,
     registration: Option<RegistrationProgress>,
     last_topology: Option<RouteTopology>,
+    /// 配置只读启动时的拓扑（空工作台）。拓扑和它相同时不下发，引擎继续用它缓存的那份，槽位也不动；
+    /// 用户的编辑让拓扑变了以后恢复正常下发
+    held_topology: Option<RouteTopology>,
+    config_status: Option<ConfigStatusView>,
     /// 触发一次按名称的后备匹配（端点增减时、节点报告"等待设备"时）
     rematch_trigger: mpsc::UnboundedSender<()>,
     rematch_events: mpsc::UnboundedReceiver<()>,
@@ -592,19 +596,29 @@ impl Controller {
         emit: Box<dyn Fn(&ViewState) + Send>,
     ) -> Result<Self, StartError> {
         let store = ConfigStore::new(&runtime.data_dir);
-        let (config, read_only) = match store.load() {
-            Ok(Loaded::Existing(config)) => (config, false),
+        let (config, read_only, config_status) = match store.load() {
+            Ok(Loaded::Existing(config)) => (config, false, None),
             Ok(Loaded::Missing) => {
                 info!("no configuration yet, starting with an empty workspace");
-                (Config::default(), false)
+                (Config::default(), false, None)
             }
             Ok(Loaded::Recovered { config, backup, reason }) => {
                 warn!(%reason, backup = %backup.display(), "the configuration was invalid and has been backed up");
-                (config, false)
+                let backup = backup.file_name().map_or_else(
+                    || backup.display().to_string(),
+                    |name| name.to_string_lossy().into_owned(),
+                );
+                (config, false, Some(ConfigStatusView::Recovered { backup }))
             }
             Err(error) => {
                 error!(%error, "cannot use the configuration file, changes will not be saved");
-                (Config::default(), true)
+                let status = match &error {
+                    StoreError::NewerVersion { found } => ConfigStatusView::NewerVersion { found: *found },
+                    StoreError::Io(io) => ConfigStatusView::Unreadable {
+                        message: io.to_string(),
+                    },
+                };
+                (Config::default(), true, Some(status))
             }
         };
         let rate = config.workspace.engine.sample_rate;
@@ -713,6 +727,8 @@ impl Controller {
             slot_status: BTreeMap::new(),
             registration,
             last_topology: None,
+            held_topology: None,
+            config_status,
             rematch_trigger,
             rematch_events,
             rematch_at: None,
@@ -731,6 +747,9 @@ impl Controller {
             emit,
             emit_at: None,
         };
+        if read_only {
+            controller.held_topology = Some(controller.current_topology());
+        }
         controller.sync_engine();
         Ok(controller)
     }
@@ -1094,6 +1113,13 @@ impl Controller {
         }
     }
 
+    /// 工作台编译出的路由拓扑，叠加热键的临时状态。
+    fn current_topology(&self) -> RouteTopology {
+        let mut topology = self.config.workspace.compile(TopologyRevision(0));
+        self.overlay.apply(&mut topology);
+        topology
+    }
+
     /// 把当前应执行的路由拓扑和被占用的槽位交给引擎与挂载维护。拓扑没变时不重复下发。
     fn sync_engine(&mut self) {
         let rate = self.config.workspace.engine.sample_rate;
@@ -1105,10 +1131,15 @@ impl Controller {
         let (topology, occupied): (RouteTopology, BTreeSet<SlotId>) = if self.registration.is_some() {
             (registration_topology(rate), all_slots())
         } else {
-            let workspace = &self.config.workspace;
-            let mut topology = workspace.compile(TopologyRevision(0));
-            self.overlay.apply(&mut topology);
-            (topology, workspace.occupied_slots().collect())
+            let topology = self.current_topology();
+            if let Some(held) = &self.held_topology {
+                if *held == topology {
+                    self.sync_hotkeys();
+                    return;
+                }
+                self.held_topology = None;
+            }
+            (topology, self.config.workspace.occupied_slots().collect())
         };
         if self.last_topology.as_ref() != Some(&topology) {
             self.client.apply(topology.clone());
@@ -1804,6 +1835,7 @@ impl Controller {
                 total: progress.total(),
                 failing: progress.failing().into_iter().map(SlotRef::from).collect(),
             }),
+            config_status: self.config_status.clone(),
             usbip_version: self.usbip_version.map(|version| version.to_string()),
             usbip_untested: self
                 .usbip_version

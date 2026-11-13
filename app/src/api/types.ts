@@ -321,6 +321,12 @@ export interface EngineStats {
   } | null
 }
 
+/** 启动时配置文件的问题。前两种只读（这次的修改不保存）；`backup` 只是文件名 */
+export type ConfigStatus =
+  | { type: 'newerVersion'; found: number }
+  | { type: 'unreadable'; message: string }
+  | { type: 'recovered'; backup: string }
+
 export interface ViewState {
   /** `clockMaster` 是主时钟节点的 ID；null 表示按系统时钟运行。`stats` 是最近一次性能统计，引擎没有上报时为 null */
   engine: {
@@ -331,6 +337,8 @@ export interface ViewState {
     stats: EngineStats | null
   }
   registration: RegistrationView | null
+  /** 启动时配置文件正常时为 null，本次运行内不变 */
+  configStatus: ConfigStatus | null
   usbipVersion: string | null
   /** 驱动版本比 Aemeath 附带的新，没有经过测试 */
   usbipUntested: boolean

@@ -65,6 +65,19 @@ const asrcTip = computed(() => {
   })
   return [t('chip.asrcTip'), ...rows].join('\n')
 })
+/** 启动时配置文件有问题：只读或已重置，所有页面都看得到 */
+const configChip = computed(() => {
+  const status = store.state?.configStatus
+  switch (status?.type) {
+    case 'newerVersion':
+      return { label: t('chip.configReadOnly'), tip: t('chip.configNewerTip') }
+    case 'unreadable':
+      return { label: t('chip.configReadOnly'), tip: t('chip.configUnreadableTip', { message: status.message }) }
+    case 'recovered':
+      return { label: t('chip.configReset'), tip: t('chip.configRecoveredTip', { backup: status.backup }) }
+  }
+  return null
+})
 const cpuTip = computed(() =>
   t('chip.cpuTip', {
     cpu: Math.round(stats.value?.cpuPercent ?? 0),
@@ -101,6 +114,9 @@ onUnmounted(() => {
       >
         <AppIcon name="warn" />{{ t('chip.panicMute') }}
       </button>
+      <span v-if="configChip" v-tip="configChip.tip" class="chip warn">
+        <AppIcon name="warn" />{{ configChip.label }}
+      </span>
       <button v-if="recording > 0" type="button" class="chip chip-btn" @click="store.page = 'recordings'">
         <span class="dot recording" aria-hidden="true"></span>{{ t('chip.recording', { n: recording }) }}
       </button>

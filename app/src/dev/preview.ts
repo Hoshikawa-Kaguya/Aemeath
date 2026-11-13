@@ -171,6 +171,7 @@ let state: ViewState = {
     },
   },
   registration: null,
+  configStatus: null,
   usbipVersion: '0.9.8.1',
   usbipUntested: false,
   language: { mode: 'system' },

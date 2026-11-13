@@ -23,6 +23,8 @@ pub struct ViewState {
     pub engine: EngineView,
     /// 首次注册的进度；已注册时为 None
     pub registration: Option<RegistrationView>,
+    /// 启动时配置文件有问题时的说明；正常时为 None。本次运行内不变
+    pub config_status: Option<ConfigStatusView>,
     pub usbip_version: Option<String>,
     /// 驱动版本比 Aemeath 附带的新，没有经过测试
     pub usbip_untested: bool,
@@ -51,6 +53,18 @@ pub struct ViewState {
 pub struct NoticeView {
     pub id: u64,
     pub kind: NoticeKind,
+}
+
+/// 启动时配置文件的问题（标题栏的警告标签）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum ConfigStatusView {
+    /// 配置文件来自更新版本的 Aemeath：这次的修改不保存
+    NewerVersion { found: u32 },
+    /// 读不了配置文件：这次的修改不保存
+    Unreadable { message: String },
+    /// 配置文件损坏，已改名备份，从空工作台开始；`backup` 只是文件名
+    Recovered { backup: String },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -568,6 +582,21 @@ mod tests {
     use aemeath_protocol::ids::NodeId;
 
     use super::*;
+
+    #[test]
+    fn config_status_matches_the_frontend_type() {
+        let json = |status: ConfigStatusView| serde_json::to_value(status).unwrap();
+        assert_eq!(
+            json(ConfigStatusView::NewerVersion { found: 6 }),
+            serde_json::json!({ "type": "newerVersion", "found": 6 })
+        );
+        assert_eq!(
+            json(ConfigStatusView::Recovered {
+                backup: "workspace.corrupt-1.json".to_owned()
+            }),
+            serde_json::json!({ "type": "recovered", "backup": "workspace.corrupt-1.json" })
+        );
+    }
 
     fn buffer(node: u32, level_ms: f32, target_ms: f32) -> BufferStat {
         BufferStat {
