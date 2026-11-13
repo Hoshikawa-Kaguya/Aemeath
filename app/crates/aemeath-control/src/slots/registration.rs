@@ -12,10 +12,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use aemeath_protocol::ids::{NodeId, SlotDirection, SlotId, TopologyRevision};
-use aemeath_protocol::topology::{NodeKind, Resampler, RouteTopology, Strip, TopologyNode};
+use aemeath_protocol::topology::{NodeKind, Resampler, RouteTopology, SlotFormatChoice, Strip, TopologyNode};
 use aemeath_protocol::units::SampleRate;
 
-use super::maintainer::{SlotHealth, SlotStatus};
+use super::maintainer::{SlotHealth, SlotStatus, desired_format};
 
 /// 全部 16 个槽位。
 pub fn all_slots() -> BTreeSet<SlotId> {
@@ -61,7 +61,8 @@ pub struct RegistrationProgress {
 impl RegistrationProgress {
     pub fn new(rate: SampleRate) -> Self {
         Self {
-            rate,
+            // 槽位的格式由挂载维护决定，引擎采样率超过槽位上限时封顶
+            rate: desired_format(SlotFormatChoice::FollowEngine, rate).0,
             latest: BTreeMap::new(),
         }
     }
@@ -149,5 +150,26 @@ mod tests {
         progress.update(status(SlotHealth::Healthy, rate));
         assert_eq!(progress.completed(), 1);
         assert!(!progress.is_done());
+    }
+
+    #[test]
+    fn above_the_slot_maximum_a_slot_counts_at_the_maximum() {
+        let mut progress = RegistrationProgress::new(SampleRate::new(768_000).unwrap());
+        let slot = *all_slots().first().unwrap();
+        progress.update(SlotStatus {
+            slot,
+            health: SlotHealth::Healthy,
+            endpoint: Some(SlotEndpoint {
+                id: "{id}".to_owned(),
+                name: None,
+                state: EndpointState::Active,
+                format: Some(DeviceFormat {
+                    sample_rate: SampleRate::new(384_000).unwrap(),
+                    sample_format: SampleFormat::Int32,
+                    channels: 2,
+                }),
+            }),
+        });
+        assert_eq!(progress.completed(), 1);
     }
 }

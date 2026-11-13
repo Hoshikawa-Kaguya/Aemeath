@@ -5,7 +5,7 @@
 //! - 读入后编译成路由拓扑再校验一遍（与引擎收到拓扑时的规则相同）；
 //!   文件损坏或不合规时把它改名备份，从空配置开始，并告诉调用方备份的位置。
 
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use aemeath_protocol::ids::TopologyRevision;
@@ -155,7 +155,11 @@ impl ConfigStore {
         };
         let bytes = serde_json::to_vec_pretty(&file).map_err(io::Error::other)?;
         let temp = self.path.with_extension(format!("json.{TEMP_SUFFIX}"));
-        std::fs::write(&temp, bytes)?;
+        // 改名前先刷盘：否则断电后可能留下内容为零的文件，把原来好的那份也覆盖掉
+        let mut written = std::fs::File::create(&temp)?;
+        written.write_all(&bytes)?;
+        written.sync_all()?;
+        drop(written);
         // Windows 上 rename 会替换已存在的目标文件
         std::fs::rename(&temp, &self.path)
     }

@@ -21,6 +21,7 @@ use aemeath_control::usbip_cli::{UsbipCli, UsbipVersion};
 use aemeath_core::duplicates::{DuplicateRoute, duplicate_routes};
 use aemeath_core::hotkeys::{self, HotkeyBinding, HotkeyError, HotkeyOverlay, HotkeyTarget};
 use aemeath_core::model::{DeviceRef, LabelPosition, Node, NodeKind, NodeName, Position};
+use aemeath_core::naming::same_file_name;
 use aemeath_core::preferences::{Appearance, LandingRecord, LanguagePreference, ThemeMode, WindowPlacement};
 use aemeath_core::store::{Config, ConfigStore, Loaded};
 use aemeath_core::workspace::{EditError, NodeSpec, Workspace};
@@ -1489,7 +1490,14 @@ impl Controller {
             return Err(CommandError::NotFound);
         };
         let folder = recording_folder(&self.config.preferences);
-        let path = prepare_recording_path(&folder, node.name.as_str(), settings).map_err(failed)?;
+        // 同名的录音节点同时开始时文件名会相同，第二个建不了文件
+        let duplicate = self.config.workspace.nodes().iter().any(|other| {
+            other.id != id
+                && matches!(other.kind, NodeKind::Recorder { .. })
+                && same_file_name(other.name.as_str(), node.name.as_str())
+        });
+        let path =
+            prepare_recording_path(&folder, node.name.as_str(), duplicate.then_some(id.0), settings).map_err(failed)?;
         self.client.start_recording(id, path.display().to_string());
         Ok(())
     }

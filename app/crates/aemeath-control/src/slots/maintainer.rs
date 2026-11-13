@@ -618,7 +618,7 @@ fn health_after_failure(state: &SlotState, reason: RepairReason) -> SlotHealth {
 }
 
 /// 槽位应有的采样率和样本格式。
-fn desired_format(choice: SlotFormatChoice, engine_rate: SampleRate) -> (SampleRate, SampleFormat) {
+pub(super) fn desired_format(choice: SlotFormatChoice, engine_rate: SampleRate) -> (SampleRate, SampleFormat) {
     match choice {
         SlotFormatChoice::FollowEngine if engine_rate.hz() > SLOT_FORMAT_MAX_HZ => (
             SampleRate::new(SLOT_FORMAT_MAX_HZ).unwrap_or(engine_rate),

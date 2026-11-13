@@ -130,13 +130,18 @@ pub fn recording_folder(preferences: &Preferences) -> PathBuf {
     }
 }
 
-/// 确保文件夹存在，并拼出这次录音的完整路径。
-pub fn prepare_recording_path(folder: &Path, node_name: &str, settings: RecorderSettings) -> std::io::Result<PathBuf> {
+/// 确保文件夹存在，并拼出这次录音的完整路径。`node_id` 只在有同名录音节点时给。
+pub fn prepare_recording_path(
+    folder: &Path,
+    node_name: &str,
+    node_id: Option<u32>,
+    settings: RecorderSettings,
+) -> std::io::Result<PathBuf> {
     std::fs::create_dir_all(folder)?;
     let now = local_date_time();
     let timestamp = format!(
         "{:04}-{:02}-{:02}_{:02}-{:02}-{:02}",
         now.year, now.month, now.day, now.hour, now.minute, now.second
     );
-    Ok(folder.join(recording_file_name(node_name, &timestamp, settings.format)))
+    Ok(folder.join(recording_file_name(node_name, node_id, &timestamp, settings.format)))
 }
