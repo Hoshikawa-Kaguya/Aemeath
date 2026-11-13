@@ -7,6 +7,7 @@ import {
   useVueFlow,
   type Edge,
   type Node,
+  type NodeChange,
   type NodeDragEvent,
   type OnConnectStartParams,
 } from '@vue-flow/core'
@@ -459,11 +460,28 @@ function onNodeDragStart(event: NodeDragEvent): void {
   dragging.value = Number(event.node.id)
 }
 
-/** 拖完节点后把新位置存到后端 */
+/** 把节点的新位置存到后端；没存的节点会在下一份快照到来时退回旧坐标 */
+async function saveNodePositions(nodes: Node[]): Promise<void> {
+  for (const node of nodes) {
+    const { x, y } = node.position
+    await store.run(() => backend.moveNode(Number(node.id), Math.round(x), Math.round(y)))
+  }
+}
+
+/** 选中后按方向键移动节点（Vue Flow 自带）不发拖动事件，从位置变化里找出来保存。拖动结束的位置变化不带坐标，不会重复保存 */
+function onNodesChange(changes: NodeChange[]): void {
+  for (const change of changes) {
+    if (change.type === 'position' && change.dragging === false && change.position !== undefined) {
+      const { x, y } = change.position
+      void store.run(() => backend.moveNode(Number(change.id), Math.round(x), Math.round(y)))
+    }
+  }
+}
+
+/** 拖完节点后把新位置存到后端；多选拖动时每个被拖的节点都要存 */
 async function onNodeDragStop(event: NodeDragEvent): Promise<void> {
   const id = Number(event.node.id)
-  const { x, y } = event.node.position
-  await store.run(() => backend.moveNode(id, Math.round(x), Math.round(y)))
+  await saveNodePositions(event.nodes)
   // 等后端返回新坐标再松手，否则节点会先退回旧坐标闪一下；等待期间又开始拖动时不能松手
   if (dragging.value === id && findNode(event.node.id)?.dragging !== true) {
     dragging.value = null
@@ -614,6 +632,8 @@ onBeforeUnmount(() => {
           @connect-end="onConnectEnd"
           @node-drag-start="onNodeDragStart"
           @node-drag-stop="onNodeDragStop"
+          @selection-drag-stop="saveNodePositions($event.nodes)"
+          @nodes-change="onNodesChange"
           @edge-click="onEdgeClick"
           @pane-click="selection = null"
           @pane-context-menu="onPaneContextMenu"
