@@ -8,7 +8,6 @@
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use aemeath_protocol::ids::TopologyRevision;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -180,13 +179,7 @@ impl ConfigStore {
 fn parse(bytes: &[u8]) -> Result<Config, String> {
     let file: ConfigFile = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
     let workspace = file.workspace;
-    if !workspace.ids_are_consistent() {
-        return Err("a node ID is not below the next node ID".to_owned());
-    }
-    workspace
-        .compile(TopologyRevision(0))
-        .validate()
-        .map_err(|error| error.to_string())?;
+    workspace.check().map_err(|error| error.to_string())?;
     Ok(Config {
         workspace,
         preferences: file.preferences,

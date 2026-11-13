@@ -129,7 +129,8 @@ impl From<EditError> for CommandError {
             | EditError::NotAnAppSource(_)
             | EditError::NotASlotNode(_)
             | EditError::NotARecorder(_)
-            | EditError::InvalidRecorderSettings => Self::Failed {
+            | EditError::InvalidRecorderSettings
+            | EditError::Invalid(_) => Self::Failed {
                 message: error.to_string(),
             },
         }
@@ -917,8 +918,22 @@ impl Controller {
         }
     }
 
-    /// 执行一次编辑：成功后保存配置并下发新拓扑；失败时工作台不变。
+    /// 执行一次编辑：成功后保存配置并下发新拓扑。中途出错，或者编辑后的工作台过不了读配置时的校验，
+    /// 工作台都恢复原样，免得留下做了一半的修改，或者保存一份下次启动会被当成损坏的配置。
     fn apply(&mut self, edit: Edit) -> Result<(), CommandError> {
+        let before = self.config.workspace.clone();
+        let edited = self.apply_edit(edit).and_then(|()| Ok(self.config.workspace.check()?));
+        if let Err(error) = edited {
+            self.config.workspace = before;
+            return Err(error);
+        }
+        self.save();
+        self.sync_engine();
+        Ok(())
+    }
+
+    /// 按编辑修改工作台或偏好设置，不保存、不下发。
+    fn apply_edit(&mut self, edit: Edit) -> Result<(), CommandError> {
         if let Edit::SetEngineRate(rate) = edit
             && rate != self.config.workspace.engine.sample_rate
         {
@@ -1108,8 +1123,6 @@ impl Controller {
                 });
             }
         }
-        self.save();
-        self.sync_engine();
         Ok(())
     }
 

@@ -8,7 +8,7 @@
 
 use std::collections::BTreeMap;
 
-use aemeath_protocol::ids::{NodeId, ProgramPath, SlotDirection, SlotId, SlotNumber};
+use aemeath_protocol::ids::{NodeId, ProgramPath, SlotDirection, SlotId, SlotNumber, TopologyRevision};
 use aemeath_protocol::topology::{
     self, DeviceSettings, NodeRole, RecorderSettings, Resampler, RouteCheckError, RouteRejection, SlotFormatChoice,
     SlotNodeSettings, Strip,
@@ -86,6 +86,9 @@ pub enum EditError {
     NotAnExternalNode(NodeId),
     #[error("cannot route: {0}")]
     Route(#[from] RouteRejection),
+    /// 编辑后的工作台过不了读配置时的校验，保存了下次启动会被当成损坏
+    #[error("the workspace is not valid: {0}")]
+    Invalid(String),
 }
 
 impl From<RouteCheckError> for EditError {
@@ -515,9 +518,19 @@ impl Workspace {
             .ok_or(EditError::UnknownRoute { from, to })
     }
 
+    /// 读配置时的全部检查：ID 一致，编译出的路由拓扑通过校验。编辑后也要过这一关，否则保存的配置下次读不回来。
+    pub fn check(&self) -> Result<(), EditError> {
+        if !self.ids_are_consistent() {
+            return Err(EditError::Invalid("a node ID is not below the next node ID".to_owned()));
+        }
+        self.compile(TopologyRevision(0))
+            .validate()
+            .map_err(|error| EditError::Invalid(error.to_string()))
+    }
+
     /// 配置文件读入后的一致性：节点 ID 不能达到或超过下一个待分配的 ID；控制台只引用存在的节点、且不重复。
-    /// 其余结构规则（槽位、连线、主时钟）由编译后的路由拓扑统一校验，见 [`crate::store`]。
-    pub(crate) fn ids_are_consistent(&self) -> bool {
+    /// 其余结构规则（槽位、连线、主时钟）由编译后的路由拓扑统一校验，见 [`Self::check`]。
+    fn ids_are_consistent(&self) -> bool {
         let pins_valid = self
             .console
             .iter()
@@ -624,6 +637,26 @@ mod tests {
             workspace.change_slot(bus, SlotNumber::new(6).unwrap()),
             Err(EditError::NotAVirtualNode(bus))
         );
+    }
+
+    #[test]
+    fn check_catches_what_loading_would_reject() {
+        use aemeath_protocol::message::SampleFormat;
+        use aemeath_protocol::units::SampleRate;
+
+        let mut workspace = Workspace::new(EngineSettings::default());
+        let game = add(&mut workspace, "Game", NodeSpec::VirtualInput(None));
+        assert_eq!(workspace.check(), Ok(()));
+        // 编辑层只看节点类型，不看格式；读配置时的校验会拒绝 384 kHz 以上的槽位格式
+        let too_fast = SlotNodeSettings {
+            format: SlotFormatChoice::Fixed {
+                sample_rate: SampleRate::new(768_000).unwrap(),
+                sample_format: SampleFormat::Int32,
+            },
+            resampler: None,
+        };
+        workspace.set_slot_settings(game, too_fast).unwrap();
+        assert!(matches!(workspace.check(), Err(EditError::Invalid(_))));
     }
 
     #[test]
