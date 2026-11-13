@@ -45,10 +45,6 @@ impl SmoothedGain {
         self.current
     }
 
-    pub fn target(&self) -> f32 {
-        self.target
-    }
-
     /// 已经停在 0：处理时可以整段跳过
     pub fn is_silent(&self) -> bool {
         self.remaining == 0 && self.current == 0.0

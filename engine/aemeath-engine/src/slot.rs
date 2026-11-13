@@ -528,10 +528,6 @@ impl SlotStream {
         );
         reply
     }
-
-    pub fn direction(&self) -> SlotDirection {
-        self.slot.direction
-    }
 }
 
 /// 包在缓冲中的范围；越界的部分截掉（解码器已校验过包描述不越界，这里只是兜底）。

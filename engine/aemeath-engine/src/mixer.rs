@@ -318,15 +318,6 @@ impl Mixer {
         }
     }
 
-    /// 外部设备节点：(节点下标, 端点, 角色)
-    pub fn external_nodes(&self) -> Vec<(usize, EndpointId, NodeRole)> {
-        self.nodes
-            .iter()
-            .enumerate()
-            .filter_map(|(index, node)| Some((index, node.kind.device()?.clone(), node.kind.role())))
-            .collect()
-    }
-
     /// 这个节点替换时会从旧混音器接过端口
     pub fn inherits_port(&self, node: usize) -> bool {
         self.inherit_ports.get(node).is_some_and(Option::is_some)

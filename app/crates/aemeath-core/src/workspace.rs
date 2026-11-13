@@ -116,11 +116,6 @@ impl Workspace {
         &self.console
     }
 
-    /// 节点是否固定在控制台上。
-    pub fn is_pinned(&self, id: NodeId) -> bool {
-        self.console.contains(&id)
-    }
-
     /// 固定到控制台的最右端；已固定时不变。
     pub fn pin(&mut self, id: NodeId) -> Result<(), EditError> {
         self.index_of(id)?;

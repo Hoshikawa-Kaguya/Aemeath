@@ -41,11 +41,6 @@ impl Gate {
         }
     }
 
-    /// 改变阈值，保留当前的开合状态（换拓扑时接过旧状态后调用）。
-    pub fn set_threshold(&mut self, threshold_db: Option<f32>) {
-        self.threshold = threshold_db.map(db_to_linear);
-    }
-
     /// 接过旧门限的开合状态（换拓扑时调用），步长和保持帧数仍按自己的采样率。
     pub fn continue_from(&mut self, old: &Self) {
         self.gain = old.gain;
@@ -55,10 +50,6 @@ impl Gate {
     /// 门限关闭且已完全打开：这时 [`Self::next_gain`] 总是返回 1、也不改变状态，处理时可以整段跳过。
     pub fn is_transparent(&self) -> bool {
         self.threshold.is_none() && self.gain == OPEN && self.hold_remaining == self.hold_frames
-    }
-
-    pub fn is_enabled(&self) -> bool {
-        self.threshold.is_some()
     }
 
     /// 当前的增益（0 关、1 开）。
@@ -143,10 +134,12 @@ mod tests {
     }
 
     #[test]
-    fn changing_the_threshold_keeps_the_current_state() {
-        let mut gate = Gate::new(RATE, Some(THRESHOLD_DB));
-        feed(&mut gate, QUIET, frames(1.0));
-        gate.set_threshold(None);
+    fn turning_the_gate_off_keeps_the_current_state() {
+        let mut closed = Gate::new(RATE, Some(THRESHOLD_DB));
+        feed(&mut closed, QUIET, frames(1.0));
+        // 换拓扑时关掉门限：新门限没有阈值，接过旧的开合状态
+        let mut gate = Gate::new(RATE, None);
+        gate.continue_from(&closed);
         assert_eq!(gate.gain(), CLOSED);
         let gains = feed(&mut gate, QUIET, frames(ATTACK_SECONDS) + 1);
         assert_eq!(
@@ -162,9 +155,10 @@ mod tests {
         assert!(!Gate::new(RATE, Some(THRESHOLD_DB)).is_transparent());
 
         // 关闭过的门限关掉阈值后，要等重新完全打开才透明
-        let mut gate = Gate::new(RATE, Some(THRESHOLD_DB));
-        feed(&mut gate, QUIET, frames(1.0));
-        gate.set_threshold(None);
+        let mut closed = Gate::new(RATE, Some(THRESHOLD_DB));
+        feed(&mut closed, QUIET, frames(1.0));
+        let mut gate = Gate::new(RATE, None);
+        gate.continue_from(&closed);
         assert!(!gate.is_transparent());
         feed(&mut gate, QUIET, frames(ATTACK_SECONDS) + 1);
         assert!(gate.is_transparent());
