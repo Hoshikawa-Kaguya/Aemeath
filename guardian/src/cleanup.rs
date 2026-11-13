@@ -1,6 +1,7 @@
 //! 虚拟设备清理。
 //!
-//! 卸载钩子有 30 秒时限，用户多久点 UAC 无法预知，所以钩子只启动提权进程、不等待。
+//! 卸载钩子有 30 秒时限，所以钩子只启动提权进程、不等它清理完。但启动本身要等用户回应 UAC
+//! （`ShellExecuteEx` 会阻塞到用户点完），这段时间算在时限里。
 //! 提权进程跑在临时目录里的副本上：卸载程序随后要删除安装目录，不能占着里面的 exe。
 
 use std::path::{Path, PathBuf};
@@ -25,14 +26,14 @@ const POLL_INTERVAL: Duration = Duration::from_millis(250);
 const OWN_EXECUTABLES: [&str; 3] = ["aemeath.exe", "aemeath-host.exe", "aemeath-app.exe"];
 const EXIT_REMOVAL_FAILED: u8 = 93;
 
-/// 卸载钩子：把自己复制到临时目录，提权启动清理，不等待。UAC 选"否"就保留设备，卸载继续。
+/// 卸载钩子：把自己复制到临时目录，提权启动清理，不等清理完。UAC 选"否"就保留设备，卸载继续。
 pub fn launch_from_temp() {
     // 在这里删而不是提权进程里：Run 键属于当前用户，提权后可能换成管理员账户的 HKCU
     let _ = autostart::disable();
     let Some(copy) = copy_to_temp() else {
         return;
     };
-    // 不等待：只关闭句柄。钩子里没有界面可以报错，失败时设备保留，这些实例无害
+    // 不等清理完：只关闭句柄。钩子里没有界面可以报错，失败时设备保留，这些实例无害
     let _ = run_elevated(&copy, REMOVE_ARGUMENT);
 }
 
