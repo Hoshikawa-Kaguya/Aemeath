@@ -61,6 +61,8 @@ const EMIT_COALESCE: Duration = Duration::from_millis(50);
 const RESUME_PROBE_INTERVAL: Duration = Duration::from_secs(2);
 /// 读取音频会话的间隔：发现新会话（纠正落点）、刷新重复路由的判断
 const SESSION_POLL_INTERVAL: Duration = Duration::from_secs(2);
+/// 一次会话、端点查询最多等这么久（与挂载维护查询端点的超时相同）；平时 3–20 ms
+const SESSION_QUERY_TIMEOUT: Duration = Duration::from_secs(2);
 /// 墙上时钟比预期多走这么多，就认为系统刚睡眠过（唤醒后立即检查挂载）
 const RESUME_GAP: Duration = Duration::from_secs(10);
 const APP_VERSION: &str = aemeath_runtime::VERSION;
@@ -1572,18 +1574,29 @@ impl Controller {
     }
 
     /// 定时读取音频会话：新出现的程序按记录纠正落点，并刷新判断重复路由所需的数据。
+    ///
+    /// 两样都用不上（没有应用源、也没有落点记录）时不查。设备增减时查询可能被系统卡住几秒，
+    /// 这里是控制面的主循环，所以两处等待都有超时，超时就留到下一轮。
     async fn poll_sessions(&mut self) {
-        let Some(policy) = self.policy.clone() else {
+        let needed = !self.config.preferences.app_landings.is_empty()
+            || self
+                .config
+                .workspace
+                .nodes()
+                .iter()
+                .any(|node| node.kind.program().is_some());
+        let (true, Some(policy)) = (needed, self.policy.clone()) else {
             return;
         };
-        let Ok(sessions) = policy.sessions().await else {
+        let Ok(Ok(sessions)) = tokio::time::timeout(SESSION_QUERY_TIMEOUT, policy.sessions()).await else {
             return;
         };
         let mut slot_endpoints = BTreeMap::new();
         if let Some(probe) = &self.probe {
-            slot_endpoints = probe
-                .slot_endpoints()
-                .await
+            let Ok(endpoints) = tokio::time::timeout(SESSION_QUERY_TIMEOUT, probe.slot_endpoints()).await else {
+                return;
+            };
+            slot_endpoints = endpoints
                 .unwrap_or_default()
                 .into_iter()
                 .map(|(slot, endpoint)| (slot, endpoint.id))
