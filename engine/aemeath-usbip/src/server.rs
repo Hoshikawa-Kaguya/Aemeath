@@ -303,6 +303,7 @@ fn import(mut stream: TcpStream, identity: SlotIdentity, connection: ConnectionI
     let mut function = Uac2Function::new(slot.direction, Descriptors::build(&identity));
     let mut decoder = UrbDecoder::new();
     let mut chunk = vec![0u8; READ_CHUNK];
+    let mut iso_interval = None;
     loop {
         // Windows 上 shutdown 不保证唤醒阻塞中的 recv（见 EXPORT_CHECK_INTERVAL），所以每次读之前都查
         if abandoned.load(Ordering::Relaxed) {
@@ -322,7 +323,7 @@ fn import(mut stream: TcpStream, identity: SlotIdentity, connection: ConnectionI
         };
         decoder.push(&chunk[..read]);
         while let Some(command) = decoder.next_command().map_err(invalid_data)? {
-            handle_command(command, slot, connection, &mut function, shared)?;
+            handle_command(command, slot, connection, &mut function, &mut iso_interval, shared)?;
         }
     }
 }
@@ -333,6 +334,7 @@ fn handle_command(
     slot: SlotId,
     connection: ConnectionId,
     function: &mut Uac2Function,
+    iso_interval: &mut Option<u32>,
     shared: &Shared,
 ) -> io::Result<()> {
     let submit = match command {
@@ -382,6 +384,11 @@ fn handle_command(
         SlotDirection::Out => (CAPTURE_ENDPOINT_NUMBER, Direction::In),
     };
     if submit.is_iso() && (submit.endpoint, submit.direction) == expected {
+        // 每条连接记一次（变化时再记）：驱动实际填的 interval 决定 URB 在时间线上的跨度
+        if *iso_interval != Some(submit.interval) {
+            tracing::info!(%slot, interval = submit.interval, packets = submit.iso_packets.len(), "isochronous URB interval");
+            *iso_interval = Some(submit.interval);
+        }
         return send(
             shared,
             ServerEvent::IsoSubmit {
