@@ -107,7 +107,7 @@ function onKeyDown(event: KeyboardEvent): void {
     @contextmenu="emit('menu', $event)"
     @keydown="onKeyDown"
   >
-    <div class="strip-head" draggable="true" :title="t('strip.dragHint', { name: node.name })">
+    <div v-tip="t('strip.dragHint', { name: node.name })" class="strip-head" draggable="true">
       <span class="code">{{ nodeCode(node, store.nodes) }}</span>
       <b class="ellipsis">{{ node.name }}</b>
       <button
@@ -142,7 +142,7 @@ function onKeyDown(event: KeyboardEvent): void {
         />
         <span class="readout">{{ formatGain(gain) }}</span>
       </div>
-      <div v-if="isInput" class="col" :title="gateText">
+      <div v-if="isInput" v-tip="gateText" class="col">
         <span class="tag">GATE</span>
         <input
           v-model.number="gatePosition"

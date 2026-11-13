@@ -94,9 +94,9 @@ onUnmounted(() => {
       </span>
       <button
         v-if="store.state?.panicMute"
+        v-tip="t('chip.panicMuteTip')"
         type="button"
         class="chip chip-btn panic"
-        :title="t('chip.panicMuteTip')"
         @click="store.run(() => backend.setPanicMute(false))"
       >
         <AppIcon name="warn" />{{ t('chip.panicMute') }}
@@ -105,29 +105,29 @@ onUnmounted(() => {
         <span class="dot recording" aria-hidden="true"></span>{{ t('chip.recording', { n: recording }) }}
       </button>
       <span v-if="offline > 0" class="chip warn"><AppIcon name="warn" />{{ t('chip.offline', { n: offline }) }}</span>
-      <span v-if="notRunning > 0" class="chip" :title="t('chip.notRunningTip')">
+      <span v-if="notRunning > 0" v-tip="t('chip.notRunningTip')" class="chip">
         <AppIcon name="unplug" />{{ t('chip.notRunning', { n: notRunning }) }}
       </span>
-      <button type="button" class="chip chip-btn" :title="slotsTip" @click="store.page = 'devices'">
+      <button v-tip="slotsTip" type="button" class="chip chip-btn" @click="store.page = 'devices'">
         <span class="dot" :class="store.state?.usbipVersion ? 'running' : 'unresponsive'" aria-hidden="true"></span>
         <AppIcon name="slots" />{{ t('chip.slots', { used: slotsUsed }) }}
       </button>
       <button
         v-if="clockName !== null"
+        v-tip="t('chip.clockTip', { name: clockName })"
         type="button"
         class="chip chip-btn clock"
-        :title="t('chip.clockTip', { name: clockName })"
         @click="store.page = 'settings'"
       >
         <AppIcon name="clock" /><span class="ellipsis">{{ t('chip.clock', { name: clockName }) }}</span>
       </button>
-      <button type="button" class="chip chip-btn" :title="t('chip.rateTip')" @click="store.rateDialogOpen = true">
+      <button v-tip="t('chip.rateTip')" type="button" class="chip chip-btn" @click="store.rateDialogOpen = true">
         {{ store.rateSwitching ? t('chip.rateSwitching') : rate }}
       </button>
-      <span v-if="asrc" class="chip" :class="{ warn: asrc.warn }" :title="asrcTip">
+      <span v-if="asrc" v-tip="asrcTip" class="chip" :class="{ warn: asrc.warn }">
         <AppIcon v-if="asrc.warn" name="warn" />{{ t('chip.asrc', { percent: Math.round(asrc.percent) }) }}
       </span>
-      <span v-if="stats" class="chip" :class="{ warn: stats.realtimeWarn }" :title="cpuTip">
+      <span v-if="stats" v-tip="cpuTip" class="chip" :class="{ warn: stats.realtimeWarn }">
         <AppIcon v-if="stats.realtimeWarn" name="warn" />{{ t('chip.cpu', { percent: Math.round(stats.cpuPercent) }) }}
       </span>
     </div>

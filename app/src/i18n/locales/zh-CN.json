@@ -32,7 +32,7 @@
     "asrcTip": "ASRC 缓冲（占用 / 目标）",
     "asrcTipRow": "{name}：{level} / {target} ms（{percent}%）",
     "cpu": "CPU {percent}%",
-    "cpuTip": "引擎进程 CPU {cpu}%，实时线程峰值负载 {peak}%"
+    "cpuTip": "引擎进程 CPU {cpu}%\n实时线程峰值负载 {peak}%"
   },
   "nav": {
     "aria": "主导航",

@@ -197,7 +197,7 @@ defineExpose({ open })
 <template>
   <fluent-dialog ref="dialog" type="modal">
     <fluent-dialog-body>
-      <h2 slot="title" class="title ellipsis" :title="node?.name">
+      <h2 slot="title" v-tip="node?.name" class="title ellipsis">
         {{ t('nodeSettings.title', { name: node?.name ?? '' }) }}
       </h2>
       <div v-if="node" class="form">
@@ -231,7 +231,7 @@ defineExpose({ open })
           <span>{{ t('add.program') }}</span>
           <span class="program-path">
             <ProgramIcon :path="node.program.path" />
-            <span class="caption ellipsis" :title="node.program.path">{{ node.program.path }}</span>
+            <span v-tip="node.program.path" class="caption ellipsis">{{ node.program.path }}</span>
           </span>
           <span v-if="node.status.state === 'programMissing'" class="caption missing">
             {{ t('node.programMissing') }}

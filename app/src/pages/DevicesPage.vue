@@ -184,13 +184,13 @@ const healthText = computed(() => {
               ><span class="slot-no">{{ section.direction === 'in' ? 'In' : 'Out' }} {{ slot.slot.number }}</span></span
             >
             <div class="cell">
-              <b class="ellipsis" :title="slotName(slot.slot)">{{ slotName(slot.slot) }}</b>
-              <span class="caption ellipsis" :title="slot.deviceName ?? ''">{{ slot.deviceName ?? '' }}</span>
+              <b v-tip="slotName(slot.slot)" class="ellipsis">{{ slotName(slot.slot) }}</b>
+              <span v-tip="slot.deviceName ?? ''" class="caption ellipsis">{{ slot.deviceName ?? '' }}</span>
             </div>
             <div v-if="occupant" class="occ" :data-role="roleOf(occupant.kind)">
               <span class="kind-ico"><AppIcon name="virt" /></span>
               <div class="cell">
-                <b class="ellipsis" :title="occupant.name">{{ occupant.name }}</b>
+                <b v-tip="occupant.name" class="ellipsis">{{ occupant.name }}</b>
                 <span class="caption ellipsis">{{ t(`kind.${occupant.kind}`) }}</span>
               </div>
             </div>
@@ -205,7 +205,7 @@ const healthText = computed(() => {
             </span>
             <div class="cell fmt">
               <span class="ellipsis">{{ formatText(slot, occupant) }}</span>
-              <span class="caption ellipsis" :title="formatHint(slot, occupant)">{{ formatHint(slot, occupant) }}</span>
+              <span v-tip="formatHint(slot, occupant)" class="caption ellipsis">{{ formatHint(slot, occupant) }}</span>
             </div>
             <fluent-button v-if="occupant?.slotSettings" size="small" @click="settingsDialog?.open(occupant)">
               {{ t('dev.edit') }}

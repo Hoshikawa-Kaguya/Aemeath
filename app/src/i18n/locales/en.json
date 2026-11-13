@@ -32,7 +32,7 @@
     "asrcTip": "ASRC buffer (fill / target)",
     "asrcTipRow": "{name}: {level} / {target} ms ({percent}%)",
     "cpu": "CPU {percent}%",
-    "cpuTip": "Engine process CPU {cpu}%, real-time thread peak load {peak}%"
+    "cpuTip": "Engine process CPU {cpu}%\nReal-time thread peak load {peak}%"
   },
   "nav": {
     "aria": "Main navigation",

@@ -133,10 +133,10 @@ async function addSource(app: AppView): Promise<void> {
         <div v-for="app in view?.apps ?? []" :key="`${app.processId}-${app.system}`" class="card-row">
           <span class="ico"><AppIcon v-if="app.system" name="spk" /><ProgramIcon v-else :path="app.executable" /></span>
           <div class="who">
-            <b class="ellipsis" :title="app.system ? t('apps.system') : app.name">
+            <b v-tip="app.system ? t('apps.system') : app.name" class="ellipsis">
               {{ app.system ? t('apps.system') : app.name }}
             </b>
-            <span class="caption ellipsis" :title="app.executable ?? ''">{{ app.executable ?? '' }}</span>
+            <span v-tip="app.executable ?? ''" class="caption ellipsis">{{ app.executable ?? '' }}</span>
             <div v-if="!app.system && app.executable !== null">
               <button v-if="app.sourceNode === null" type="button" class="link" @click="addSource(app)">
                 {{ t('apps.addSource') }}
@@ -148,7 +148,7 @@ async function addSource(app: AppView): Promise<void> {
           </div>
           <div class="now">
             <span class="caption">{{ t('apps.now') }}</span>
-            <span class="ellipsis" :title="landingName(app)">{{ landingName(app) }}</span>
+            <span v-tip="landingName(app)" class="ellipsis">{{ landingName(app) }}</span>
           </div>
           <div class="pick">
             <select

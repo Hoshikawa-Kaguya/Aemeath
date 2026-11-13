@@ -137,6 +137,11 @@ onBeforeUnmount(() => release?.())
   <!-- 连线标签默认隐藏，从连线右键菜单显示 -->
   <EdgeLabelRenderer v-if="route.labelVisible">
     <div
+      v-tip="
+        route.duplicate === null
+          ? t('route.moveHint')
+          : t('node.duplicate', { program: route.duplicate.program, destination: route.duplicate.destination })
+      "
       class="wire-label nodrag nopan"
       :class="{
         on: route.enabled,
@@ -148,11 +153,6 @@ onBeforeUnmount(() => release?.())
       :style="{
         transform: `translate(-50%, -50%) translate(${labelPoint.x}px, ${labelPoint.y}px) scale(var(--label-lift))`,
       }"
-      :title="
-        route.duplicate === null
-          ? t('route.moveHint')
-          : t('node.duplicate', { program: route.duplicate.program, destination: route.duplicate.destination })
-      "
       @pointerdown.stop="onLabelPointerDown"
       @pointerenter="hoverWheel.enter()"
       @wheel="onWheel"

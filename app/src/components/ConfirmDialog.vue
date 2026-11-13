@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, useTemplateRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { isClosing } from '@/components/dialogDismiss'
 import { useAppStore } from '@/stores/app'
 
 // 全局的确认对话框：由 store.confirm 打开。
@@ -28,7 +29,7 @@ watch(
 )
 </script>
 <template>
-  <fluent-dialog ref="dialog" type="modal">
+  <fluent-dialog ref="dialog" type="modal" @toggle="isClosing($event) && store.answerConfirmation(false)">
     <fluent-dialog-body>
       <p class="message">{{ shown?.message }}</p>
       <fluent-button slot="action" @click="store.answerConfirmation(false)">{{ t('add.cancel') }}</fluent-button>

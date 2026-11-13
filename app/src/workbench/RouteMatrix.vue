@@ -304,9 +304,9 @@ function isHot(node: NodeView, axis: 'from' | 'to'): boolean {
             <th
               v-for="column in columns"
               :key="column.id"
+              v-tip="column.name"
               class="ch"
               :class="{ hl: isHot(column, 'to') }"
-              :title="column.name"
               scope="col"
             >
               <span class="col-code">{{ nodeCode(column, store.nodes) }}</span>
@@ -321,21 +321,22 @@ function isHot(node: NodeView, axis: 'from' | 'to'): boolean {
             <tr>
               <th
                 v-if="rowGroupStart.has(rowIndex)"
+                v-tip="t(`grp.${rowGroupStart.get(rowIndex)?.role}`)"
                 class="vgrp"
                 :data-grp="rowGroupStart.get(rowIndex)?.role"
                 :rowspan="rowGroupStart.get(rowIndex)?.count"
                 scope="rowgroup"
-                :title="t(`grp.${rowGroupStart.get(rowIndex)?.role}`)"
               >
                 <span>{{ t(`grp.${rowGroupStart.get(rowIndex)?.role}`) }}</span>
               </th>
-              <th class="rh" :class="{ hl: isHot(row, 'from') }" :title="row.name" scope="row">
+              <th v-tip="row.name" class="rh" :class="{ hl: isHot(row, 'from') }" scope="row">
                 <b>{{ nodeCode(row, store.nodes) }}</b>
               </th>
               <td v-for="(column, columnIndex) in columns" :key="column.id">
                 <span v-if="row.id === column.id" class="cell self" aria-hidden="true"></span>
                 <button
                   v-else
+                  v-tip="describe(row, column)"
                   type="button"
                   class="cell"
                   :class="{
@@ -349,7 +350,6 @@ function isHot(node: NodeView, axis: 'from' | 'to'): boolean {
                   :tabindex="focusCell.row === rowIndex && focusCell.column === columnIndex ? 0 : -1"
                   :disabled="!routeMap.has(key(row.id, column.id)) && verdicts.has(key(row.id, column.id))"
                   :aria-label="describe(row, column)"
-                  :title="describe(row, column)"
                   @click="click(row, column)"
                   @wheel="onWheel($event, row, column)"
                   @contextmenu="onContextMenu($event, row, column)"
@@ -370,7 +370,7 @@ function isHot(node: NodeView, axis: 'from' | 'to'): boolean {
     </div>
     <div class="mx-info" :class="{ active: info !== null }" role="status">
       <AppIcon :name="info === null ? 'info' : 'graph'" />
-      <span class="ellipsis" :title="info ?? undefined">{{ info ?? t('mx.idle') }}</span>
+      <span v-tip="info ?? undefined" class="ellipsis">{{ info ?? t('mx.idle') }}</span>
     </div>
     <div class="legend">
       <span><i class="lg-on"></i>{{ t('mx.lgOn') }}</span>

@@ -604,7 +604,7 @@ onBeforeUnmount(() => {
       <ul v-if="store.state?.duplicates.length" class="duplicates" role="status">
         <li v-for="duplicate in store.state.duplicates" :key="`${duplicate.program}-${duplicate.destination}`">
           <AppIcon name="warn" />
-          <span class="ellipsis" :title="t('node.duplicate', { ...duplicate })">
+          <span v-tip="t('node.duplicate', { ...duplicate })" class="ellipsis">
             {{ t('node.duplicate', { ...duplicate }) }}
           </span>
         </li>

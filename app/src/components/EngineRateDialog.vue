@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, useTemplateRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { isClosing } from '@/components/dialogDismiss'
 import { formatKhz } from '@/format/format'
 import { SLOT_FORMAT_MAX_HZ, useAppStore } from '@/stores/app'
 
@@ -41,7 +42,7 @@ function apply(): void {
 </script>
 
 <template>
-  <fluent-dialog ref="dialog" type="modal" @dismiss="store.rateDialogOpen = false">
+  <fluent-dialog ref="dialog" type="modal" @toggle="isClosing($event) && (store.rateDialogOpen = false)">
     <fluent-dialog-body>
       <h2 slot="title" class="title">{{ t('rate.title') }}</h2>
       <div class="form">

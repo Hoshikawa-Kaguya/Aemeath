@@ -73,7 +73,7 @@ function isRecording(node: NodeView): boolean {
         <div class="field wide">
           <span>{{ t('rec.folder') }}</span>
           <div class="row">
-            <span class="folder ellipsis" :title="recording.folder">{{ recording.folder }}</span>
+            <span v-tip="recording.folder" class="folder ellipsis">{{ recording.folder }}</span>
             <fluent-button @click="chooseFolder">{{ t('rec.chooseFolder') }}</fluent-button>
             <fluent-button @click="openFolder">{{ t('rec.openFolder') }}</fluent-button>
           </div>
@@ -129,11 +129,11 @@ function isRecording(node: NodeView): boolean {
           >
             <AppIcon :name="isRecording(node) ? 'stop' : 'rec'" />
           </button>
-          <b class="ellipsis" :title="node.name">{{ node.name }}</b>
+          <b v-tip="node.name" class="ellipsis">{{ node.name }}</b>
           <span :class="{ bad: node.recorder?.state.state === 'failed' }">{{ stateText(node) }}</span>
           <template v-if="node.recorder?.state.state === 'recording'">
             <span class="time">{{ formatDuration(node.recorder.state.frames / rate) }}</span>
-            <span class="caption ellipsis" :title="node.recorder.state.file">
+            <span v-tip="node.recorder.state.file" class="caption ellipsis">
               {{ fileNameOf(node.recorder.state.file) }} · {{ formatBytes(node.recorder.state.bytes) }}
             </span>
           </template>

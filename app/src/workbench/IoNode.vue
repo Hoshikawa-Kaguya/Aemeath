@@ -167,7 +167,7 @@ function onKeyDown(event: KeyboardEvent): void {
     @keydown="onKeyDown"
   >
     <div class="node-head">
-      <span class="kind-ico" :title="kindHint">
+      <span v-tip="kindHint" class="kind-ico">
         <ProgramIcon v-if="node.kind === 'appSource'" :path="node.program?.path" /><AppIcon v-else :name="icon" />
       </span>
       <div class="node-title">
@@ -181,27 +181,27 @@ function onKeyDown(event: KeyboardEvent): void {
           @keydown.esc.stop.prevent="cancelRename"
           @blur="commitRename"
         />
-        <b v-else class="ellipsis" :title="t('node.rename', { name: node.name })" @dblclick="startRename">{{
+        <b v-else v-tip="t('node.rename', { name: node.name })" class="ellipsis" @dblclick="startRename">{{
           node.name
         }}</b>
-        <span class="ellipsis" :title="kindHint">{{ data.subtitle.kind }}</span>
-        <span v-if="data.subtitle.detail" class="ellipsis" :title="data.subtitle.detail">{{
+        <span v-tip="kindHint" class="ellipsis">{{ data.subtitle.kind }}</span>
+        <span v-if="data.subtitle.detail" v-tip="data.subtitle.detail" class="ellipsis">{{
           data.subtitle.detail
         }}</span>
       </div>
       <span
         v-if="node.duplicate"
+        v-tip="t('node.duplicate', { program: node.duplicate.program, destination: node.duplicate.destination })"
         class="dup"
         role="img"
-        :title="t('node.duplicate', { program: node.duplicate.program, destination: node.duplicate.destination })"
         :aria-label="t('node.duplicate', { program: node.duplicate.program, destination: node.duplicate.destination })"
         ><AppIcon name="warn"
       /></span>
       <span
         v-if="store.state?.engine.clockMaster === node.id"
+        v-tip="t('node.clockMaster')"
         class="clock"
         role="img"
-        :title="t('node.clockMaster')"
         :aria-label="t('node.clockMaster')"
         ><AppIcon name="clock"
       /></span>
@@ -218,7 +218,7 @@ function onKeyDown(event: KeyboardEvent): void {
     </div>
     <template v-if="offlineText">
       <div class="node-status" role="status">
-        <AppIcon name="warn" /><span class="ellipsis" :title="offlineText">{{ offlineText }}</span>
+        <AppIcon name="warn" /><span v-tip="offlineText" class="ellipsis">{{ offlineText }}</span>
       </div>
       <div v-if="isExternal || programMissing" class="node-actions nodrag">
         <button
@@ -250,9 +250,9 @@ function onKeyDown(event: KeyboardEvent): void {
     </div>
     <div
       v-else-if="notRunning"
+      v-tip="t('node.notRunningHint', { program: node.program?.fileName ?? '' })"
       class="node-status pending"
       role="status"
-      :title="t('node.notRunningHint', { program: node.program?.fileName ?? '' })"
     >
       <AppIcon name="unplug" /><span class="ellipsis">{{ t('node.notRunning') }}</span>
     </div>
@@ -273,7 +273,7 @@ function onKeyDown(event: KeyboardEvent): void {
         </button>
         <span class="rec-time">{{ recordedTime }}</span>
       </div>
-      <div v-if="formatLine" class="node-format ellipsis" :title="formatLine">{{ formatLine }}</div>
+      <div v-if="formatLine" v-tip="formatLine" class="node-format ellipsis">{{ formatLine }}</div>
     </template>
     <Handle v-if="role !== 'in'" type="target" :position="Position.Left" class="port in" />
     <Handle v-if="role !== 'out'" type="source" :position="Position.Right" class="port out" />

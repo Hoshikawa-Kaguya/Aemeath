@@ -53,7 +53,7 @@ const dedicated = computed(() => rows.value.filter((row) => !isGlobal(row.target
       <p v-if="dedicated.length === 0" class="caption">{{ t('hotkey.dedicatedEmpty') }}</p>
       <div class="cardlist">
         <div v-for="row in dedicated" :key="JSON.stringify(row.target)" class="card-row">
-          <b class="ellipsis" :title="describeTarget(row.target, store.nodes)">
+          <b v-tip="describeTarget(row.target, store.nodes)" class="ellipsis">
             {{ describeTarget(row.target, store.nodes) }}
           </b>
           <HotkeyField

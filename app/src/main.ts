@@ -7,11 +7,15 @@ import '@fluentui/web-components/dialog-body/define.js'
 import '@fluentui/web-components/progress-bar/define.js'
 import '@vue-flow/core/dist/style.css'
 import App from './App.vue'
+import { installDialogDismissFix } from './components/dialogDismiss'
 import { i18n } from './i18n'
 import { initTheme } from './theme/theme'
+import { installTips, vTip } from './tip/tip'
 import './styles/base.css'
 import './styles/tokens.css'
 
 initTheme()
+installTips()
+installDialogDismissFix()
 
-createApp(App).use(createPinia()).use(i18n).mount('#app')
+createApp(App).use(createPinia()).use(i18n).directive('tip', vTip).mount('#app')

@@ -19,6 +19,7 @@ import SettingsPage from '@/pages/SettingsPage.vue'
 import RecordingsPage from '@/pages/RecordingsPage.vue'
 import HotkeysPage from '@/pages/HotkeysPage.vue'
 import WorkbenchPage from '@/pages/WorkbenchPage.vue'
+import TipLayer from '@/tip/TipLayer.vue'
 import { useAppStore } from '@/stores/app'
 
 const { t } = useI18n()
@@ -73,6 +74,7 @@ onMounted(() => {
   <ContextMenu />
   <ConfirmDialog />
   <EngineRateDialog />
+  <TipLayer />
 </template>
 
 <style scoped>
