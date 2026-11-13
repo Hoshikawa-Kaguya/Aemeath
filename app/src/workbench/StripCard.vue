@@ -4,11 +4,11 @@ import { useI18n } from 'vue-i18n'
 import { backend } from '@/api/backend'
 import { roleOf, type NodeView } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
-import { formatDuration, formatGain, formatThreshold } from '@/format/format'
+import { formatGain, formatGate } from '@/format/format'
 import { isMenuKey } from '@/menu/contextMenu'
 import NodeMeter from '@/meters/NodeMeter.vue'
 import { useAppStore } from '@/stores/app'
-import { nodeCode } from '@/stores/nodeLabels'
+import { isRecording, nodeCode, recordedTime } from '@/stores/nodeLabels'
 import { GAIN_MAX_DB, GAIN_MIN_DB } from './context'
 import { GATE_MAX_DB, GATE_OFF_POSITION, gateToPosition, positionToGate } from './gate'
 import { throttled } from './throttle'
@@ -24,11 +24,8 @@ const store = useAppStore()
 const GAIN_STEP = 0.5
 
 const isInput = computed(() => roleOf(props.node.kind) === 'in')
-const isRecording = computed(() => props.node.recorder?.state.state === 'recording')
-const recordedTime = computed(() => {
-  const state = props.node.recorder?.state
-  return state?.state === 'recording' ? formatDuration(state.frames / (store.state?.engine.sampleRate ?? 1)) : '—'
-})
+const recording = computed(() => isRecording(props.node))
+const recordedLabel = computed(() => recordedTime(props.node, store.state?.engine.sampleRate ?? 1) ?? '—')
 const gain = ref(props.node.gainDb)
 const gatePosition = ref(gateToPosition(props.node.gateDb))
 /** 正在拖动时不让后端推来的快照把推子拉回去 */
@@ -78,7 +75,7 @@ function resetGain(): void {
 
 const gateText = computed(() => {
   const gate = positionToGate(gatePosition.value)
-  return gate === null ? t('nodeSettings.gateOff') : formatThreshold(gate)
+  return formatGate(gate, t('nodeSettings.gateOff'))
 })
 /** 竖条底部的读数：关时固定写 OFF，与列标识一样不进 i18n */
 const gateReadout = computed(() => {
@@ -164,13 +161,13 @@ function onKeyDown(event: KeyboardEvent): void {
         <button
           type="button"
           class="sbtn record"
-          :aria-pressed="isRecording"
-          :aria-label="t(isRecording ? 'rec.stopAria' : 'rec.startAria', { name: node.name })"
+          :aria-pressed="recording"
+          :aria-label="t(recording ? 'rec.stopAria' : 'rec.startAria', { name: node.name })"
           @click="store.toggleRecording(node)"
         >
-          <AppIcon :name="isRecording ? 'stop' : 'rec'" />
+          <AppIcon :name="recording ? 'stop' : 'rec'" />
         </button>
-        <span class="readout">{{ recordedTime }}</span>
+        <span class="readout">{{ recordedLabel }}</span>
       </div>
       <button
         v-else

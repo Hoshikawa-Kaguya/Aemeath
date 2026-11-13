@@ -8,6 +8,7 @@ import AppIcon from '@/components/AppIcon.vue'
 import { formatKhz } from '@/format/format'
 import { availableLocales } from '@/i18n'
 import { useAppStore } from '@/stores/app'
+import { isRecording } from '@/stores/nodeLabels'
 import ResamplerField from '@/workbench/ResamplerField.vue'
 
 // 设置页：音频（引擎采样率、全局重采样算法、主时钟）、设备检测（立即重新检测全部设备；自动检测始终开启，不提供开关）、界面语言。
@@ -47,7 +48,7 @@ function chooseClock(event: Event): void {
 }
 
 const update = computed(() => store.update)
-const recording = computed(() => store.nodes.some((node) => node.recorder?.state.state === 'recording'))
+const recording = computed(() => store.nodes.some(isRecording))
 const updateText = computed(() => {
   const current = update.value
   switch (current?.state) {

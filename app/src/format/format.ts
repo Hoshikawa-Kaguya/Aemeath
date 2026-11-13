@@ -49,3 +49,8 @@ export function formatBytes(bytes: number): string {
 export function formatKhz(hz: number): string {
   return String(Math.round((hz / KHZ) * 10) / 10)
 }
+
+/** 门限：关闭时是 `offText`，否则是阈值 */
+export function formatGate(db: number | null, offText: string): string {
+  return db === null ? offText : formatThreshold(db)
+}

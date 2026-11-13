@@ -27,14 +27,7 @@ import RouteMatrix, { type RoutePair } from '@/workbench/RouteMatrix.vue'
 import PendingRoute from '@/workbench/PendingRoute.vue'
 import RouteEdge from '@/workbench/RouteEdge.vue'
 import { LABEL_MIDDLE, LABEL_STEP, clampLabel } from '@/workbench/curve'
-import {
-  GAIN_MAX_DB,
-  GAIN_MIN_DB,
-  workbenchKey,
-  type NodeData,
-  type RouteData,
-  type WorkbenchActions,
-} from '@/workbench/context'
+import { workbenchKey, type NodeData, type RouteData, type WorkbenchActions } from '@/workbench/context'
 
 // 工作台：节点与连线、拖线校验并说明原因、选中后按 Del 删除。
 // 连线规则只在后端定义一次（aemeath_protocol::topology::check_route）：拖线开始时取回全部候选节点的判定，
@@ -253,14 +246,11 @@ const actions: WorkbenchActions = {
   },
   toggleRoute(route) {
     actions.selectRoute(route)
-    void store.run(() => backend.setRouteEnabled(route.from, route.to, !route.enabled))
+    void store.toggleRoute(route)
   },
   nudgeGain(route, steps) {
     actions.selectRoute(route)
-    const gain = Math.min(GAIN_MAX_DB, Math.max(GAIN_MIN_DB, Math.round(route.gainDb) + steps))
-    if (gain !== route.gainDb) {
-      void store.run(() => backend.setRouteGain(route.from, route.to, gain))
-    }
+    store.nudgeRouteGain(route, steps)
   },
   moveLabel(route, position) {
     void store.run(() => backend.setRouteLabel(route.from, route.to, clampLabel(position)))

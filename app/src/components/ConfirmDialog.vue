@@ -1,15 +1,10 @@
 <script setup lang="ts">
 import { ref, useTemplateRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { isClosing } from '@/components/dialogDismiss'
+import { isClosing, type FluentDialog } from '@/components/dialogDismiss'
 import { useAppStore } from '@/stores/app'
 
 // 全局的确认对话框：由 store.confirm 打开。
-interface FluentDialog extends HTMLElement {
-  show(): void
-  hide(): void
-}
-
 const { t } = useI18n()
 const store = useAppStore()
 const dialog = useTemplateRef<FluentDialog>('dialog')

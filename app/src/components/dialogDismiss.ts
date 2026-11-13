@@ -33,3 +33,9 @@ export function installDialogDismissFix(): void {
 export function isClosing(event: Event): boolean {
   return (event as CustomEvent<{ newState?: string } | undefined>).detail?.newState === 'closed'
 }
+
+/** fluent-dialog 元素上用到的方法（组件库没有导出类型） */
+export interface FluentDialog extends HTMLElement {
+  show(): void
+  hide(): void
+}

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, useTemplateRef } from 'vue'
 import { useI18n } from 'vue-i18n'
+import type { FluentDialog } from '@/components/dialogDismiss'
 import { backend } from '@/api/backend'
 import {
   DEFAULT_DEVICE_SETTINGS,
@@ -13,10 +14,10 @@ import {
   type Resampler,
   type SlotSettings,
 } from '@/api/types'
-import { formatThreshold } from '@/format/format'
+import { formatGate } from '@/format/format'
 import ProgramIcon from '@/components/ProgramIcon.vue'
 import { useAppStore } from '@/stores/app'
-import { slotName } from '@/stores/nodeLabels'
+import { NODE_NAME_MAX, slotName } from '@/stores/nodeLabels'
 import DeviceSettingsFields from './DeviceSettingsFields.vue'
 import { GATE_MAX_DB, GATE_OFF_POSITION, gateToPosition, positionToGate } from './gate'
 import HotkeyField from './HotkeyField.vue'
@@ -27,12 +28,6 @@ import SlotSettingsFields from './SlotSettingsFields.vue'
 // 节点设置：从节点的"⋯"按钮或右键菜单打开，尺寸固定，点"确定"才生效。
 // 内容随节点类型而定：名称；虚拟节点改选槽位；输入节点的门限；外部设备的独占、格式、缓冲与重采样算法；
 // 应用源的程序与重采样算法；是否固定到控制台。改了设备设置时，该设备的流淡出、重新打开、再淡入。
-interface FluentDialog extends HTMLElement {
-  show(): void
-  hide(): void
-}
-
-const NAME_MAX = 64
 
 const { t } = useI18n()
 const store = useAppStore()
@@ -89,7 +84,7 @@ const slotChoices = computed(() => {
 })
 const gateText = computed(() => {
   const gate = positionToGate(gatePosition.value)
-  return gate === null ? t('nodeSettings.gateOff') : formatThreshold(gate)
+  return formatGate(gate, t('nodeSettings.gateOff'))
 })
 const canConfirm = computed(() => node.value !== undefined && name.value.trim() !== '')
 
@@ -224,7 +219,7 @@ defineExpose({ open })
 
         <label class="field">
           <span>{{ t('add.name') }}</span>
-          <input v-model="name" class="text-input" :maxlength="NAME_MAX" />
+          <input v-model="name" class="text-input" :maxlength="NODE_NAME_MAX" />
         </label>
 
         <div v-if="node.program" class="field">

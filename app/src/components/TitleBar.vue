@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { backend } from '@/api/backend'
 import AppIcon from '@/components/AppIcon.vue'
 import { useAppStore } from '@/stores/app'
+import { isRecording } from '@/stores/nodeLabels'
 import { formatKhz } from '@/format/format'
 
 // 窗口没有系统标题栏：拖动区域用 data-tauri-drag-region 标出（双击可最大化），
@@ -39,7 +40,7 @@ const offline = computed(
   () => store.nodes.filter((node) => node.status.state === 'offline' || node.status.state === 'programMissing').length,
 )
 const notRunning = computed(() => store.nodes.filter((node) => node.status.state === 'notRunning').length)
-const recording = computed(() => store.nodes.filter((node) => node.recorder?.state.state === 'recording').length)
+const recording = computed(() => store.nodes.filter(isRecording).length)
 const slotsUsed = computed(() => store.nodes.filter((node) => node.slot !== null).length)
 const slotsTip = computed(() => {
   const version = store.state?.usbipVersion

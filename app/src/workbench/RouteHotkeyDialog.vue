@@ -1,17 +1,13 @@
 <script setup lang="ts">
 import { computed, ref, useTemplateRef } from 'vue'
 import { useI18n } from 'vue-i18n'
+import type { FluentDialog } from '@/components/dialogDismiss'
 import type { RouteView } from '@/api/types'
 import { useAppStore } from '@/stores/app'
 import { describeTarget } from './hotkeyLabels'
 import HotkeyField from './HotkeyField.vue'
 
 // 连线的专属热键：从连线和路由矩阵格子的右键菜单打开。
-interface FluentDialog extends HTMLElement {
-  show(): void
-  hide(): void
-}
-
 const { t } = useI18n()
 const store = useAppStore()
 const dialog = useTemplateRef<FluentDialog>('dialog')

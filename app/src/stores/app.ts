@@ -4,9 +4,19 @@
 import { defineStore } from 'pinia'
 import { computed, ref, shallowRef, watch } from 'vue'
 import { backend, onStateChanged, onUpdateChanged } from '@/api/backend'
-import type { CommandError, EngineStats, HotkeyTargetView, NodeView, UpdateView, ViewState } from '@/api/types'
+import type {
+  CommandError,
+  EngineStats,
+  HotkeyTargetView,
+  NodeView,
+  RouteView,
+  UpdateView,
+  ViewState,
+} from '@/api/types'
 import { i18n, localeFor, setLocale } from '@/i18n'
 import { applyAppearance } from '@/theme/theme'
+import { GAIN_MAX_DB, GAIN_MIN_DB } from '@/workbench/context'
+import { isRecording } from '@/stores/nodeLabels'
 import { describeTarget } from '@/workbench/hotkeyLabels'
 
 const PAGES = ['workbench', 'devices', 'apps', 'recordings', 'hotkeys', 'tools', 'settings'] as const
@@ -242,7 +252,7 @@ export const useAppStore = defineStore('app', () => {
 
   /** 录音中就停止，否则开始。录音状态由引擎随后推送，这里不等结果 */
   function toggleRecording(node: NodeView): void {
-    const command = node.recorder?.state.state === 'recording' ? backend.stopRecording : backend.startRecording
+    const command = isRecording(node) ? backend.stopRecording : backend.startRecording
     command(node.id).catch((error: unknown) => showToast(errorText(error)))
   }
 
@@ -252,6 +262,19 @@ export const useAppStore = defineStore('app', () => {
     const dst = nodeById.value.get(to)?.name ?? ''
     if (await run(() => backend.disconnect(from, to))) {
       showToast(i18n.global.t('toast.routeDeleted', { src, dst }))
+    }
+  }
+
+  /** 开关连线 */
+  function toggleRoute(route: RouteView): Promise<boolean> {
+    return run(() => backend.setRouteEnabled(route.from, route.to, !route.enabled))
+  }
+
+  /** 把连线增益调整若干个 1 dB，限制在界面允许的范围内 */
+  function nudgeRouteGain(route: RouteView, steps: number): void {
+    const gain = Math.min(GAIN_MAX_DB, Math.max(GAIN_MIN_DB, Math.round(route.gainDb) + steps))
+    if (gain !== route.gainDb) {
+      void run(() => backend.setRouteGain(route.from, route.to, gain))
     }
   }
 
@@ -268,6 +291,8 @@ export const useAppStore = defineStore('app', () => {
     removeNode,
     toggleRecording,
     disconnect,
+    toggleRoute,
+    nudgeRouteGain,
     confirmation,
     confirm,
     answerConfirmation,

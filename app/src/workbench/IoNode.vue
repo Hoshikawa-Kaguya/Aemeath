@@ -6,10 +6,11 @@ import { backend } from '@/api/backend'
 import { roleOf } from '@/api/types'
 import AppIcon, { type IconName } from '@/components/AppIcon.vue'
 import ProgramIcon from '@/components/ProgramIcon.vue'
-import { formatDuration, formatKhz } from '@/format/format'
+import { formatKhz } from '@/format/format'
 import { isMenuKey } from '@/menu/contextMenu'
 import NodeMeter from '@/meters/NodeMeter.vue'
 import { useAppStore } from '@/stores/app'
+import { NODE_NAME_MAX, isRecording, recordedTime } from '@/stores/nodeLabels'
 import { workbenchKey, type NodeData } from './context'
 
 // 工作台上的节点卡片：类型图标、名称、副标题、代号、电平或离线提示，左右两侧是端口。
@@ -55,11 +56,8 @@ const offlineText = computed(() => {
       return null
   }
 })
-const isRecording = computed(() => node.value.recorder?.state.state === 'recording')
-const recordedTime = computed(() => {
-  const state = node.value.recorder?.state
-  return state?.state === 'recording' ? formatDuration(state.frames / (store.state?.engine.sampleRate ?? 1)) : ''
-})
+const recording = computed(() => isRecording(node.value))
+const recordedLabel = computed(() => recordedTime(node.value, store.state?.engine.sampleRate ?? 1) ?? '')
 const programMissing = computed(() => node.value.status.state === 'programMissing')
 const notRunning = computed(() => node.value.status.state === 'notRunning')
 const isExternal = computed(() => node.value.device !== null)
@@ -176,7 +174,7 @@ function onKeyDown(event: KeyboardEvent): void {
           ref="input"
           v-model="draft"
           class="rename nodrag"
-          maxlength="64"
+          :maxlength="NODE_NAME_MAX"
           @keydown.enter.prevent="commitRename"
           @keydown.esc.stop.prevent="cancelRename"
           @blur="commitRename"
@@ -264,14 +262,14 @@ function onKeyDown(event: KeyboardEvent): void {
         <button
           type="button"
           class="link"
-          :class="{ active: isRecording }"
-          :aria-pressed="isRecording"
+          :class="{ active: recording }"
+          :aria-pressed="recording"
           @pointerdown.stop
           @click.stop="store.toggleRecording(node)"
         >
-          <AppIcon :name="isRecording ? 'stop' : 'rec'" />{{ t(isRecording ? 'node.stopRecording' : 'node.record') }}
+          <AppIcon :name="recording ? 'stop' : 'rec'" />{{ t(recording ? 'node.stopRecording' : 'node.record') }}
         </button>
-        <span class="rec-time">{{ recordedTime }}</span>
+        <span class="rec-time">{{ recordedLabel }}</span>
       </div>
       <div v-if="formatLine" v-tip="formatLine" class="node-format ellipsis">{{ formatLine }}</div>
     </template>

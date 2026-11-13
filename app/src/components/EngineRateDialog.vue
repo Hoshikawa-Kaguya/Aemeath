@@ -1,16 +1,12 @@
 <script setup lang="ts">
 import { computed, ref, useTemplateRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { isClosing } from '@/components/dialogDismiss'
+import { isClosing, type FluentDialog } from '@/components/dialogDismiss'
 import { formatKhz } from '@/format/format'
 import { SLOT_FORMAT_MAX_HZ, useAppStore } from '@/stores/app'
+import { isRecording } from '@/stores/nodeLabels'
 
 // 修改引擎采样率：标题栏的采样率按钮和设置页共用。
-interface FluentDialog extends HTMLElement {
-  show(): void
-  hide(): void
-}
-
 const RATES = [44_100, 48_000, 88_200, 96_000, 176_400, 192_000, 352_800, 384_000, 705_600, 768_000]
 
 const { t } = useI18n()
@@ -19,7 +15,7 @@ const dialog = useTemplateRef<FluentDialog>('dialog')
 const rate = ref(RATES[1])
 
 const current = computed(() => store.state?.engine.sampleRate)
-const recording = computed(() => store.nodes.some((node) => node.recorder?.state.state === 'recording'))
+const recording = computed(() => store.nodes.some(isRecording))
 
 watch(
   () => store.rateDialogOpen,

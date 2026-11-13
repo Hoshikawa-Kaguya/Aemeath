@@ -1,8 +1,9 @@
-// 节点的代号和副标题（工作台、路由矩阵、控制台、设备页共用）。
+// 节点的代号、副标题和录音状态（工作台、路由矩阵、控制台、设备页共用）。
 // 代号全部大写并带编号：外部输入 A1、A2…，外部输出 D1、D2…，总线 BUS1、BUS2…
 // 应用源 APP1、APP2…（都按节点 ID 顺序）；虚拟节点用所占槽位的编号 IN1、OUT2，与 Windows 中的设备名 "Aemeath In 1" 对应。
 
 import type { NodeKind, NodeView, SlotRef } from '@/api/types'
+import { formatDuration } from '@/format/format'
 import { i18n } from '@/i18n'
 
 /** 按节点 ID 顺序编号的节点类型及其代号前缀 */
@@ -61,4 +62,18 @@ export function nodeSubtitle(node: NodeView): NodeSubtitle {
   }
   const detail = node.slot !== null ? slotName(node.slot) : (node.device?.name ?? node.program?.fileName ?? '')
   return { kind, detail }
+}
+
+/** 节点名最多这么多个字（与后端的节点名上限一致） */
+export const NODE_NAME_MAX = 64
+
+/** 录音节点正在录音 */
+export function isRecording(node: NodeView): boolean {
+  return node.recorder?.state.state === 'recording'
+}
+
+/** 正在录音时已经录了多久（"01:05"）；没在录音时为 null */
+export function recordedTime(node: NodeView, sampleRate: number): string | null {
+  const state = node.recorder?.state
+  return state?.state === 'recording' ? formatDuration(state.frames / sampleRate) : null
 }

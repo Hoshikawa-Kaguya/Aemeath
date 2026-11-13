@@ -8,7 +8,6 @@ import { formatGain } from '@/format/format'
 import { isMenuKey, openMenu, type MenuItem } from '@/menu/contextMenu'
 import { useAppStore } from '@/stores/app'
 import { nodeCode } from '@/stores/nodeLabels'
-import { GAIN_MAX_DB, GAIN_MIN_DB } from './context'
 import { createHoverWheel } from './hoverWheel'
 
 // 路由矩阵（GLOSSARY：路由矩阵）：行是能发出声音的节点（输入、处理），列是能接收声音的节点（处理、输出），
@@ -164,7 +163,7 @@ async function click(from: NodeView, to: NodeView): Promise<void> {
     return
   }
   emit('select', { from: from.id, to: to.id })
-  await store.run(() => backend.setRouteEnabled(route.from, route.to, !route.enabled))
+  await store.toggleRoute(route)
 }
 
 /** 同一时间只悬停一个格子，所以整个矩阵共用一个 */
@@ -180,15 +179,7 @@ function onWheel(event: WheelEvent, from: NodeView, to: NodeView): void {
   emit('select', { from: from.id, to: to.id })
   const steps = hoverWheel.steps(event)
   if (steps !== 0) {
-    nudge(route, steps)
-  }
-}
-
-/** 把增益调整若干个 1 dB，限制在界面允许的范围内 */
-function nudge(route: RouteView, steps: number): void {
-  const gain = Math.min(GAIN_MAX_DB, Math.max(GAIN_MIN_DB, Math.round(route.gainDb) + steps))
-  if (gain !== route.gainDb) {
-    void store.run(() => backend.setRouteGain(route.from, route.to, gain))
+    store.nudgeRouteGain(route, steps)
   }
 }
 
@@ -259,12 +250,12 @@ function onKeyDown(event: KeyboardEvent, row: number, column: number, from: Node
     case '+':
     case '=':
       if (route !== undefined) {
-        nudge(route, 1)
+        store.nudgeRouteGain(route, 1)
       }
       break
     case '-':
       if (route !== undefined) {
-        nudge(route, -1)
+        store.nudgeRouteGain(route, -1)
       }
       break
     default:

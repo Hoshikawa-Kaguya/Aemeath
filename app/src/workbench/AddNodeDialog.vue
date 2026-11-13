@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, useTemplateRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import type { FluentDialog } from '@/components/dialogDismiss'
 import { backend } from '@/api/backend'
 import {
   DEFAULT_DEVICE_SETTINGS,
@@ -14,7 +15,7 @@ import {
 } from '@/api/types'
 import ProgramIcon from '@/components/ProgramIcon.vue'
 import { useAppStore } from '@/stores/app'
-import { slotName } from '@/stores/nodeLabels'
+import { NODE_NAME_MAX, slotName } from '@/stores/nodeLabels'
 import DeviceSettingsFields from './DeviceSettingsFields.vue'
 import { pickProgram } from './pickProgram'
 import ResamplerField from './ResamplerField.vue'
@@ -34,11 +35,6 @@ type KindChoice =
   | 'virtualOutput'
   | 'externalOutput'
 
-interface FluentDialog extends HTMLElement {
-  show(): void
-  hide(): void
-}
-
 /** 程序列表里的一项 */
 interface ProgramChoice {
   path: string
@@ -56,7 +52,6 @@ const KINDS: KindChoice[] = [
   'bus',
   'recorder',
 ]
-const NAME_MAX = 64
 
 const { t } = useI18n()
 const store = useAppStore()
@@ -307,7 +302,7 @@ defineExpose({ open })
 
         <label class="field">
           <span>{{ t('add.name') }}</span>
-          <input class="text-input" :value="name" :maxlength="NAME_MAX" @input="onNameInput" />
+          <input class="text-input" :value="name" :maxlength="NODE_NAME_MAX" @input="onNameInput" />
         </label>
       </div>
       <fluent-button slot="action" @click="dialog?.hide()">{{ t('add.cancel') }}</fluent-button>

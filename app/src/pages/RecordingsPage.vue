@@ -7,7 +7,7 @@ import { FLAC_MAX_HZ, type NodeView, type RecordDepth, type RecordFormat, type R
 import AppIcon from '@/components/AppIcon.vue'
 import { formatBytes, formatDuration } from '@/format/format'
 import { useAppStore } from '@/stores/app'
-import { fileNameOf } from '@/stores/nodeLabels'
+import { fileNameOf, isRecording } from '@/stores/nodeLabels'
 
 // 录音页：录音文件夹、新录音节点的默认格式，以及每个录音节点的状态与开始/停止。不做文件浏览和回放。
 const { t } = useI18n()
@@ -55,10 +55,6 @@ function stateText(node: NodeView): string {
     default:
       return t('rec.stopped')
   }
-}
-
-function isRecording(node: NodeView): boolean {
-  return node.recorder?.state.state === 'recording'
 }
 </script>
 
