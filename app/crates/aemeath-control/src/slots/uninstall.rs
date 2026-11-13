@@ -11,7 +11,7 @@ use std::process::Command;
 
 use aemeath_sys::audio_endpoints::{AudioEndpoints, AudioFlow};
 use aemeath_sys::com::ComApartment;
-use aemeath_sys::devices;
+use aemeath_sys::{devices, process};
 use aemeath_usbip::identity::{IdentityProfile, SlotIdentity};
 use thiserror::Error;
 use tracing::warn;
@@ -151,22 +151,24 @@ pub fn all_slots_registered(identity: IdentityProfile) -> Result<bool, Uninstall
 
 /// 卸载一个实例（需要管理员权限）。
 pub fn remove(instance: &SlotInstance) -> Result<(), UninstallError> {
-    let output = Command::new(PNPUTIL)
+    let failed = |message: String| UninstallError::Remove {
+        instance: instance.instance_id.clone(),
+        message,
+    };
+    // 以管理员身份运行：用系统目录的绝对路径，不让程序目录里的同名文件顶替
+    let pnputil = process::system_directory()
+        .map_err(|error| failed(error.to_string()))?
+        .join(PNPUTIL);
+    let output = Command::new(pnputil)
         .args(["/remove-device", &instance.instance_id])
         .creation_flags(CREATE_NO_WINDOW)
         .output()
-        .map_err(|error| UninstallError::Remove {
-            instance: instance.instance_id.clone(),
-            message: error.to_string(),
-        })?;
+        .map_err(|error| failed(error.to_string()))?;
     if output.status.success() {
         Ok(())
     } else {
         // pnputil 的输出随系统语言本地化，只用于说明
-        Err(UninstallError::Remove {
-            instance: instance.instance_id.clone(),
-            message: String::from_utf8_lossy(&output.stdout).trim().to_owned(),
-        })
+        Err(failed(String::from_utf8_lossy(&output.stdout).trim().to_owned()))
     }
 }
 

@@ -1,6 +1,7 @@
 //! 进程快照、进程路径、进程退出检测与文件说明（应用源按路径寻找进程），以及本进程的 CPU 时间。
 
-use std::ffi::c_void;
+use std::ffi::{OsString, c_void};
+use std::os::windows::ffi::OsStringExt;
 use std::path::{Path, PathBuf};
 
 use windows::Win32::Foundation::{CloseHandle, FILETIME, HANDLE, MAX_PATH, WAIT_OBJECT_0};
@@ -8,11 +9,24 @@ use windows::Win32::Storage::FileSystem::{GetFileVersionInfoSizeW, GetFileVersio
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
 };
+use windows::Win32::System::SystemInformation::GetSystemDirectoryW;
 use windows::Win32::System::Threading::{
     GetCurrentProcess, GetProcessTimes, OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
     PROCESS_SYNCHRONIZE, QueryFullProcessImageNameW, WaitForSingleObject,
 };
 use windows::core::{HSTRING, PCWSTR, PWSTR};
+
+/// Windows 的系统目录（通常是 `C:\Windows\System32`）。以管理员身份启动系统程序时用它拼绝对路径，
+/// 只给文件名的话会先在程序自己的目录里找，那里普通用户可写。
+pub fn system_directory() -> windows::core::Result<PathBuf> {
+    let mut buffer = [0u16; MAX_PATH as usize];
+    // SAFETY: buffer 可写，长度由切片给出
+    let length = unsafe { GetSystemDirectoryW(Some(&mut buffer)) } as usize;
+    if length == 0 || length > buffer.len() {
+        return Err(windows::core::Error::from_thread());
+    }
+    Ok(PathBuf::from(OsString::from_wide(&buffer[..length])))
+}
 
 /// 快照中的一个进程。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -171,6 +185,13 @@ mod tests {
         assert!(snapshot.iter().any(|entry| entry.process_id == own));
         assert_eq!(process_path(own), std::env::current_exe().ok());
         assert!(!ProcessExit::open(own).unwrap().has_exited());
+    }
+
+    #[test]
+    fn the_system_directory_holds_system_programs() {
+        let system = system_directory().unwrap();
+        assert!(system.is_absolute());
+        assert!(system.join("pnputil.exe").is_file());
     }
 
     #[test]
