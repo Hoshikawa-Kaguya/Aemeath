@@ -73,8 +73,11 @@ const FORMAT_TYPE_I: u8 = 0x01;
 const FORMAT_PCM: u32 = 0x0000_0001;
 const FORMAT_IEEE_FLOAT: u32 = 0x0000_0004;
 
-const RENDER_ENDPOINT: u8 = 0x01;
-const CAPTURE_ENDPOINT: u8 = 0x82;
+/// 播放（OUT）和录音（IN，最高位为 1）等时端点的地址
+pub(crate) const RENDER_ENDPOINT: u8 = 0x01;
+pub(crate) const CAPTURE_ENDPOINT: u8 = 0x82;
+/// 端点地址的低 4 位是端点号（URB 里只带端点号）
+pub(crate) const ENDPOINT_NUMBER_MASK: u8 = 0x0F;
 /// 等时传输、自适应同步（播放端由主机控制速率）
 const ISO_ADAPTIVE: u8 = 0x09;
 /// 等时传输、异步同步（录音端由设备控制速率）

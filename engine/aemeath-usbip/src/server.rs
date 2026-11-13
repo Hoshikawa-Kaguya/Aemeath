@@ -22,7 +22,7 @@ use aemeath_protocol::ids::{SlotDirection, SlotId};
 use aemeath_sys::clock::now_hns;
 use aemeath_sys::thread_priority::raise_current_thread;
 
-use crate::descriptors::Descriptors;
+use crate::descriptors::{self, Descriptors};
 use crate::function::{Setup, StreamChange, Uac2Function};
 use crate::identity::{IdentityProfile, SlotIdentity};
 use crate::wire::{
@@ -40,9 +40,9 @@ const OP_PHASE_TIMEOUT: Duration = Duration::from_secs(5);
 const EXPORT_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 const READ_CHUNK: usize = 64 * 1024;
 const ACCEPT_RETRY_DELAY: Duration = Duration::from_millis(10);
-/// 输入槽位（主机播放）的等时 OUT 端点号与输出槽位（主机录音）的等时 IN 端点号
-const RENDER_ENDPOINT_NUMBER: u8 = 1;
-const CAPTURE_ENDPOINT_NUMBER: u8 = 2;
+/// 输入槽位（主机播放）的等时 OUT 端点号与输出槽位（主机录音）的等时 IN 端点号，取自描述符
+const RENDER_ENDPOINT_NUMBER: u8 = descriptors::RENDER_ENDPOINT & descriptors::ENDPOINT_NUMBER_MASK;
+const CAPTURE_ENDPOINT_NUMBER: u8 = descriptors::CAPTURE_ENDPOINT & descriptors::ENDPOINT_NUMBER_MASK;
 const CONTROL_ENDPOINT: u8 = 0;
 
 /// 一条连接的编号，用于把事件对应到连接上。
@@ -499,6 +499,36 @@ mod tests {
 
         let (status, _retry) = request_import(&server, "1-1");
         assert_eq!(status, 0, "the slot is not left busy");
+    }
+
+    #[test]
+    fn isochronous_urbs_on_the_stream_endpoint_are_forwarded() {
+        let (server, events) = start();
+        server.set_exported(BTreeSet::from([slot(SlotDirection::In, 1)]));
+        let (status, mut stream) = request_import(&server, "1-1");
+        assert_eq!(status, 0);
+        let ServerEvent::Imported { .. } = next_event(&events) else {
+            unreachable!("expected Imported")
+        };
+
+        // 输入槽位（主机播放）：一个 OUT 方向、发往播放端点的等时 URB，1 个包、4 字节
+        let endpoint = u32::from(RENDER_ENDPOINT_NUMBER);
+        let mut urb = Vec::new();
+        for value in [1u32, 7, 0, 0, endpoint, 0, 4, 0, 1, 1] {
+            urb.extend_from_slice(&value.to_be_bytes());
+        }
+        urb.extend_from_slice(&[0u8; 8]);
+        urb.extend_from_slice(&[1, 2, 3, 4]);
+        for value in [0u32, 4, 0, 0] {
+            urb.extend_from_slice(&value.to_be_bytes());
+        }
+        stream.write_all(&urb).unwrap();
+
+        let ServerEvent::IsoSubmit { slot: got, submit, .. } = next_event(&events) else {
+            unreachable!("expected IsoSubmit")
+        };
+        assert_eq!(got, slot(SlotDirection::In, 1));
+        assert_eq!((submit.seq, submit.out_data.as_slice()), (7, &[1u8, 2, 3, 4][..]));
     }
 
     #[test]
