@@ -86,6 +86,8 @@ impl Managed {
             }
             Err(error) => {
                 error!(role = ?self.role, %error, "cannot start");
+                // 启动失败也算一次运行的开始，否则过了 healthy_after 之后每次都被当成"上次运行够久"而清零
+                self.started = now;
                 self.schedule_restart(now, timing, Duration::ZERO);
             }
         }
@@ -186,6 +188,22 @@ mod tests {
             healthy_after: Duration::from_secs(5),
             quit_grace: Duration::from_millis(50),
             stop_timeout: Duration::from_millis(200),
+        }
+    }
+
+    #[test]
+    fn launch_failures_keep_backing_off() {
+        let timing = Timing {
+            backoff: [10, 20, 40].map(Duration::from_millis).to_vec(),
+            healthy_after: Duration::from_millis(100),
+            ..fast()
+        };
+        let mut engine = Managed::new(Role::Engine, Instant::now());
+        let mut launch = |_| Err(io::Error::other("quarantined"));
+        for attempt in 1..=6 {
+            thread::sleep(engine.next_start.saturating_duration_since(Instant::now()));
+            engine.start_if_due(&mut launch, &timing);
+            assert_eq!(engine.failures, attempt, "never counted as a long healthy run");
         }
     }
 
