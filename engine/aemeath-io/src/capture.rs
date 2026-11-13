@@ -28,6 +28,8 @@ const INITIAL_READ_MS: u32 = 100;
 pub struct CapturePump {
     codec: FrameCodec,
     block_align: usize,
+    /// 独占时设备缓冲的帧数（每次最多交付这么多），共享时为 0
+    exclusive_frames: u32,
     engine_rate: SampleRate,
     resampler: BridgeResampler,
     bytes: Vec<u8>,
@@ -62,9 +64,15 @@ impl CapturePump {
         let bytes = vec![0u8; stream.block_align * (device_rate.hz() / (1000 / INITIAL_READ_MS)) as usize];
         let staging = Vec::with_capacity(bytes.len() / stream.block_align * STEREO);
         let produced = Vec::with_capacity(resampler.output_frames_max() * STEREO * 8);
+        let exclusive_frames = if stream.exclusive {
+            stream.client.get_buffer_size()?
+        } else {
+            0
+        };
         Ok(Self {
             codec: stream.frame_codec(),
             block_align: stream.block_align,
+            exclusive_frames,
             engine_rate,
             resampler,
             bytes,
@@ -78,12 +86,20 @@ impl CapturePump {
 
     /// 取走设备已交付的全部包，重采样后写进环形缓冲。
     pub fn read_packets(&mut self, capture: &AudioCaptureClient) -> Result<(), BridgeError> {
-        while let Some(frames) = capture.get_next_packet_size()?.filter(|frames| *frames > 0) {
+        loop {
+            // 独占模式下 wasapi 的 get_next_packet_size 固定返回 None：按整个缓冲读，读到 0 帧为止
+            let frames = capture.get_next_packet_size()?.unwrap_or(self.exclusive_frames);
+            if frames == 0 {
+                break;
+            }
             let len = frames as usize * self.block_align;
             if self.bytes.len() < len {
                 self.bytes.resize(len, 0);
             }
             let (read, info) = capture.read_from_device(&mut self.bytes[..len])?;
+            if read == 0 {
+                break;
+            }
             if info.flags.data_discontinuity {
                 self.log.discontinuities += 1;
             }

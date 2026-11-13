@@ -73,12 +73,9 @@ fn main() -> Result<()> {
             Ok(()) => events += 1,
             Err(_) => timeouts += 1,
         }
-        while let Some(size) = capture.get_next_packet_size()?.filter(|size| *size > 0) {
-            let length = size as usize * stream.block_align;
-            let (read, _) = capture.read_from_device(&mut bytes[..length])?;
-            packets += 1;
-            frames += u64::from(read);
-        }
+        let read = drain(&capture, &mut bytes)?;
+        packets += read.0;
+        frames += read.1;
     }
     stream.client.stop_stream()?;
     println!("events {events}, timeouts {timeouts}, packets {packets}, frames {frames} in {RUN:?}");
@@ -104,16 +101,27 @@ fn poll(device: &wasapi::Device, format: DeviceFormat) -> Result<()> {
     let started = Instant::now();
     let (mut packets, mut frames) = (0, 0u64);
     let mut bytes = vec![0u8; 1 << 20];
-    let block_align = wave.get_blockalign() as usize;
     while started.elapsed() < RUN {
         std::thread::sleep(Duration::from_millis(5));
-        while let Some(size) = capture.get_next_packet_size()?.filter(|size| *size > 0) {
-            let (read, _) = capture.read_from_device(&mut bytes[..size as usize * block_align])?;
-            packets += 1;
-            frames += u64::from(read);
-        }
+        let read = drain(&capture, &mut bytes)?;
+        packets += read.0;
+        frames += read.1;
     }
     client.stop_stream()?;
     println!("polling: packets {packets}, frames {frames} in {RUN:?}");
     Ok(())
+}
+
+/// 读完设备已交付的全部包，返回 (包数, 帧数)。独占模式下 wasapi 的 get_next_packet_size 固定返回 None，
+/// 所以不问包大小，直接读进足够大的缓冲，读到 0 帧为止。
+fn drain(capture: &wasapi::AudioCaptureClient, bytes: &mut [u8]) -> Result<(u32, u64)> {
+    let (mut packets, mut frames) = (0, 0u64);
+    loop {
+        let (read, _) = capture.read_from_device(bytes)?;
+        if read == 0 {
+            return Ok((packets, frames));
+        }
+        packets += 1;
+        frames += u64::from(read);
+    }
 }
