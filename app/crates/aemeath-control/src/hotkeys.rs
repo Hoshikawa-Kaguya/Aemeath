@@ -80,16 +80,24 @@ impl Matcher {
     }
 
     /// 绑定的修饰键都按着就算匹配，多按的修饰键不影响：游戏里按住 Shift 奔跑时，按键说话仍然要能用。
+    /// 同时匹配几个时取修饰键最多的那个，否则绑了 X1 之后 Ctrl+X1 永远触发不了。
     fn find(&self, key: KeyCode) -> Option<Hotkey> {
         let current = self.modifiers();
         self.hooked
             .keys()
-            .find(|hotkey| {
+            .filter(|hotkey| {
                 hotkey.key == key
                     && (!hotkey.modifiers.ctrl || current.ctrl)
                     && (!hotkey.modifiers.alt || current.alt)
                     && (!hotkey.modifiers.shift || current.shift)
                     && (!hotkey.modifiers.win || current.win)
+            })
+            .max_by_key(|hotkey| {
+                let held = hotkey.modifiers;
+                [held.ctrl, held.alt, held.shift, held.win]
+                    .into_iter()
+                    .filter(|&on| on)
+                    .count()
             })
             .copied()
     }
@@ -324,6 +332,24 @@ mod tests {
         assert_eq!(
             feed(&mut matcher, &[key(VK_LSHIFT, true), key(F13, true)]),
             vec![HotkeyEvent::Pressed(target(1))]
+        );
+    }
+
+    #[test]
+    fn the_most_specific_binding_wins() {
+        let chord = Hotkey {
+            modifiers: Modifiers {
+                ctrl: true,
+                ..Modifiers::default()
+            },
+            key: KeyCode::Keyboard { vk: F13 },
+        };
+        let mut matcher = Matcher::default();
+        matcher.hooked.insert(bare(F13), (target(1), HotkeyMode::Hold));
+        matcher.hooked.insert(chord, (target(2), HotkeyMode::Hold));
+        assert_eq!(
+            feed(&mut matcher, &[key(VK_LCONTROL, true), key(F13, true)]),
+            vec![HotkeyEvent::Pressed(target(2))]
         );
     }
 
