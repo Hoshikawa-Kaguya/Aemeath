@@ -52,3 +52,42 @@ input,
 textarea {
   user-select: text;
 }
+
+/* 设备、应用、录音、热键、工具、设置六个页面共用的页面框架 */
+.page {
+  height: 100%;
+  overflow: auto;
+}
+
+.page-title {
+  font: var(--fontWeightSemibold) var(--fontSizeHero700) / var(--lineHeightHero700) var(--fontFamilyBase);
+  margin: 20px 24px 4px;
+}
+
+.page-sub {
+  margin: 0 24px 8px;
+  color: var(--text-2);
+}
+
+/* 工作台、控制台、路由矩阵三个面板的标题行 */
+.pane-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  flex: none;
+  padding: 0 12px 0 16px;
+  border-bottom: 1px solid var(--stroke);
+}
+
+.pane-head h2 {
+  margin: 0;
+  font: var(--fontWeightSemibold) var(--fontSizeBase300) / 20px var(--fontFamilyBase);
+  white-space: nowrap;
+}
+
+/* 对话框的标题 */
+fluent-dialog .title {
+  margin: 0;
+  font: var(--fontWeightSemibold) var(--fontSizeBase500) / var(--lineHeightBase500) var(--fontFamilyBase);
+}

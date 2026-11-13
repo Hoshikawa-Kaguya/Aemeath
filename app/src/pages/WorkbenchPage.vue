@@ -711,22 +711,6 @@ onBeforeUnmount(() => {
   border-top: 1px solid var(--stroke);
 }
 
-.pane-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 44px;
-  flex: none;
-  padding: 0 12px 0 16px;
-  border-bottom: 1px solid var(--stroke);
-}
-
-.pane-head h2 {
-  margin: 0;
-  font: var(--fontWeightSemibold) var(--fontSizeBase300) / 20px var(--fontFamilyBase);
-  white-space: nowrap;
-}
-
 .spacer {
   flex: 1;
 }

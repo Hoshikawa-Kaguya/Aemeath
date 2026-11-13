@@ -444,16 +444,6 @@ function redetectAll(): void {
 
 <style scoped>
 /* 整页一起滚动，滚动条占满内容区的全部高度 */
-.page {
-  height: 100%;
-  overflow: auto;
-}
-
-.page-title {
-  font: var(--fontWeightSemibold) var(--fontSizeHero700) / var(--lineHeightHero700) var(--fontFamilyBase);
-  margin: 20px 24px 4px;
-}
-
 .body {
   padding: 8px 24px 32px;
 }

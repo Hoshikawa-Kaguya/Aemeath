@@ -229,21 +229,6 @@ const healthText = computed(() => {
 
 <style scoped>
 /* 整页一起滚动，滚动条占满内容区的全部高度 */
-.page {
-  height: 100%;
-  overflow: auto;
-}
-
-.page-title {
-  font: var(--fontWeightSemibold) var(--fontSizeHero700) / var(--lineHeightHero700) var(--fontFamilyBase);
-  margin: 20px 24px 4px;
-}
-
-.page-sub {
-  margin: 0 24px 8px;
-  color: var(--text-2);
-}
-
 .body {
   padding: 8px 24px 32px;
 }

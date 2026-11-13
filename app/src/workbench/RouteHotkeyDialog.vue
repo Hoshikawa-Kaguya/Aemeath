@@ -40,11 +40,6 @@ defineExpose({ open })
 </template>
 
 <style scoped>
-.title {
-  margin: 0;
-  font: var(--fontWeightSemibold) var(--fontSizeBase500) / var(--lineHeightBase500) var(--fontFamilyBase);
-}
-
 .form {
   display: flex;
   flex-direction: column;
