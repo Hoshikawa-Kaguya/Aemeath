@@ -147,8 +147,7 @@ fn read_string(root: HKEY, subkey: &str, value: &str) -> io::Result<Option<Strin
     if status != ERROR_SUCCESS {
         return Err(io::Error::from_raw_os_error(status.0 as i32));
     }
-    let length = buffer.iter().position(|unit| *unit == 0).unwrap_or(buffer.len());
-    Ok(Some(String::from_utf16_lossy(&buffer[..length])))
+    Ok(Some(crate::wide_until_nul(&buffer)))
 }
 
 #[cfg(test)]

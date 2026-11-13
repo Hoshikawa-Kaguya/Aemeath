@@ -11,6 +11,7 @@ use aemeath_control::crash_dumps;
 use aemeath_control::slots::uninstall;
 use aemeath_control::usbip_cli::UsbipVersion;
 use aemeath_runtime::logging::{self, LOG_FOLDER, Process};
+use aemeath_runtime::names::ProcessNames;
 use aemeath_usbip::identity::IdentityProfile;
 use sha2::{Digest, Sha256};
 use tracing::{error, info};

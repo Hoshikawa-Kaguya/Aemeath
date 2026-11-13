@@ -52,8 +52,7 @@ pub fn parent_instance_id(instance: &str) -> io::Result<Option<String>> {
     let mut buffer = vec![0u16; length as usize + 1];
     // SAFETY: 缓冲区比 ID 长度多一个字符，容纳结尾的 NUL
     check(unsafe { CM_Get_Device_IDW(parent, &mut buffer, 0) })?;
-    let end = buffer.iter().position(|unit| *unit == 0).unwrap_or(buffer.len());
-    Ok(Some(String::from_utf16_lossy(&buffer[..end])))
+    Ok(Some(crate::wide_until_nul(&buffer)))
 }
 
 #[cfg(test)]

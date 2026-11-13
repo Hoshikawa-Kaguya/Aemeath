@@ -13,6 +13,7 @@ use aemeath_control::slots::uninstall::{self, REMOVE_ARGUMENT};
 use aemeath_control::usbip_cli::UsbipCli;
 use aemeath_runtime::autostart;
 use aemeath_runtime::logging::{self, LOG_FOLDER, Process};
+use aemeath_runtime::names::{EXECUTABLES, ProcessNames};
 use aemeath_sys::elevation::run_elevated;
 use aemeath_sys::process::{ProcessEntry, process_snapshot};
 use aemeath_sys::{task_dialog, ui_language};
@@ -23,7 +24,6 @@ use crate::messages;
 
 const WAIT_FOR_EXIT: Duration = Duration::from_secs(30);
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
-const OWN_EXECUTABLES: [&str; 3] = ["aemeath.exe", "aemeath-host.exe", "aemeath-app.exe"];
 const EXIT_REMOVAL_FAILED: u8 = 93;
 
 /// 卸载钩子：把自己复制到临时目录，提权启动清理，不等清理完。UAC 选"否"就保留设备，卸载继续。
@@ -51,7 +51,7 @@ fn copy_to_temp() -> Option<PathBuf> {
 fn others_running(processes: &[ProcessEntry], own_id: u32) -> bool {
     processes.iter().any(|process| {
         process.process_id != own_id
-            && OWN_EXECUTABLES
+            && EXECUTABLES
                 .iter()
                 .any(|name| process.exe_name.eq_ignore_ascii_case(name))
     })

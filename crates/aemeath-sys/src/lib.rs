@@ -26,3 +26,20 @@ pub mod thread_priority;
 pub mod timer;
 mod token;
 pub mod ui_language;
+
+/// API 填好的 UTF-16 缓冲转成字符串：到第一个 NUL 为止（没有 NUL 就取全部），无效的编码单元换成替换字符。
+fn wide_until_nul(buffer: &[u16]) -> String {
+    let end = buffer.iter().position(|unit| *unit == 0).unwrap_or(buffer.len());
+    String::from_utf16_lossy(&buffer[..end])
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn wide_strings_end_at_the_first_nul() {
+        let text: Vec<u16> = "ab\0cd".encode_utf16().collect();
+        assert_eq!(super::wide_until_nul(&text), "ab");
+        let whole: Vec<u16> = "abc".encode_utf16().collect();
+        assert_eq!(super::wide_until_nul(&whole), "abc");
+    }
+}

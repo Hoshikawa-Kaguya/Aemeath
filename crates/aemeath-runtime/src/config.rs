@@ -11,6 +11,7 @@ use aemeath_usbip::identity::IdentityProfile;
 use thiserror::Error;
 
 use crate::autostart::ARGUMENT;
+use crate::names::ProcessNames;
 
 /// 命名管道名的参数。守护进程拉起引擎和主程序时总会带上它，主程序据此判断自己是不是被直接启动的。
 pub const PIPE_ARGUMENT: &str = "--pipe";

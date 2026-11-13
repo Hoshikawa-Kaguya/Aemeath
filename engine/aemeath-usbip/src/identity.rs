@@ -3,10 +3,7 @@
 //! Windows 按"VID/PID + 序列号"识别设备实例，端点 ID、设备名、共享格式都绑定在实例上，
 //! 所以这里的每一项都必须永久不变：改动任何一项都会产生新的设备实例，OBS 等应用里选好的设备随之失效。
 //!
-//! 身份还决定了引擎与主程序共用的几个默认名称（数据目录、命名管道），也放在这里，两个进程各自计算、结果一致。
-
-use std::io;
-use std::path::PathBuf;
+//! 身份还决定了进程层面的名称（数据目录、命名管道等），那些在 `aemeath-runtime` 里按身份计算。
 
 use aemeath_protocol::ids::{SlotDirection, SlotId, SlotNumber};
 
@@ -24,7 +21,6 @@ pub enum IdentityProfile {
 
 /// Aemeath USB/IP 服务端的默认端口。选在 Windows 默认动态范围（49152 起）之外，低端口更容易被 winnat 划进保留段
 pub const DEFAULT_USBIP_PORT: u16 = 32410;
-const APP_DATA_VARIABLE: &str = "APPDATA";
 
 impl IdentityProfile {
     /// 这次构建使用的身份：只有打开 `production-identity` feature（打包脚本）才是正式身份。
@@ -34,57 +30,6 @@ impl IdentityProfile {
         } else {
             Self::Development
         }
-    }
-
-    /// 命名管道、互斥体、共享内存名称的前缀
-    const fn name_prefix(self) -> &'static str {
-        match self {
-            Self::Development => "Aemeath.Dev",
-            Self::Production => "Aemeath",
-        }
-    }
-
-    /// 数据目录：`%APPDATA%\Aemeath`；开发身份用 `%APPDATA%\Aemeath Dev`，与正式安装互不干扰。
-    /// 安装版和便携版相同，不提供修改。
-    pub fn default_data_dir(self) -> Option<PathBuf> {
-        let app_data = std::env::var_os(APP_DATA_VARIABLE)?;
-        Some(PathBuf::from(app_data).join(self.data_folder_name()))
-    }
-
-    /// `%APPDATA%` 下的数据目录名
-    pub const fn data_folder_name(self) -> &'static str {
-        match self {
-            Self::Development => "Aemeath Dev",
-            Self::Production => "Aemeath",
-        }
-    }
-
-    /// 引擎的命名管道名，带上当前用户的 SID：同一台电脑的不同用户各自运行一个引擎，互不冲突。
-    pub fn engine_pipe_name(self) -> io::Result<String> {
-        let sid = aemeath_sys::pipe::current_user_sid()?;
-        let product = self.name_prefix();
-        Ok(format!(r"\\.\pipe\{product}.Engine.{sid}"))
-    }
-
-    /// 守护进程的单实例互斥体名称（每个用户、每个登录会话只运行一个守护进程）。
-    pub fn guardian_instance_name(self) -> io::Result<String> {
-        let sid = aemeath_sys::pipe::current_user_sid()?;
-        let product = self.name_prefix();
-        Ok(format!(r"Local\{product}.Guardian.{sid}"))
-    }
-
-    /// 主程序唤起事件的名称（每个用户、每个登录会话只运行一个主程序），重复启动时用它请已运行的主程序显示窗口。
-    pub fn app_activation_name(self) -> io::Result<String> {
-        let sid = aemeath_sys::pipe::current_user_sid()?;
-        let product = self.name_prefix();
-        Ok(format!(r"Local\{product}.App.{sid}"))
-    }
-
-    /// 电平共享内存的名称（`Local\` 命名空间：引擎和主程序在同一个登录会话里），同样带上用户 SID。
-    pub fn meter_memory_name(self) -> io::Result<String> {
-        let sid = aemeath_sys::pipe::current_user_sid()?;
-        let product = self.name_prefix();
-        Ok(format!(r"Local\{product}.Meters.{sid}"))
     }
 }
 

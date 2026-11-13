@@ -16,6 +16,9 @@ use windows::Win32::System::Threading::{
 };
 use windows::core::{HSTRING, PCWSTR, PWSTR};
 
+/// 启动子进程时不为它创建控制台窗口（`CommandExt::creation_flags`）：窗口程序调用命令行工具时不闪黑框
+pub const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 /// Windows 的系统目录（通常是 `C:\Windows\System32`）。以管理员身份启动系统程序时用它拼绝对路径，
 /// 只给文件名的话会先在程序自己的目录里找，那里普通用户可写。
 pub fn system_directory() -> windows::core::Result<PathBuf> {
@@ -49,15 +52,10 @@ pub fn process_snapshot() -> windows::core::Result<Vec<ProcessEntry>> {
     // SAFETY: snapshot 有效，entry.dwSize 已按要求填写
     let mut next = unsafe { Process32FirstW(snapshot, &mut entry) };
     while next.is_ok() {
-        let length = entry
-            .szExeFile
-            .iter()
-            .position(|unit| *unit == 0)
-            .unwrap_or(entry.szExeFile.len());
         entries.push(ProcessEntry {
             process_id: entry.th32ProcessID,
             parent_id: entry.th32ParentProcessID,
-            exe_name: String::from_utf16_lossy(&entry.szExeFile[..length]),
+            exe_name: crate::wide_until_nul(&entry.szExeFile),
         });
         // SAFETY: 同上
         next = unsafe { Process32NextW(snapshot, &mut entry) };

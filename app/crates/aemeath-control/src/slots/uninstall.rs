@@ -22,7 +22,6 @@ const USB_ENUMERATOR: &str = "USB";
 const ENDPOINT_PREFIX: &str = r"SWD\MMDEVAPI\";
 const FUNCTION_MARKER: &str = "&MI_";
 const PNPUTIL: &str = "pnputil.exe";
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// 卸载的阶段，也是卸载的顺序。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -161,7 +160,7 @@ pub fn remove(instance: &SlotInstance) -> Result<(), UninstallError> {
         .join(PNPUTIL);
     let output = Command::new(pnputil)
         .args(["/remove-device", &instance.instance_id])
-        .creation_flags(CREATE_NO_WINDOW)
+        .creation_flags(process::CREATE_NO_WINDOW)
         .output()
         .map_err(|error| failed(error.to_string()))?;
     if output.status.success() {

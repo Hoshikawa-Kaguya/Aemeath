@@ -4,14 +4,13 @@
 
 use std::io;
 
+use aemeath_runtime::names::{EXECUTABLES, ProcessNames};
 use aemeath_sys::registry;
 use aemeath_usbip::identity::IdentityProfile;
 
 /// 让提权的守护进程写入这些键的命令行参数
 pub const ENABLE_ARGUMENT: &str = "--enable-crash-dumps";
 const LOCAL_DUMPS_KEY: &str = r"SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps";
-/// 三个进程的文件名
-const EXECUTABLES: [&str; 3] = ["Aemeath.exe", "aemeath-host.exe", "aemeath-app.exe"];
 const DUMP_FOLDER: &str = "DumpFolder";
 const DUMP_COUNT: &str = "DumpCount";
 const DUMP_TYPE: &str = "DumpType";

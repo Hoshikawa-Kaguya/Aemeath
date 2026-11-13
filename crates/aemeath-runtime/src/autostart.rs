@@ -6,6 +6,8 @@ use std::path::Path;
 use aemeath_sys::registry;
 use aemeath_usbip::identity::IdentityProfile;
 
+use crate::names::ProcessNames;
+
 /// Run 键里的命令行带上这个参数：开机时只留在托盘，不弹出主窗口
 pub const ARGUMENT: &str = "--autostart";
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";

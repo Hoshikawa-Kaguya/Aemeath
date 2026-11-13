@@ -36,6 +36,7 @@ version = "0.1.3"
 dependencies = [
  "aemeath-core",
  "aemeath-protocol",
+ "aemeath-runtime",
  "aemeath-sys",
  "aemeath-usbip",
  "thiserror 2.0.21",

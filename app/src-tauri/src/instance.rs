@@ -10,6 +10,7 @@
 //! 它按 tauri.conf.json 的 identifier 命名，开发身份和正式身份同名，两种身份同时运行时会互相吞掉对方的启动。
 
 use aemeath_runtime::config::{PIPE_ARGUMENT, RuntimeConfig};
+use aemeath_runtime::names::ProcessNames;
 use aemeath_sys::activation::{self, ActivationEvent};
 use tauri::AppHandle;
 use tracing::{error, info, warn};

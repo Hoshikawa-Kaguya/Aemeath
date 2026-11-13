@@ -20,10 +20,6 @@ use wasapi::{AudioClient, CapabilityProbe, DeviceEnumerator, WasapiError};
 use crate::IoDirection;
 use crate::format::{to_device_format, to_wave_format};
 
-/// 逐个探测的采样率（Hz）：44.1k 与 48k 两个家族的标准值
-const PROBE_RATES: [usize; 10] = [
-    44_100, 48_000, 88_200, 96_000, 176_400, 192_000, 352_800, 384_000, 705_600, 768_000,
-];
 /// 快速选择推荐格式时依次尝试的样本格式（与 [`DeviceCapabilities::recommended`] 的优先级一致）
 const QUICK_FORMATS: [SampleFormat; 5] = [
     SampleFormat::Int32,
@@ -41,9 +37,10 @@ pub fn probe_device(device: &wasapi::Device) -> Result<DeviceCapabilities, Wasap
     let channels = usize::from(mix.get_nchannels());
     let (default_period, minimum_period) = client.get_device_period()?;
     let mut probe = CapabilityProbe::new(device)?;
-    let mut exclusive_formats: Vec<_> = PROBE_RATES
+    // 逐个探测标准采样率
+    let mut exclusive_formats: Vec<_> = SampleRate::STANDARD_HZ
         .iter()
-        .flat_map(|rate| probe.supported_formats(*rate, channels))
+        .flat_map(|rate| probe.supported_formats(*rate as usize, channels))
         .filter_map(|format| to_device_format(&format))
         .collect();
     exclusive_formats.dedup();

@@ -31,7 +31,9 @@ use aemeath_core::store::ConfigStore;
 use aemeath_runtime::autostart;
 use aemeath_runtime::config::{PIPE_ARGUMENT, RuntimeConfig};
 use aemeath_runtime::logging::{self, Process};
+use aemeath_runtime::names::{APP_EXE, ENGINE_EXE, ProcessNames};
 use aemeath_sys::activation;
+use aemeath_sys::process::CREATE_NO_WINDOW;
 use aemeath_sys::single_instance::SingleInstance;
 use aemeath_sys::ui_language;
 use tracing::{error, info};
@@ -39,10 +41,6 @@ use velopack::VelopackApp;
 
 use crate::supervisor::{Role, Timing};
 
-const ENGINE_EXE: &str = "aemeath-host.exe";
-const APP_EXE: &str = "aemeath-app.exe";
-/// 引擎是控制台程序：不为它创建控制台窗口
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 /// 驱动不可用时的退出码（便于安装程序和脚本区分）
 const EXIT_DRIVER_UNAVAILABLE: u8 = 2;
 

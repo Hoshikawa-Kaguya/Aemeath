@@ -11,9 +11,7 @@ pub const CHANNELS: u8 = 2;
 pub const MICROFRAMES_PER_SECOND: u64 = 8_000;
 
 /// 槽位声明的全部采样率（声明全部格式，Windows 选哪个就按哪个收发）。
-pub const SUPPORTED_RATES: [u32; 10] = [
-    44_100, 48_000, 88_200, 96_000, 176_400, 192_000, 352_800, 384_000, 705_600, 768_000,
-];
+pub const SUPPORTED_RATES: [u32; 10] = SampleRate::STANDARD_HZ;
 
 /// 槽位首次被主机读取时报告的采样率
 pub const INITIAL_RATE: SampleRate = SampleRate::HZ_48000;

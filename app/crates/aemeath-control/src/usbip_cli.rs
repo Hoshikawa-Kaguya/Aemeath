@@ -14,6 +14,7 @@ use std::process::Stdio;
 use std::str::FromStr;
 use std::time::{Duration, Instant};
 
+use aemeath_sys::process::CREATE_NO_WINDOW;
 use aemeath_usbip::identity::SlotIdentity;
 use aemeath_usbip::wire::BusId;
 use thiserror::Error;
@@ -23,8 +24,6 @@ use tracing::{debug, warn};
 pub const SERVER_HOST: &str = "127.0.0.1";
 /// 每次调用的超时：正常 16–38 ms，服务端不在线时 `attach` 约 2 s 后失败
 const CALL_TIMEOUT: Duration = Duration::from_secs(10);
-/// 不为子进程创建控制台窗口（主程序是窗口程序，否则每次调用都会闪一下黑框）
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 /// usbip-win2 默认安装位置（相对 `%ProgramFiles%`）
 const DEFAULT_INSTALL_DIR: &str = "USBip";
 const EXECUTABLE: &str = "usbip.exe";
