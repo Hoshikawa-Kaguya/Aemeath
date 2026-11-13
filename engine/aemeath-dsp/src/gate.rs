@@ -52,6 +52,11 @@ impl Gate {
         self.hold_remaining = old.hold_remaining.min(self.hold_frames);
     }
 
+    /// 门限关闭且已完全打开：这时 [`Self::next_gain`] 总是返回 1、也不改变状态，处理时可以整段跳过。
+    pub fn is_transparent(&self) -> bool {
+        self.threshold.is_none() && self.gain == OPEN && self.hold_remaining == self.hold_frames
+    }
+
     pub fn is_enabled(&self) -> bool {
         self.threshold.is_some()
     }
@@ -149,6 +154,22 @@ mod tests {
             OPEN,
             "turning the gate off reopens with the attack ramp"
         );
+    }
+
+    #[test]
+    fn only_an_open_disabled_gate_is_transparent() {
+        assert!(Gate::new(RATE, None).is_transparent());
+        assert!(!Gate::new(RATE, Some(THRESHOLD_DB)).is_transparent());
+
+        // 关闭过的门限关掉阈值后，要等重新完全打开才透明
+        let mut gate = Gate::new(RATE, Some(THRESHOLD_DB));
+        feed(&mut gate, QUIET, frames(1.0));
+        gate.set_threshold(None);
+        assert!(!gate.is_transparent());
+        feed(&mut gate, QUIET, frames(ATTACK_SECONDS) + 1);
+        assert!(gate.is_transparent());
+        assert_eq!(gate.next_gain(QUIET, QUIET), OPEN);
+        assert!(gate.is_transparent(), "stays transparent");
     }
 
     #[test]

@@ -439,6 +439,14 @@ impl Mixer {
                         continue;
                     }
                     let source = &self.nodes[route.from].buffer;
+                    if route.gain.is_settled() {
+                        // 增益不变时不走逐帧的状态机，循环可以向量化；结果与逐帧相同
+                        let gain = route.gain.current();
+                        for (out, input) in buffer[..len].iter_mut().zip(&source[..len]) {
+                            *out += input * gain;
+                        }
+                        continue;
+                    }
                     for (out, input) in buffer[..len]
                         .as_chunks_mut::<STEREO>()
                         .0
@@ -458,6 +466,19 @@ impl Mixer {
                 buffer[..len].copy_from_slice(&node.ret[..len]);
             }
             let mut peaks = [0f32; STEREO];
+            if node.strip.is_settled() && node.gate.as_ref().is_none_or(Gate::is_transparent) {
+                // 同上：增益不变、门限不起作用时只做乘法和取峰值
+                let gain = node.strip.current();
+                for frame in buffer[..len].as_chunks_mut::<STEREO>().0.iter_mut() {
+                    for (sample, peak) in frame.iter_mut().zip(peaks.iter_mut()) {
+                        *sample *= gain;
+                        *peak = peak.max(sample.abs());
+                    }
+                }
+                node.buffer = buffer;
+                self.meters.record(index, peaks);
+                continue;
+            }
             for frame in buffer[..len].as_chunks_mut::<STEREO>().0.iter_mut() {
                 // 门限按增益之前的信号判定
                 let gate = node
@@ -592,6 +613,49 @@ mod tests {
         let first_block = run(&mut mixer, 1.0, 0.0, 1);
         // 第一块结束时只走了 48/480 的过渡
         assert!((first_block - 0.1).abs() < 1e-5, "{first_block}");
+    }
+
+    #[test]
+    fn steady_gains_give_the_same_samples_as_the_per_frame_ramp() {
+        let gains_db = [-3.7, 1.3, -0.5];
+        let topology = topology(vec![
+            route(GAME, BUS, gains_db[0]),
+            route(MIC, BUS, gains_db[1]),
+            route(BUS, OBS, gains_db[2]),
+        ]);
+        let (mut mixer, _) = build(&topology, None);
+        // 参照：逐帧推进的渐变增益，求和顺序与混音器相同；通道条都是 0 dB、门限关闭
+        let mut reference = gains_db.map(|db| {
+            let mut gain = SmoothedGain::fixed(0.0);
+            gain.set_target(db_to_linear(db), RAMP as u32);
+            gain
+        });
+        let signal = |seed: usize, index: usize| ((index * seed) % 1000) as f32 / 1000.0 - 0.5;
+        // 前 10 块在渐变中，后 10 块增益已稳定
+        for block in 0..20 {
+            let at = |frame: usize| block * FRAMES * STEREO + frame;
+            mixer.begin_block(FRAMES);
+            for (node, seed) in [(0, 7919), (1, 104_729)] {
+                for (frame, sample) in mixer.input_mut(node, FRAMES).unwrap().iter_mut().enumerate() {
+                    *sample = signal(seed, at(frame));
+                }
+            }
+            mixer.process(FRAMES);
+            let output = mixer.output(3, FRAMES).unwrap();
+            for frame in 0..FRAMES {
+                let [game, mic, bus] = reference.each_mut().map(SmoothedGain::next_gain);
+                for channel in 0..STEREO {
+                    let index = at(frame * STEREO + channel);
+                    let summed = 0.0 + signal(7919, index) * game + signal(104_729, index) * mic;
+                    let expected = 0.0 + summed * bus;
+                    assert_eq!(
+                        output[frame * STEREO + channel],
+                        expected,
+                        "block {block}, frame {frame}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
