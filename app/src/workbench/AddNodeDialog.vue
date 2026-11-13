@@ -86,7 +86,7 @@ function deviceLabel(choice: DeviceChoice): string {
     return choice.name
   }
   const key = owner.kind === 'externalInsert' ? 'add.usedAsReturn' : 'add.usedByNode'
-  return `${choice.name} (${t(key, { node: owner.name })})`
+  return t(key, { device: choice.name, node: owner.name })
 }
 const device = computed(() => devices.value?.find((choice) => choice.endpointId === endpointId.value))
 const programs = ref<ProgramChoice[]>([])

@@ -139,7 +139,10 @@ function describe(from: NodeView, to: NodeView): string {
   const duplicate = route?.duplicate
   return duplicate == null
     ? text
-    : `${text} · ${t('node.duplicate', { program: duplicate.program, destination: duplicate.destination })}`
+    : t('mx.cellWithWarning', {
+        cell: text,
+        warning: t('node.duplicate', { program: duplicate.program, destination: duplicate.destination }),
+      })
 }
 
 const info = computed(() => {
@@ -586,7 +589,7 @@ table.mx {
 .mx th.hl {
   background: var(--accent-soft);
   color: var(--text);
-  border-radius: 4px;
+  border-radius: var(--borderRadiusMedium);
 }
 
 .mx th.hl b,
@@ -693,7 +696,7 @@ table.mx {
   width: 14px;
   height: 10px;
   margin-right: 4px;
-  border-radius: 2px;
+  border-radius: var(--borderRadiusSmall);
   vertical-align: -1px;
   border: 1px solid var(--stroke-strong);
 }

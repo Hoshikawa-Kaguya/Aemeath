@@ -181,7 +181,12 @@ const healthText = computed(() => {
             :class="{ unplugged: !plugged(slot) }"
           >
             <span
-              ><span class="slot-no">{{ section.direction === 'in' ? 'In' : 'Out' }} {{ slot.slot.number }}</span></span
+              ><span class="slot-no">{{
+                t('dev.slotNumber', {
+                  direction: t(section.direction === 'in' ? 'node.directionIn' : 'node.directionOut'),
+                  number: slot.slot.number,
+                })
+              }}</span></span
             >
             <div class="cell">
               <b v-tip="slotName(slot.slot)" class="ellipsis">{{ slotName(slot.slot) }}</b>

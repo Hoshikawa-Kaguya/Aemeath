@@ -216,7 +216,7 @@ function onKeyDown(event: KeyboardEvent): void {
 
 .code {
   flex: none;
-  font-size: 10px;
+  font-size: var(--fontSizeBase100);
   color: var(--text-3);
 }
 
@@ -269,7 +269,7 @@ function onKeyDown(event: KeyboardEvent): void {
 }
 
 .tag {
-  font-size: 10px;
+  font-size: var(--fontSizeBase100);
   line-height: 14px;
   letter-spacing: 0.04em;
   color: var(--text-3);

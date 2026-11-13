@@ -193,10 +193,11 @@
     "appSourceNote": "App sources add 30–60 ms of latency compared with landing the app directly on a virtual input, so they suit streaming better than live monitoring. Programs that play in exclusive mode can't be captured.",
     "returnDevice": "Return device",
     "insertSend": "Sound goes to the external program through {slot}. Set that device as the program's input.",
-    "usedAsReturn": "used as the return of {node}",
-    "usedByNode": "used by {node}"
+    "usedAsReturn": "{device} (used as the return of {node})",
+    "usedByNode": "{device} (used by {node})"
   },
   "dev": {
+    "slotNumber": "{direction} {number}",
     "sub": "Aemeath provides 16 fixed virtual device slots. A slot is plugged in automatically while a node occupies it and unplugged when no node does, so unused slots stay out of the Windows device list. Device names are fixed; the devices are removed only when Aemeath is uninstalled.",
     "driver": "Driver",
     "driverVal": "usbip-win2 {version}",
@@ -404,6 +405,7 @@
     "stOff": "connected but off",
     "stNone": "not connected",
     "cell": "{src} → {dst}: {state}",
+    "cellWithWarning": "{cell} · {warning}",
     "idle": "Hover a cell to see where the sound goes from and to.",
     "lgOn": "On (number = send gain in dB)",
     "lgOff": "Connected but off",

@@ -115,7 +115,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', placeIndicator))
   left: 8px;
   z-index: 1;
   width: 3px;
-  border-radius: 2px;
+  border-radius: var(--borderRadiusSmall);
   background: var(--accent);
   pointer-events: none;
   transition: transform var(--dur-slow) var(--ease-move);

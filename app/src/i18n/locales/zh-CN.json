@@ -193,10 +193,11 @@
     "appSourceNote": "应用源比直接落点多 30–60 ms 延迟，适合送往直播，不适合实时监听。独占播放的程序抓不到。",
     "returnDevice": "取回端设备",
     "insertSend": "声音经 {slot} 送给外部程序，请在外部程序中把输入设为这个设备。",
-    "usedAsReturn": "已用作 {node} 的取回端",
-    "usedByNode": "已被 {node} 使用"
+    "usedAsReturn": "{device}（已用作 {node} 的取回端）",
+    "usedByNode": "{device}（已被 {node} 使用）"
   },
   "dev": {
+    "slotNumber": "{direction} {number}",
     "sub": "Aemeath 提供 16 个固定的虚拟设备槽位。节点占用槽位时，设备自动挂上；没有节点占用时，设备会拔出，不会留在 Windows 的设备列表里。设备名固定，只在卸载 Aemeath 时删除。",
     "driver": "驱动",
     "driverVal": "usbip-win2 {version}",
@@ -409,6 +410,7 @@
     "stOff": "已连接但关闭",
     "stNone": "未连接",
     "cell": "{src} → {dst}：{state}",
+    "cellWithWarning": "{cell} · {warning}",
     "idle": "将鼠标移到格子上，查看声音从哪里送到哪里。",
     "lgOn": "开启（数字 = 发送增益 dB）",
     "lgOff": "已连接但关闭",

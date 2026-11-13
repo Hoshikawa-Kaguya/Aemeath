@@ -285,7 +285,7 @@ onUnmounted(() => {
   background: transparent;
   color: var(--text);
   font-family: 'Segoe Fluent Icons', 'Segoe MDL2 Assets';
-  font-size: 10px;
+  font-size: var(--fontSizeBase100);
 }
 
 .caption-buttons button:hover {

@@ -239,7 +239,7 @@ header .link {
   place-items: center;
   width: 32px;
   height: 32px;
-  border-radius: 6px;
+  border-radius: var(--borderRadiusLarge);
   background: var(--layer-alt);
   color: var(--text-2);
 }
