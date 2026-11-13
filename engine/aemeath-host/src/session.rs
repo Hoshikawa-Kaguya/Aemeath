@@ -22,7 +22,7 @@ use aemeath_protocol::message::{AppToEngine, EngineToApp, RejectReason};
 use aemeath_protocol::topology::{RouteTopology, TopologyError};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::windows::named_pipe::NamedPipeServer;
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio::sync::watch;
 
 use crate::stats::{STATS_PERIOD, StatsSampler};
@@ -107,6 +107,8 @@ enum Flow {
 struct Session {
     handshaken: bool,
     last_revision: Option<TopologyRevision>,
+    /// 在别的线程上做完的请求（设备探测）由这里送回会话循环再发出
+    late_replies: UnboundedSender<EngineToApp>,
 }
 
 /// 处理一个已连接的客户端，直到它断开、违反协议或者引擎要退出；返回值告诉调用方接下来等新连接还是退出。
@@ -115,9 +117,11 @@ pub async fn serve<F: Future<Output = ()>>(
     pipe: &mut NamedPipeServer,
     shutdown: &mut Pin<&mut F>,
 ) -> SessionEnd {
+    let (late_replies, mut late_reply_receiver) = unbounded_channel();
     let mut session = Session {
         handshaken: false,
         last_revision: None,
+        late_replies,
     };
     let mut decoder = FrameDecoder::new();
     let mut buffer = vec![0u8; READ_BUFFER];
@@ -146,6 +150,11 @@ pub async fn serve<F: Future<Output = ()>>(
                             return SessionEnd::Disconnected;
                         }
                     }
+                }
+            }
+            Some(reply) = late_reply_receiver.recv() => {
+                if send(pipe, &reply).await.is_err() {
+                    return SessionEnd::Disconnected;
                 }
             }
             _ = stats_tick.tick(), if session.handshaken => {
@@ -262,13 +271,15 @@ async fn handle(
             endpoint,
             direction,
         } => {
-            // 探测要做几十次 COM 调用（约 100 ms），放到阻塞线程上，不卡住管道和心跳
+            // 探测要做几十次 COM 调用（通常约 100 ms，慢的设备每次都可能切换格式），放到阻塞线程上，
+            // 也不在这里等结果：等的话这期间的心跳没人回，超过 3 秒主程序就判定引擎假死
             let probe = state.engine.device_prober();
-            let capabilities = tokio::task::spawn_blocking(move || probe.probe(&endpoint, direction))
-                .await
-                .ok()
-                .flatten();
-            EngineToApp::DeviceCapabilities { request, capabilities }
+            let replies = session.late_replies.clone();
+            tokio::task::spawn_blocking(move || {
+                let capabilities = probe.probe(&endpoint, direction);
+                let _ = replies.send(EngineToApp::DeviceCapabilities { request, capabilities });
+            });
+            return Flow::Continue;
         }
         AppToEngine::Redetect { request, node } => {
             state.redetect(node);
