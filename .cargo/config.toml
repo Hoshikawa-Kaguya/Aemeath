@@ -1,4 +1,5 @@
-# 按 x86-64-v3 生成代码（AVX2、FMA、BMI2 等）
+# 按 x86-64-v3 生成代码（AVX2、FMA、BMI2 等）；静态链接 C 运行库，守护进程和引擎在没装 VC++ 运行库的电脑上也能启动。
+# 主程序另由 tauri-build 改为动态链接 UCRT（它是 Windows 的一部分），VC 运行库仍是静态的。
 # 设置了 RUSTFLAGS 环境变量时（例如 cargo fuzz）这里不生效。
 [target.x86_64-pc-windows-msvc]
-rustflags = ["-C", "target-cpu=x86-64-v3"]
+rustflags = ["-C", "target-cpu=x86-64-v3", "-C", "target-feature=+crt-static"]
