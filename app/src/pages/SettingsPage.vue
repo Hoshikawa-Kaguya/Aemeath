@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { backend } from '@/api/backend'
 import { open } from '@tauri-apps/plugin-dialog'
@@ -92,6 +92,19 @@ const MAX_OVERLAY = 90
 const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp']
 
 const appearance = computed(() => store.state?.appearance)
+// 滑块和取色器用本地值：直接绑快照的话，每次重新渲染都会把拖到一半的值写回旧值
+const overlay = ref(0)
+const pickerColor = ref(DEFAULT_PICKER_COLOR)
+watch(
+  () => appearance.value?.overlayPercent,
+  (value) => (overlay.value = value ?? 0),
+  { immediate: true },
+)
+watch(
+  () => appearance.value?.accent,
+  (value) => (pickerColor.value = value ?? DEFAULT_PICKER_COLOR),
+  { immediate: true },
+)
 
 function updateAppearance(change: Partial<Omit<Appearance, 'backgroundPath'>>): void {
   const current = appearance.value
@@ -109,8 +122,8 @@ function setAccent(accent: string | null): void {
   updateAppearance({ accent })
 }
 
-function setOverlay(event: Event): void {
-  updateAppearance({ overlayPercent: Number((event.target as HTMLInputElement).value) })
+function setOverlay(): void {
+  updateAppearance({ overlayPercent: overlay.value })
 }
 
 async function chooseBackground(): Promise<void> {
@@ -280,11 +293,11 @@ function redetectAll(): void {
               @click="setAccent(color)"
             ></button>
             <input
+              v-model="pickerColor"
               class="color"
               type="color"
-              :value="appearance?.accent ?? DEFAULT_PICKER_COLOR"
               :aria-label="t('set.accentCustom')"
-              @change="setAccent(($event.target as HTMLInputElement).value)"
+              @change="setAccent(pickerColor)"
             />
             <fluent-button :disabled="appearance?.accent === null" @click="setAccent(null)">
               {{ t('set.accentReset') }}
@@ -314,11 +327,11 @@ function redetectAll(): void {
             <span class="caption">{{ t('set.overlaySub') }}</span>
           </div>
           <input
+            v-model.number="overlay"
             class="slider overlay-slider"
             type="range"
             min="0"
             :max="MAX_OVERLAY"
-            :value="appearance?.overlayPercent"
             :aria-label="t('set.overlay')"
             @change="setOverlay"
           />
