@@ -93,9 +93,15 @@ const rowGroupStart = computed(() => {
   return starts
 })
 
-// 节点或连线变化后重新取不能连线的格子
+// 拓扑（有哪些节点、哪些连线）变化后重新取不能连线的格子；增益、电平这类变化不影响判定
+const topologyKey = computed(() =>
+  JSON.stringify([
+    store.nodes.map((node) => [node.id, node.kind]),
+    store.routes.map((route) => [route.from, route.to]),
+  ]),
+)
 watch(
-  () => [store.nodes, store.routes],
+  topologyKey,
   () => {
     backend
       .matrixVerdicts()

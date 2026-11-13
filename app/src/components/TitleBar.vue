@@ -47,7 +47,7 @@ const slotsTip = computed(() => {
 })
 const rate = computed(() => t('chip.rate', { rate: formatKhz(store.state?.engine.sampleRate ?? 0) }))
 const clockName = computed(() => store.nodes.find((node) => node.id === store.state?.engine.clockMaster)?.name ?? null)
-const stats = computed(() => (engine.value === 'running' ? (store.state?.engine.stats ?? null) : null))
+const stats = computed(() => (engine.value === 'running' ? store.engineStats : null))
 const asrc = computed(() => stats.value?.asrc ?? null)
 const asrcTip = computed(() => {
   const rows = (asrc.value?.buffers ?? []).flatMap((buffer) => {

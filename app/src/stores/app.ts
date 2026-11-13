@@ -4,7 +4,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref, shallowRef, watch } from 'vue'
 import { backend, onStateChanged, onUpdateChanged } from '@/api/backend'
-import type { CommandError, HotkeyTargetView, NodeView, UpdateView, ViewState } from '@/api/types'
+import type { CommandError, EngineStats, HotkeyTargetView, NodeView, UpdateView, ViewState } from '@/api/types'
 import { i18n, localeFor, setLocale } from '@/i18n'
 import { applyAppearance } from '@/theme/theme'
 import { describeTarget } from '@/workbench/hotkeyLabels'
@@ -30,8 +30,19 @@ const RATE_SWITCH_TIMEOUT_MS = 10_000
 /** 共享模式下跟随引擎的采样率上限（SLOT_FORMAT_MAX_HZ） */
 export const SLOT_FORMAT_MAX_HZ = 384_000
 
+/** 快照去掉引擎统计后的内容，用来判断快照是否真的变了 */
+function withoutStats(state: ViewState): string {
+  return JSON.stringify({ ...state, engine: { ...state.engine, stats: null } })
+}
+
 export const useAppStore = defineStore('app', () => {
   const state = shallowRef<ViewState | null>(null)
+  /**
+   * 引擎统计每秒都变，单独放：只有统计变了时不替换 `state`，否则整个工作台每秒重渲染一遍。
+   * 读统计请用它，`state.engine.stats` 可能是旧的
+   */
+  const engineStats = shallowRef<EngineStats | null>(null)
+  let stateKey = ''
   const page = ref<Page>('workbench')
   const toast = ref<Toast | null>(null)
   const confirmation = shallowRef<Confirmation | null>(null)
@@ -85,6 +96,12 @@ export const useAppStore = defineStore('app', () => {
    * 免得每次推送都重绘；切换采样率期间，等跟随引擎的节点都读回新采样率再结束等待
    */
   function receive(next: ViewState): void {
+    engineStats.value = next.engine.stats
+    const key = withoutStats(next)
+    if (key === stateKey) {
+      return
+    }
+    stateKey = key
     const previous = state.value
     state.value = next
     if (previous === null) {
@@ -240,6 +257,7 @@ export const useAppStore = defineStore('app', () => {
 
   return {
     state,
+    engineStats,
     page,
     toast,
     nodes,
