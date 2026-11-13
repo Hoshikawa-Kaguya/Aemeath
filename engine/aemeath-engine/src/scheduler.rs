@@ -36,8 +36,23 @@ const LOOP_GAP_WARNING_HNS: i64 = 30_000;
 const MAX_SLEEP_HNS: i64 = 5_000;
 /// 混音落后超过这么多微帧（10 ms）时不再逐块追赶，直接跳到当前时刻
 const MAX_CATCH_UP_MICROFRAMES: i64 = 80;
-/// 外部设备端口的问题最多每隔这么久记一次日志（100 ns 单位，5 s）
-const PORT_ISSUE_LOG_INTERVAL_HNS: i64 = 50_000_000;
+/// 每轮最多处理的服务端事件数。正常每个槽位每 10 ms 约一个 URB，16 个槽位每轮只有几条；
+/// 上限防止对端狂发 URB 或 UNLINK 时把调度线程一直占在这里，混音块照常运行
+const MAX_SERVER_EVENTS_PER_LOOP: usize = 64;
+/// 外部设备端口和调度线程自己的问题最多每隔这么久记一次日志（100 ns 单位，5 s）
+const ISSUE_LOG_INTERVAL_HNS: i64 = 50_000_000;
+
+/// 调度线程自上次记录以来的问题：只计数，由 [`Scheduler::log_issues`] 限频记录。过载时逐条记日志只会更忙。
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct LoopIssues {
+    delayed_loops: u32,
+    max_gap_us: i64,
+    late_urbs: u32,
+    max_late_us: i64,
+    max_queued_us: i64,
+    skips: u32,
+    max_behind_microframes: i64,
+}
 
 /// 调度线程单轮耗时的峰值（µs）：调度线程每轮写入，控制线程每秒取走。
 #[derive(Debug, Default)]
@@ -89,7 +104,8 @@ pub struct Scheduler {
     block_pacer: CapturePacer,
     /// 外部设备端口自上次记录以来的问题
     port_issues: PortIssues,
-    last_port_log: i64,
+    loop_issues: LoopIssues,
+    last_issue_log: i64,
     resamplers: ResamplerWorker,
     load: Arc<RealtimeLoad>,
 }
@@ -118,7 +134,8 @@ impl Scheduler {
             next_block: None,
             block_pacer: CapturePacer::default(),
             port_issues: PortIssues::default(),
-            last_port_log: 0,
+            loop_issues: LoopIssues::default(),
+            last_issue_log: 0,
             resamplers,
             load,
         }
@@ -144,14 +161,14 @@ impl Scheduler {
             self.install_built_resamplers();
             let now = now_hns();
             if now - last_iteration > LOOP_GAP_WARNING_HNS {
-                tracing::warn!(
-                    gap_us = (now - last_iteration) / HNS_PER_MICROSECOND,
-                    "scheduler loop was delayed"
-                );
+                let issues = &mut self.loop_issues;
+                issues.delayed_loops += 1;
+                issues.max_gap_us = issues.max_gap_us.max((now - last_iteration) / HNS_PER_MICROSECOND);
             }
             last_iteration = now;
             self.run_blocks(self.timeline.microframe_at(now));
             self.complete_due(now);
+            self.log_issues();
             let done = now_hns();
             self.load.record(done - now);
             self.sleep(timer.as_ref(), done);
@@ -200,9 +217,13 @@ impl Scheduler {
         }
     }
 
-    /// 取完 USB/IP 服务端积压的事件：新导入的连接、提交和取消的 URB、断开的连接。不阻塞。
+    /// 处理 USB/IP 服务端积压的事件：新导入的连接、提交和取消的 URB、断开的连接。不阻塞；
+    /// 每轮最多处理 [`MAX_SERVER_EVENTS_PER_LOOP`] 条，剩下的留在通道里下一轮再处理。
     fn handle_server_events(&mut self) {
-        while let Ok(event) = self.server_events.try_recv() {
+        for _ in 0..MAX_SERVER_EVENTS_PER_LOOP {
+            let Ok(event) = self.server_events.try_recv() else {
+                break;
+            };
             match event {
                 ServerEvent::Imported {
                     slot,
@@ -265,15 +286,21 @@ impl Scheduler {
             return;
         };
         let now = now_hns();
-        let reservation = stream.reserve(&submit, self.timeline.microframe_at(now));
+        let now_microframe = self.timeline.microframe_at(now);
+        let reservation = stream.reserve(&submit, now_microframe);
+        if reservation.is_too_far_ahead(now_microframe) {
+            let slot = stream.slot();
+            tracing::warn!(%slot, ahead = reservation.end - now_microframe, "isochronous URB queued too far ahead, dropping the connection");
+            stream.abandon();
+            self.drop_connection(connection, slot);
+            return;
+        }
         if let Some(late_by) = reservation.late_by {
             // 区分是主机提交得晚，还是 URB 在读线程到调度线程之间排队太久
-            tracing::warn!(
-                slot = %stream.slot(),
-                late_us = late_by * MICROSECONDS_PER_MICROFRAME,
-                queued_us = (now - received_hns) / HNS_PER_MICROSECOND,
-                "isochronous URB arrived late, restarting the slot timeline"
-            );
+            let issues = &mut self.loop_issues;
+            issues.late_urbs += 1;
+            issues.max_late_us = issues.max_late_us.max(late_by * MICROSECONDS_PER_MICROFRAME);
+            issues.max_queued_us = issues.max_queued_us.max((now - received_hns) / HNS_PER_MICROSECOND);
         }
         let (start, end) = (reservation.start, reservation.end);
         let deadline = self.timeline.time_of(end);
@@ -293,7 +320,9 @@ impl Scheduler {
         };
         let start = self.next_block.get_or_insert(now_microframe);
         if now_microframe - *start > MAX_CATCH_UP_MICROFRAMES {
-            tracing::warn!(behind = now_microframe - *start, "mixer fell behind, skipping ahead");
+            let issues = &mut self.loop_issues;
+            issues.skips += 1;
+            issues.max_behind_microframes = issues.max_behind_microframes.max(now_microframe - *start);
             *start = now_microframe - MICROFRAMES_PER_MS;
         }
         while *start + MICROFRAMES_PER_MS <= now_microframe {
@@ -331,26 +360,50 @@ impl Scheduler {
             *start = end;
         }
         debug_assert_eq!(STEREO, usize::from(SLOT_CHANNELS));
-        self.log_port_issues();
     }
 
-    /// 外部设备端口出了问题时记录日志（限频；正常时什么也不做）。
-    fn log_port_issues(&mut self) {
-        if self.port_issues == PortIssues::default() {
+    /// 外部设备端口或调度线程出了问题时记录日志（限频，计数是上次记录以来的；正常时什么也不做）。
+    fn log_issues(&mut self) {
+        if self.port_issues == PortIssues::default() && self.loop_issues == LoopIssues::default() {
             return;
         }
         let now = now_hns();
-        if now - self.last_port_log < PORT_ISSUE_LOG_INTERVAL_HNS {
+        if now - self.last_issue_log < ISSUE_LOG_INTERVAL_HNS {
             return;
         }
-        let issues = std::mem::take(&mut self.port_issues);
-        tracing::warn!(
-            input_underflows = issues.underflows,
-            input_skipped_samples = issues.skipped_samples,
-            output_dropped_samples = issues.dropped_samples,
-            "external device ports had problems"
-        );
-        self.last_port_log = now;
+        let ports = std::mem::take(&mut self.port_issues);
+        if ports != PortIssues::default() {
+            tracing::warn!(
+                input_underflows = ports.underflows,
+                input_skipped_samples = ports.skipped_samples,
+                output_dropped_samples = ports.dropped_samples,
+                "external device ports had problems"
+            );
+        }
+        let issues = std::mem::take(&mut self.loop_issues);
+        if issues.delayed_loops > 0 {
+            tracing::warn!(
+                count = issues.delayed_loops,
+                max_gap_us = issues.max_gap_us,
+                "scheduler loop was delayed"
+            );
+        }
+        if issues.late_urbs > 0 {
+            tracing::warn!(
+                count = issues.late_urbs,
+                max_late_us = issues.max_late_us,
+                max_queued_us = issues.max_queued_us,
+                "isochronous URB arrived late, restarting the slot timeline"
+            );
+        }
+        if issues.skips > 0 {
+            tracing::warn!(
+                count = issues.skips,
+                max_behind = issues.max_behind_microframes,
+                "mixer fell behind, skipping ahead"
+            );
+        }
+        self.last_issue_log = now;
     }
 
     /// 应答所有已到期的 URB。录音方向的数据到这时才从缓冲里取，尽量用上最新的混音结果。

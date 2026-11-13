@@ -67,12 +67,17 @@ impl ConnectionWriter {
         match self.queue.try_send(Outgoing { bytes, submit }) {
             Ok(()) => Ok(()),
             Err(TrySendError::Full(_)) => {
-                self.abandoned.store(true, Ordering::Relaxed);
-                let _ = self.socket.shutdown(Shutdown::Both);
+                self.abandon();
                 Err(io::ErrorKind::WouldBlock.into())
             }
             Err(TrySendError::Disconnected(_)) => Err(io::ErrorKind::BrokenPipe.into()),
         }
+    }
+
+    /// 放弃这条连接并关闭它，读线程随后退出。
+    pub fn abandon(&self) {
+        self.abandoned.store(true, Ordering::Relaxed);
+        let _ = self.socket.shutdown(Shutdown::Both);
     }
 }
 

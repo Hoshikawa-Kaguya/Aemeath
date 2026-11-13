@@ -39,6 +39,7 @@ const OP_PHASE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Windows 上 `shutdown` 不保证唤醒另一个句柄上阻塞中的 `recv`，没有音频流量的连接可能一直不退出。
 const EXPORT_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 const READ_CHUNK: usize = 64 * 1024;
+const ACCEPT_RETRY_DELAY: Duration = Duration::from_millis(10);
 /// 输入槽位（主机播放）的等时 OUT 端点号与输出槽位（主机录音）的等时 IN 端点号
 const RENDER_ENDPOINT_NUMBER: u8 = 1;
 const CAPTURE_ENDPOINT_NUMBER: u8 = 2;
@@ -172,6 +173,8 @@ fn accept_loop(listener: &TcpListener, shared: &Arc<Shared>) {
             Ok(stream) => stream,
             Err(error) => {
                 tracing::warn!(%error, "accept failed");
+                // 持续出错（例如句柄耗尽）时不空转刷日志
+                thread::sleep(ACCEPT_RETRY_DELAY);
                 continue;
             }
         };
@@ -263,10 +266,11 @@ fn admit(
     let mut writer = stream;
     match decision {
         Ok(identity) => {
-            writer.write_all(&wire::encode_import_reply(
-                OpStatus::Ok,
-                Some(&device_record(&identity)),
-            ))?;
+            let reply = wire::encode_import_reply(OpStatus::Ok, Some(&device_record(&identity)));
+            if let Err(error) = writer.write_all(&reply) {
+                shared.state().imported.remove(&identity.slot);
+                return Err(error);
+            }
             tracing::info!(slot = %identity.slot, connection = connection.0, "slot imported");
             Ok(Some(identity))
         }
@@ -471,6 +475,23 @@ mod tests {
 
     fn next_event(receiver: &Receiver<ServerEvent>) -> ServerEvent {
         receiver.recv_timeout(EVENT_TIMEOUT).unwrap()
+    }
+
+    #[test]
+    fn a_failed_import_reply_frees_the_slot() {
+        let (server, _events) = start();
+        server.set_exported(BTreeSet::from([slot(SlotDirection::In, 1)]));
+
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let _peer = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (stream, _) = listener.accept().unwrap();
+        stream.shutdown(Shutdown::Write).unwrap();
+        let mut raw = [0u8; BUSID_LEN];
+        raw[..3].copy_from_slice(b"1-1");
+        assert!(admit(&stream, &raw, ConnectionId(u64::MAX), &server.shared).is_err());
+
+        let (status, _retry) = request_import(&server, "1-1");
+        assert_eq!(status, 0, "the slot is not left busy");
     }
 
     #[test]

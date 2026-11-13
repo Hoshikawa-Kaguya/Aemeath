@@ -33,6 +33,9 @@ pub const RENDER_PRIME_MICROFRAMES: i64 = 8;
 const LATE_TOLERANCE_MICROFRAMES: i64 = RENDER_PRIME_MICROFRAMES;
 /// 缓冲容量：最高采样率下 100 ms
 const FIFO_CAPACITY_FRAMES: usize = 76_800;
+/// URB 最远可以排到当前时刻之后多久（200 ms）。正常约 20 ms（提前约 10 ms 交来、每个 10 ms），
+/// 输入方向超过缓冲容量（100 ms）的数据本来就放不下
+const MAX_AHEAD_MICROFRAMES: i64 = 1600;
 /// 待放出的包数上限：每个 URB 80 个包，留出几个 URB 的余量
 const MAX_PENDING_PACKETS: usize = 1024;
 /// 复用的包描述缓冲的初始容量：一个 URB 通常 80 个包
@@ -128,6 +131,13 @@ pub struct Reservation {
     pub late_by: Option<i64>,
 }
 
+impl Reservation {
+    /// 这个 URB 结束得比当前时刻晚太多：不是正常的驱动行为，数据要一直留到那时。
+    pub fn is_too_far_ahead(&self, now_microframe: i64) -> bool {
+        self.end - now_microframe > MAX_AHEAD_MICROFRAMES
+    }
+}
+
 /// 一个槽位流的问题计数，由调度线程定期汇总进日志。
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SlotStats {
@@ -203,6 +213,11 @@ impl SlotStream {
     /// 把应答交给写线程，不阻塞。`submit` 是它对应的 URB，由写线程释放。
     pub fn send(&self, bytes: Vec<u8>, submit: Option<Submit>) -> io::Result<()> {
         self.writer.send(bytes, submit)
+    }
+
+    /// 断开这条连接：读线程随后退出，服务端释放槽位。
+    pub fn abandon(&self) {
+        self.writer.abandon();
     }
 
     /// 流开始或停止。返回要交给辅助线程的重采样器工作。
@@ -767,6 +782,25 @@ mod tests {
         assert_eq!((first.start, first.end), (8, 88));
         let second = stream.reserve(&submit(), 10);
         assert_eq!((second.start, second.end, second.late_by), (88, 168, None));
+    }
+
+    #[test]
+    fn urbs_queued_too_far_ahead_are_flagged() {
+        let mut stream = stream(SlotDirection::In);
+        // 正常节奏：每 10 ms 一个，提前约一个 URB
+        for now in 0..20 {
+            assert!(!stream.reserve(&submit(), now * 80).is_too_far_ahead(now * 80));
+        }
+        // 一口气交来几十个，排到 200 ms 以后
+        let flooded = (0..30).any(|_| stream.reserve(&submit(), 1600).is_too_far_ahead(1600));
+        assert!(flooded);
+
+        let mut stream = self::stream(SlotDirection::In);
+        let slow = Submit {
+            interval: 100,
+            ..submit()
+        };
+        assert!(stream.reserve(&slow, 0).is_too_far_ahead(0));
     }
 
     #[test]
