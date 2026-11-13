@@ -49,17 +49,14 @@ impl FrameFifo {
         let incoming = &interleaved[skip * STEREO..frames * STEREO];
         let incoming_frames = frames - skip;
         let overflow = (self.len_frames + incoming_frames).saturating_sub(self.capacity_frames);
-        if overflow > 0 {
-            self.read = (self.read + overflow) % self.capacity_frames;
-            self.len_frames -= overflow;
-        }
+        self.skip(overflow);
 
-        let mut write = (self.read + self.len_frames) % self.capacity_frames;
-        for frame in incoming.as_chunks::<STEREO>().0 {
-            let start = write * STEREO;
-            self.samples[start..start + STEREO].copy_from_slice(frame);
-            write = (write + 1) % self.capacity_frames;
-        }
+        // 按回绕点分两段整块拷贝，比逐帧取模快一个数量级（调度线程上每轮每条流都要走）
+        let write = (self.read + self.len_frames) % self.capacity_frames;
+        let first = incoming_frames.min(self.capacity_frames - write);
+        let (head, tail) = incoming.split_at(first * STEREO);
+        self.samples[write * STEREO..(write + first) * STEREO].copy_from_slice(head);
+        self.samples[..tail.len()].copy_from_slice(tail);
         self.len_frames += incoming_frames;
         skip + overflow
     }
@@ -78,12 +75,14 @@ impl FrameFifo {
     pub fn pop_into(&mut self, out: &mut [f32]) -> usize {
         let wanted = out.len() / STEREO;
         let available = wanted.min(self.len_frames);
-        for frame in out.as_chunks_mut::<STEREO>().0.iter_mut().take(available) {
-            let start = self.read * STEREO;
-            frame.copy_from_slice(&self.samples[start..start + STEREO]);
-            self.read = (self.read + 1) % self.capacity_frames;
+        if available > 0 {
+            let first = available.min(self.capacity_frames - self.read);
+            let (head, tail) = out[..available * STEREO].split_at_mut(first * STEREO);
+            head.copy_from_slice(&self.samples[self.read * STEREO..(self.read + first) * STEREO]);
+            tail.copy_from_slice(&self.samples[..tail.len()]);
+            self.read = (self.read + available) % self.capacity_frames;
+            self.len_frames -= available;
         }
-        self.len_frames -= available;
         out[available * STEREO..].fill(0.0);
         available
     }
@@ -129,6 +128,17 @@ mod tests {
         assert_eq!(out, frames(&[2.0, 3.0, 4.0]));
         assert_eq!(fifo.push(&frames(&[5.0, 6.0, 7.0, 8.0, 9.0])), 2);
         assert_eq!(fifo.len(), 3);
+    }
+
+    #[test]
+    fn a_write_larger_than_the_capacity_keeps_the_newest_frames_in_order() {
+        let mut fifo = FrameFifo::with_capacity(4);
+        fifo.push(&frames(&[1.0, 2.0, 3.0]));
+        fifo.pop_into(&mut [0.0; 4]);
+        assert_eq!(fifo.push(&frames(&[4.0, 5.0, 6.0, 7.0, 8.0, 9.0])), 3);
+        let mut out = vec![0.0; 8];
+        assert_eq!(fifo.pop_into(&mut out), 4);
+        assert_eq!(out, frames(&[6.0, 7.0, 8.0, 9.0]));
     }
 
     #[test]
