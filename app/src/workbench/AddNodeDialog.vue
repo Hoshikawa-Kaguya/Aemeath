@@ -56,10 +56,8 @@ const KINDS: KindChoice[] = [
   'bus',
   'recorder',
 ]
-const WIDE: KindChoice[] = []
 const NAME_MAX = 64
 
-const emit = defineEmits<{ added: [] }>()
 const { t } = useI18n()
 const store = useAppStore()
 
@@ -237,7 +235,6 @@ async function confirm(): Promise<void> {
   const slot = hasSlot.value ? slotSettings.value : null
   if (await store.run(() => backend.addNode(newKind, name.value.trim(), position.x, position.y, settings, slot))) {
     dialog.value?.hide()
-    emit('added')
   }
 }
 
@@ -250,7 +247,7 @@ defineExpose({ open })
       <h2 slot="title" class="title">{{ t('add.title') }}</h2>
       <div class="form">
         <div class="kinds" role="radiogroup" :aria-label="t('add.kind')">
-          <label v-for="choice in KINDS" :key="choice" class="kind" :class="{ wide: WIDE.includes(choice) }">
+          <label v-for="choice in KINDS" :key="choice" class="kind">
             <input v-model="kind" type="radio" name="kind" :value="choice" />
             <span class="choice">
               <b>{{ t(`kind.${choice}`) }}</b>
@@ -349,10 +346,6 @@ defineExpose({ open })
   border: 1px solid var(--stroke-strong);
   background: var(--layer);
   cursor: pointer;
-}
-
-.kind.wide {
-  grid-column: 1 / -1;
 }
 
 .kind:hover {

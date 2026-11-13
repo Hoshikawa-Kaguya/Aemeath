@@ -85,14 +85,6 @@
         <circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" />
         <circle cx="18" cy="12" r="1.4" fill="currentColor" stroke="none" />
       </symbol>
-      <symbol id="i-grip" viewBox="0 0 10 14">
-        <circle cx="3" cy="3" r="1" fill="currentColor" stroke="none" />
-        <circle cx="7" cy="3" r="1" fill="currentColor" stroke="none" />
-        <circle cx="3" cy="7" r="1" fill="currentColor" stroke="none" />
-        <circle cx="7" cy="7" r="1" fill="currentColor" stroke="none" />
-        <circle cx="3" cy="11" r="1" fill="currentColor" stroke="none" />
-        <circle cx="7" cy="11" r="1" fill="currentColor" stroke="none" />
-      </symbol>
     </defs>
   </svg>
 </template>

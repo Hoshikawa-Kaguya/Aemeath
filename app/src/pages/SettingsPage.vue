@@ -6,6 +6,7 @@ import { open } from '@tauri-apps/plugin-dialog'
 import type { Appearance, LanguagePreference, Resampler, ThemeMode } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
 import { formatKhz } from '@/format/format'
+import { availableLocales } from '@/i18n'
 import { useAppStore } from '@/stores/app'
 import ResamplerField from '@/workbench/ResamplerField.vue'
 
@@ -258,8 +259,9 @@ function redetectAll(): void {
           <select class="select" :value="selected" :aria-label="t('set.lang')" @change="choose">
             <button><selectedcontent></selectedcontent></button>
             <option :value="SYSTEM">{{ t('set.langSys') }}</option>
-            <option value="zh-CN">{{ t('set.langZh') }}</option>
-            <option value="en">{{ t('set.langEn') }}</option>
+            <option v-for="locale in availableLocales" :key="locale" :value="locale">
+              {{ t('set.langName', {}, { locale }) }}
+            </option>
           </select>
         </div>
         <div class="set-row">

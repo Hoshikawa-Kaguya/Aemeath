@@ -166,7 +166,6 @@ export interface Notice {
     | { type: 'deviceReplaced'; node: string; device: string }
     | { type: 'landingRestored'; app: string; landing: string }
     | { type: 'recordingFailed'; node: string; reason: RecordingFailure }
-    | { type: 'recordingFailed'; node: string; reason: RecordingFailure }
 }
 
 export interface ModifiersView {
