@@ -11,10 +11,14 @@ use std::hint;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering, fence};
 
+use aemeath_dsp::resample::MAX_CORRECTION_PPM;
+
 /// 高速 USB 微帧的标称长度，单位 100 ns
 pub const MICROFRAME_HNS: f64 = 1_250.0;
 /// 每毫秒的微帧数
 pub const MICROFRAMES_PER_MS: i64 = 8;
+/// 速率偏离 QPC 的上限：外部设备的 ASRC 最多只能校正这么多
+const MAX_RATE_DEVIATION: f64 = MAX_CORRECTION_PPM * 1e-6;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Segment {
@@ -101,7 +105,13 @@ impl Timeline {
 
 impl TimelineWriter {
     /// 设定速率因子（1.0 与 QPC 同速；1 + 50e-6 表示快 50 ppm），在 `now_hns` 处保持连续。
+    ///
+    /// 限制在其他设备的 ASRC 能跟上的范围内；非有限值忽略。
     pub fn set_rate(&self, factor: f64, now_hns: i64) {
+        if !factor.is_finite() {
+            return;
+        }
+        let factor = factor.clamp(1.0 - MAX_RATE_DEVIATION, 1.0 + MAX_RATE_DEVIATION);
         let timeline = &self.timeline;
         let current = timeline.load();
         let microframe_now =
@@ -147,6 +157,21 @@ mod tests {
         let one_second_later = timeline.microframe_at(switch + 10_000_000);
         assert_eq!(one_second_later, 64 + 8_000);
         assert!(timeline.time_of(64 + 8_000) < switch + 10_000_000);
+    }
+
+    #[test]
+    fn the_rate_stays_within_what_the_asrc_can_follow() {
+        let (timeline, writer) = Timeline::new(START);
+        writer.set_rate(1.05, START);
+        assert!((timeline.rate_ppm() - 1000.0).abs() < 1e-3, "{}", timeline.rate_ppm());
+        writer.set_rate(0.0, START);
+        assert!((timeline.rate_ppm() + 1000.0).abs() < 1e-3, "{}", timeline.rate_ppm());
+        writer.set_rate(f64::NAN, START);
+        writer.set_rate(f64::INFINITY, START);
+        assert!(
+            (timeline.rate_ppm() + 1000.0).abs() < 1e-3,
+            "non-finite rates are ignored"
+        );
     }
 
     #[test]

@@ -85,9 +85,9 @@ fn run(
 ) {
     let _priority = aemeath_sys::thread_priority::promote_current_thread()
         .inspect_err(|error| tracing::warn!(%error, "cannot raise the output thread priority"));
-    device::run_with_retry(&config.request(IoDirection::Output), stop, context, |stream| {
+    device::run_with_retry(&config.request(IoDirection::Output), stop, context, |stream, online| {
         let _active = ActiveGuard::set(active);
-        match run_session(config, stream, &mut consumer, stop, clock, level) {
+        match run_session(config, stream, online, &mut consumer, stop, clock, level) {
             Ok(end) => end,
             Err(error) => SessionEnd::failed(&error),
         }
@@ -97,6 +97,7 @@ fn run(
 fn run_session(
     config: &BridgeConfig,
     stream: &OpenStream,
+    online: &dyn Fn(),
     consumer: &mut Consumer<f32>,
     stop: &AtomicBool,
     clock: &ClockTap,
@@ -154,7 +155,7 @@ fn run_session(
             config.engine_rate,
         ) + frames_to_ms(queue.len() / STEREO, device_rate)
     };
-    let mut watch = EventWatch::new();
+    let mut watch = EventWatch::new(online);
     loop {
         if stop.load(Ordering::Relaxed) || consumer.is_abandoned() {
             let _ = stream.client.stop_stream();

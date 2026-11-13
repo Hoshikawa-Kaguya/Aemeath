@@ -28,6 +28,8 @@ const MIN_SAMPLES: usize = 5;
 pub const KP_PER_SECOND: f64 = 0.1;
 /// 相位校正量上限（相对速率）
 const MAX_PHASE_CORRECTION: f64 = 100e-6;
+/// 相位误差超过这么多秒时不再慢慢回拉，重新建立基准
+const MAX_PHASE_ERROR_SECONDS: f64 = 0.1;
 /// 新会话开始后跳过这么多个读数再建立基准，避开开流时的抖动
 const WARM_UP_READINGS: u32 = 2;
 /// 检查新读数和停止信号的间隔
@@ -148,6 +150,12 @@ fn update(lock: &mut Lock, reading: ClockReading, target: &mut dyn ClockTarget) 
     let rate = slope(&lock.window);
     let desired = origin_microframe + master_seconds * MICROFRAMES_PER_SECOND;
     let phase_error_seconds = (target.position(reading.qpc) - desired) / MICROFRAMES_PER_SECOND;
+    if phase_error_seconds.abs() > MAX_PHASE_ERROR_SECONDS {
+        // 读数停走或跳变过（短停顿、睡眠唤醒）：旧窗口会把斜率带偏几十秒，从下一个读数重新建立基准
+        lock.origin = None;
+        lock.window.clear();
+        return None;
+    }
     let correction = (-KP_PER_SECOND * phase_error_seconds).clamp(-MAX_PHASE_CORRECTION, MAX_PHASE_CORRECTION);
     let factor = rate * (1.0 + correction);
     target.set_rate(factor, aemeath_sys::clock::now_hns());
@@ -220,5 +228,28 @@ mod tests {
         }
         let (rate, _, _) = applied.unwrap();
         assert!(((rate - 1.0) * PPM - 40.0).abs() < 0.5, "{rate}");
+    }
+
+    #[test]
+    fn a_stalled_master_starts_a_new_baseline() {
+        const FREQUENCY: u64 = 10_000_000;
+        let master_rate = 1.0 + 40e-6;
+        let mut lock = Lock::new(1);
+        let mut timeline = FakeTimeline { factor: 1.0 };
+        // 第 10 秒起主时钟的读数停走过半秒
+        let reading = |second: i64| {
+            let master_seconds = second as f64 - if second >= 10 { 0.5 } else { 0.0 };
+            ClockReading {
+                session: 1,
+                position: (master_seconds * FREQUENCY as f64 * master_rate) as u64,
+                frequency: FREQUENCY,
+                qpc: second * HNS_PER_SECOND as i64,
+            }
+        };
+        for second in 0..40_i64 {
+            if let Some((rate, _, _)) = update(&mut lock, reading(second), &mut timeline) {
+                assert!(((rate - 1.0) * PPM - 40.0).abs() < 0.5, "second {second}: {rate}");
+            }
+        }
     }
 }

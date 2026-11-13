@@ -7,6 +7,7 @@
 //!
 //! 两种方式都不使用 `AUTOCONVERTPCM`，采样率转换只在 Aemeath 内部完成。
 
+use std::cell::Cell;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -72,7 +73,8 @@ impl OpenStream {
     }
 }
 
-/// 设备帧（任意样本格式和声道数）与立体声 f32 之间的转换：单声道复制到左右两路，多声道只取前两路、写出时其余补 0。
+/// 设备帧（任意样本格式和声道数）与立体声 f32 之间的转换：单声道读入时复制到左右两路、写出时取左右的平均；
+/// 多声道只取前两路、写出时其余补 0。
 pub struct FrameCodec {
     sample_format: SampleFormat,
     channels: usize,
@@ -101,6 +103,10 @@ impl FrameCodec {
     pub fn write_stereo(&mut self, stereo: &[f32], out: &mut Vec<u8>) {
         self.samples.clear();
         for frame in stereo.as_chunks::<STEREO>().0 {
+            if self.channels == 1 {
+                self.samples.push((frame[0] + frame[1]) * 0.5);
+                continue;
+            }
             for channel in 0..self.channels {
                 self.samples.push(frame.get(channel).copied().unwrap_or(0.0));
             }
@@ -129,14 +135,17 @@ pub enum WaitError {
 ///
 /// 设备被拔出时，WASAPI 不一定再触发事件；只等事件的话，IO 线程可能一直卡住，既不报告离线也不恢复。
 /// 所以超过 [`PROBE_AFTER`] 没有事件时查询一次设备，超过 [`NO_SIGNAL_AFTER`] 时放弃这次会话。
-pub struct EventWatch {
+pub struct EventWatch<'a> {
     last_event: Instant,
+    online: &'a dyn Fn(),
 }
 
-impl EventWatch {
-    pub fn new() -> Self {
+impl<'a> EventWatch<'a> {
+    /// `online` 在每个设备事件时调用（由 [`run_with_retry`] 提供，只在第一次时报告在线）。
+    pub fn new(online: &'a dyn Fn()) -> Self {
         Self {
             last_event: Instant::now(),
+            online,
         }
     }
 
@@ -145,6 +154,7 @@ impl EventWatch {
         match stream.event.wait_for_event(EVENT_WAIT_MS) {
             Ok(()) => {
                 self.last_event = Instant::now();
+                (self.online)();
                 Ok(Waited::Event)
             }
             Err(WasapiError::EventTimeout) => {
@@ -160,12 +170,6 @@ impl EventWatch {
             }
             Err(error) => Err(WaitError::Device(error)),
         }
-    }
-}
-
-impl Default for EventWatch {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -387,7 +391,7 @@ pub fn run_with_retry(
     request: &DeviceRequest,
     stop: &AtomicBool,
     context: &IoContext,
-    mut session: impl FnMut(&OpenStream) -> SessionEnd,
+    mut session: impl FnMut(&OpenStream, &dyn Fn()) -> SessionEnd,
 ) {
     if wasapi::initialize_mta().is_err() {
         tracing::error!(endpoint = %request.endpoint.0, "cannot initialize COM for the device thread");
@@ -407,23 +411,34 @@ pub fn run_with_retry(
     while !stop.load(Ordering::Relaxed) {
         let reason = match open(request, &context.capabilities) {
             Ok(stream) => {
-                tracing::info!(
-                    endpoint = %endpoint.0,
-                    ?direction,
-                    format = ?stream.format,
-                    exclusive = stream.exclusive,
-                    "device opened"
-                );
-                report(EndpointStatus::Online { format: stream.format });
-                let end = session(&stream);
+                // 收到第一个设备事件才算在线：能打开但不出数据的设备不会在在线和无信号之间来回跳
+                let went_online = Cell::new(false);
+                let online = || {
+                    if !went_online.replace(true) {
+                        tracing::info!(
+                            endpoint = %endpoint.0,
+                            ?direction,
+                            format = ?stream.format,
+                            exclusive = stream.exclusive,
+                            "device opened"
+                        );
+                        report(EndpointStatus::Online { format: stream.format });
+                    }
+                };
+                let end = session(&stream, &online);
                 context.capabilities.closed(endpoint, direction);
                 match end {
                     SessionEnd::Finished => return,
                     SessionEnd::Failed { reason, message } => {
-                        tracing::warn!(endpoint = %endpoint.0, ?direction, %message, "device lost");
-                        report(EndpointStatus::Offline { reason });
+                        let (changed, new_outage) = after_failed_session(went_online.get(), reason, last_offline);
+                        if changed {
+                            tracing::warn!(endpoint = %endpoint.0, ?direction, %message, "device lost");
+                            report(EndpointStatus::Offline { reason });
+                        }
+                        if new_outage {
+                            offline_since = Instant::now();
+                        }
                         last_offline = Some(reason);
-                        offline_since = Instant::now();
                         reason
                     }
                 }
@@ -456,6 +471,16 @@ pub fn run_with_retry(
     }
 }
 
+/// 一次会话以离线结束后：(状态是否变了、是否重新计离线时长)。
+///
+/// 从没收到过设备事件的会话不算恢复过：原因和上次相同时不再报告，离线时长接着算，重试才能放慢。
+fn after_failed_session(went_online: bool, reason: OfflineReason, last_offline: Option<OfflineReason>) -> (bool, bool) {
+    (
+        went_online || last_offline != Some(reason),
+        went_online || last_offline.is_none(),
+    )
+}
+
 /// 线程间共享的停止信号。
 pub fn stop_flag() -> Arc<AtomicBool> {
     Arc::new(AtomicBool::new(false))
@@ -475,6 +500,35 @@ mod tests {
     }
 
     #[test]
+    fn a_device_that_never_delivers_stays_offline_quietly() {
+        let no_signal = OfflineReason::NoSignal;
+        assert_eq!(
+            after_failed_session(true, no_signal, None),
+            (true, true),
+            "lost after running"
+        );
+        assert_eq!(
+            after_failed_session(false, no_signal, None),
+            (true, true),
+            "first outage"
+        );
+        assert_eq!(
+            after_failed_session(false, no_signal, Some(no_signal)),
+            (false, false),
+            "still silent: nothing new, keep counting"
+        );
+        assert_eq!(
+            after_failed_session(false, no_signal, Some(OfflineReason::InUseByOtherApp)),
+            (true, false)
+        );
+        assert_eq!(
+            after_failed_session(true, no_signal, Some(no_signal)),
+            (true, true),
+            "it recovered in between"
+        );
+    }
+
+    #[test]
     fn mono_is_copied_to_both_channels() {
         let mut mono = codec(SampleFormat::Float32, 1);
         let mut bytes = Vec::new();
@@ -482,6 +536,16 @@ mod tests {
         let mut stereo = Vec::new();
         mono.append_stereo(&bytes, &mut stereo);
         assert_eq!(stereo, vec![0.5, 0.5, -0.25, -0.25]);
+    }
+
+    #[test]
+    fn mono_output_mixes_both_channels() {
+        let mut mono = codec(SampleFormat::Float32, 1);
+        let mut bytes = Vec::new();
+        mono.write_stereo(&[0.5, 0.25, -1.0, 0.0], &mut bytes);
+        let mut decoded = Vec::new();
+        codec::decode(SampleFormat::Float32, &bytes, &mut decoded);
+        assert_eq!(decoded, vec![0.375, -0.5]);
     }
 
     #[test]

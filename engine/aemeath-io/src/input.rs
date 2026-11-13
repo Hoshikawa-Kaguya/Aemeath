@@ -46,7 +46,7 @@ fn run(
         &config.request(IoDirection::Input),
         stop,
         context,
-        |stream| match run_session(config, stream, &mut producer, stop, clock, level) {
+        |stream, online| match run_session(config, stream, online, &mut producer, stop, clock, level) {
             Ok(end) => end,
             Err(error) => SessionEnd::failed(&error),
         },
@@ -56,6 +56,7 @@ fn run(
 fn run_session(
     config: &BridgeConfig,
     stream: &OpenStream,
+    online: &dyn Fn(),
     producer: &mut Producer<f32>,
     stop: &AtomicBool,
     clock: &ClockTap,
@@ -73,7 +74,7 @@ fn run_session(
     )?;
 
     stream.client.start_stream()?;
-    let mut watch = EventWatch::new();
+    let mut watch = EventWatch::new(online);
     loop {
         if stop.load(Ordering::Relaxed) || producer.is_abandoned() {
             let _ = stream.client.stop_stream();
