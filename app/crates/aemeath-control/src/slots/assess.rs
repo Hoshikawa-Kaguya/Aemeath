@@ -37,6 +37,8 @@ pub enum RepairReason {
     ServerNotConnected,
     /// 连接正常，但宽限期过后端点仍不是 ACTIVE
     EndpointInactive,
+    /// 端点被用户在 Windows 里禁用了：重新挂载也没用，只能提示用户
+    EndpointDisabled,
 }
 
 /// 对一个槽位的判断结果，决定挂载维护下一步做什么。
@@ -73,6 +75,7 @@ pub fn assess(observation: &Observation<'_>, endpoint_grace: Duration) -> Assess
     }
     match observation.endpoint {
         Some(EndpointState::Active) => Assessment::Healthy,
+        Some(EndpointState::Disabled) => Assessment::Repair(RepairReason::EndpointDisabled),
         _ if observation
             .connected_for
             .is_some_and(|elapsed| elapsed < endpoint_grace) =>
@@ -154,6 +157,19 @@ mod tests {
             ..fresh
         };
         assert_eq!(assess(&late, GRACE), Assessment::Repair(RepairReason::EndpointInactive));
+    }
+
+    #[test]
+    fn a_disabled_endpoint_is_told_apart_even_while_settling() {
+        let disabled = Observation {
+            endpoint: Some(EndpointState::Disabled),
+            connected_for: Some(Duration::from_secs(2)),
+            ..healthy()
+        };
+        assert_eq!(
+            assess(&disabled, GRACE),
+            Assessment::Repair(RepairReason::EndpointDisabled)
+        );
     }
 
     #[test]

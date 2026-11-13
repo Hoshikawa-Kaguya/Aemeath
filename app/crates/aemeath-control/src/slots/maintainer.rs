@@ -478,6 +478,12 @@ impl Task {
                 let endpoint = self.ensure_format(slot, endpoint).await;
                 self.report(slot, SlotHealth::Healthy, endpoint);
             }
+            Assessment::Repair(RepairReason::EndpointDisabled) => {
+                // 重新挂载也是禁用的，不动它，直接提示；用户启用后端点变化通知会触发下一轮检查
+                let failures = state.failures.max(ALERT_AFTER_FAILURES);
+                let reason = RepairReason::EndpointDisabled;
+                self.report(slot, SlotHealth::Failing { failures, reason }, endpoint);
+            }
             Assessment::Repair(reason) => {
                 let waiting = state.retry_at.is_some_and(|retry_at| Instant::now() < retry_at);
                 if waiting {
@@ -486,7 +492,7 @@ impl Task {
                 let attached = self.repair(identity, ports, reason).await;
                 let endpoint = endpoint.filter(|endpoint| endpoint.state == EndpointState::Active);
                 if let Some(state) = self.slots.get(&slot) {
-                    let health = if attached {
+                    let health = if attached && reason != RepairReason::EndpointInactive {
                         SlotHealth::Settling
                     } else {
                         health_after_failure(state, reason)
@@ -530,6 +536,11 @@ impl Task {
         if attached {
             info!(%slot, "slot attached");
             state.retry_at = None;
+            // 端点一直不是 ACTIVE 时重挂总能连上，问题却还在：也算一次失败，连续几次后提示用户，而不是永远"准备中"
+            if reason == RepairReason::EndpointInactive {
+                state.failures += 1;
+                state.last_failure = Some(reason);
+            }
             return true;
         }
         state.failures += 1;
