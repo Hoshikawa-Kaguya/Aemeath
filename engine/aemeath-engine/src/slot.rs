@@ -365,16 +365,21 @@ impl SlotStream {
         };
         let (start, late_by) = match self.next_microframe {
             Some(next) if keeps_position(next) => (next, None),
-            Some(next) => {
-                self.stats.restarts += 1;
-                // 混音器在迟到期间照常写入，这些帧不会再有 URB 来取，留着就成了永久的延迟
+            // 首个 URB 或迟到重启
+            previous => {
+                if previous.is_some() {
+                    self.stats.restarts += 1;
+                }
+                // 混音器在这之前写入的帧不会再有 URB 来取，留着就成了永久的延迟
                 if self.slot.direction == SlotDirection::Out {
                     self.fifo.clear();
                     self.prefill_capture();
                 }
-                (now_microframe + RESTART_LEAD_MICROFRAMES, Some(now_microframe - next))
+                (
+                    now_microframe + RESTART_LEAD_MICROFRAMES,
+                    previous.map(|next| now_microframe - next),
+                )
             }
-            None => (now_microframe + RESTART_LEAD_MICROFRAMES, None),
         };
         let end = start + span;
         self.next_microframe = Some(end);
@@ -441,6 +446,14 @@ impl SlotStream {
             self.pending.pop_front();
             self.readable_frames += frames;
         }
+    }
+
+    /// 输入方向：混音跳过一段时间后调用，丢掉到 `now_microframe` 为止已放出的积压。
+    /// 被跳过的块本该取走它们；留着的话之后每块进 1 ms 出 1 ms，多出的延迟一直留到流重新开始。
+    pub fn skip_render_backlog(&mut self, now_microframe: i64) {
+        self.release(now_microframe);
+        self.fifo.skip(self.readable_frames);
+        self.readable_frames = 0;
     }
 
     /// 输入方向：取出已放出的帧，写满 `out`（交错立体声），不足的部分填 0。
@@ -823,6 +836,30 @@ mod tests {
         stream.fifo.push(&[0.5; 960]);
         stream.reserve(&submit(), 400);
         assert!(stream.fifo.is_empty());
+    }
+
+    #[test]
+    fn the_first_capture_urb_drops_what_the_mixer_wrote_before_it() {
+        let mut stream = stream(SlotDirection::Out);
+        stream.fifo.push(&[0.5; 960]);
+        stream.reserve(&submit(), 0);
+        assert!(stream.fifo.is_empty());
+    }
+
+    #[test]
+    fn skipping_ahead_drops_the_released_render_backlog() {
+        let mut stream = stream(SlotDirection::In);
+        // 20 ms 的积压已经到了放出时刻，另有 1 ms 还没到
+        stream.fifo.push(&[0.5; 1920 * STEREO]);
+        stream.pending.push_back((80, 960));
+        stream.pending.push_back((160, 960));
+        stream.fifo.push(&[0.25; 48 * STEREO]);
+        stream.pending.push_back((400, 48));
+
+        stream.skip_render_backlog(240);
+        assert_eq!(stream.fifo.len(), 48, "only the frames not yet due are kept");
+        assert_eq!(stream.readable_frames, 0);
+        assert_eq!(stream.pending.len(), 1);
     }
 
     #[test]

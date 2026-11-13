@@ -64,6 +64,16 @@ impl FrameFifo {
         skip + overflow
     }
 
+    /// 丢掉最旧的至多 `frames` 帧（只移动读位置），返回实际丢掉的帧数。
+    pub fn skip(&mut self, frames: usize) -> usize {
+        let skipped = frames.min(self.len_frames);
+        if skipped > 0 {
+            self.read = (self.read + skipped) % self.capacity_frames;
+            self.len_frames -= skipped;
+        }
+        skipped
+    }
+
     /// 取出最多 `out.len() / STEREO` 帧写入 `out`，不足的部分填 0。返回实际取出的帧数。
     pub fn pop_into(&mut self, out: &mut [f32]) -> usize {
         let wanted = out.len() / STEREO;
@@ -119,5 +129,19 @@ mod tests {
         assert_eq!(out, frames(&[2.0, 3.0, 4.0]));
         assert_eq!(fifo.push(&frames(&[5.0, 6.0, 7.0, 8.0, 9.0])), 2);
         assert_eq!(fifo.len(), 3);
+    }
+
+    #[test]
+    fn skip_drops_the_oldest_frames_across_the_wrap_point() {
+        let mut fifo = FrameFifo::with_capacity(4);
+        fifo.push(&frames(&[1.0, 2.0, 3.0]));
+        fifo.pop_into(&mut [0.0; 4]);
+        fifo.push(&frames(&[4.0, 5.0, 6.0]));
+        assert_eq!(fifo.skip(3), 3);
+        let mut out = vec![0.0; 4];
+        assert_eq!(fifo.pop_into(&mut out), 1);
+        assert_eq!(out, frames(&[6.0, 0.0]));
+        assert_eq!(fifo.skip(5), 0, "nothing left to skip");
+        assert_eq!(FrameFifo::with_capacity(0).skip(1), 0);
     }
 }

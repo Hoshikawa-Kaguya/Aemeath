@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::time::Duration;
 
-use aemeath_protocol::ids::SlotId;
+use aemeath_protocol::ids::{SlotDirection, SlotId};
 use aemeath_protocol::message::DeviceFormat;
 use aemeath_sys::clock::now_hns;
 use aemeath_sys::timer::HighResolutionTimer;
@@ -324,6 +324,11 @@ impl Scheduler {
             issues.skips += 1;
             issues.max_behind_microframes = issues.max_behind_microframes.max(now_microframe - *start);
             *start = now_microframe - MICROFRAMES_PER_MS;
+            for stream in self.streams.values_mut() {
+                if stream.slot().direction == SlotDirection::In {
+                    stream.skip_render_backlog(*start);
+                }
+            }
         }
         while *start + MICROFRAMES_PER_MS <= now_microframe {
             let end = *start + MICROFRAMES_PER_MS;
