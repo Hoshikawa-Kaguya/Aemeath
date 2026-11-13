@@ -14,7 +14,6 @@ export const tip = shallowReactive({ anchor: null as HTMLElement | null, text: '
 
 const texts = new WeakMap<HTMLElement, string>()
 let hovered: HTMLElement | null = null
-let pressed = false
 let timer = 0
 let warmUntil = 0
 
@@ -58,7 +57,8 @@ function onPointerOver(event: PointerEvent): void {
   }
   hovered = el
   hide()
-  if (el === null || pressed) {
+  // 按住鼠标时不显示。看事件里的按键状态，不记"按下过"：拖动标题栏移动窗口时页面收不到松开
+  if (el === null || event.buttons !== 0) {
     return
   }
   if (performance.now() < warmUntil) {
@@ -73,15 +73,6 @@ function onPointerOut(event: PointerEvent): void {
     hovered = null
     hide()
   }
-}
-
-function onPointerDown(): void {
-  pressed = true
-  hide()
-}
-
-function onPointerUp(): void {
-  pressed = false
 }
 
 function onFocusIn(event: FocusEvent): void {
@@ -111,9 +102,7 @@ function onKeyDown(event: KeyboardEvent): void {
 export function installTips(): void {
   window.addEventListener('pointerover', onPointerOver, true)
   window.addEventListener('pointerout', onPointerOut, true)
-  window.addEventListener('pointerdown', onPointerDown, true)
-  window.addEventListener('pointerup', onPointerUp, true)
-  window.addEventListener('pointercancel', onPointerUp, true)
+  window.addEventListener('pointerdown', hide, true)
   window.addEventListener('focusin', onFocusIn, true)
   window.addEventListener('focusout', onFocusOut, true)
   window.addEventListener('keydown', onKeyDown, true)
