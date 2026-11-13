@@ -6,7 +6,7 @@ use aemeath_core::hotkeys::HotkeyBinding;
 use aemeath_core::model::Position;
 use aemeath_core::preferences::{LanguagePreference, ThemeMode};
 use aemeath_protocol::ids::{EndpointId, NodeId};
-use aemeath_protocol::topology::{DeviceSettings, Resampler, SlotNodeSettings};
+use aemeath_protocol::topology::{DeviceSettings, RecorderSettings, Resampler, SlotNodeSettings};
 use aemeath_protocol::units::SampleRate;
 use aemeath_runtime::autostart;
 use aemeath_runtime::logging::LOG_FOLDER;
@@ -24,10 +24,9 @@ use crate::default_devices::DefaultDevicesView;
 use crate::device_settings::{CapabilitiesView, DeviceSettingsView, ResamplerView, SlotSettingsView};
 use crate::hotkey_views::{HotkeyBindingView, HotkeyTargetView};
 use crate::meters::MeterHub;
-use crate::recording::RecorderSettingsView;
 use crate::tray::{TrayLabels, TrayMenu};
 use crate::updates::{UpdateService, UpdateView};
-use crate::view::{PairVerdict, RouteVerdict, ThemeModeView, ViewState};
+use crate::view::{PairVerdict, RouteVerdict, ViewState};
 use crate::window::DataDir;
 
 type Reply<T> = Result<T, CommandError>;
@@ -209,12 +208,12 @@ pub async fn stop_recording(controller: State<'_, ControllerHandle>, node: u32) 
 pub async fn set_recorder_settings(
     controller: State<'_, ControllerHandle>,
     node: u32,
-    settings: RecorderSettingsView,
+    settings: RecorderSettings,
 ) -> Reply<ViewState> {
     controller
         .edit(Edit::SetRecorderSettings {
             node: NodeId(node),
-            settings: settings.into(),
+            settings,
         })
         .await
 }
@@ -227,9 +226,9 @@ pub async fn set_recording_folder(controller: State<'_, ControllerHandle>, folde
 #[tauri::command]
 pub async fn set_recording_defaults(
     controller: State<'_, ControllerHandle>,
-    settings: RecorderSettingsView,
+    settings: RecorderSettings,
 ) -> Reply<ViewState> {
-    controller.edit(Edit::SetRecordingDefaults(settings.into())).await
+    controller.edit(Edit::SetRecordingDefaults(settings)).await
 }
 
 /// 在资源管理器里打开录音文件夹（不存在时先创建）。
@@ -357,7 +356,7 @@ pub fn window_ready(window: WebviewWindow) {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppearanceInput {
-    theme_mode: ThemeModeView,
+    theme_mode: ThemeMode,
     accent: Option<String>,
     overlay_percent: u8,
 }
@@ -374,7 +373,7 @@ pub async fn set_appearance(controller: State<'_, ControllerHandle>, appearance:
     }
     controller
         .edit(Edit::SetAppearance {
-            theme_mode: ThemeMode::from(appearance.theme_mode),
+            theme_mode: appearance.theme_mode,
             accent: appearance.accent,
             overlay_percent: appearance.overlay_percent,
         })

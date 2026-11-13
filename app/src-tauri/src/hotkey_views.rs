@@ -5,15 +5,6 @@ use aemeath_protocol::ids::NodeId;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ModifiersView {
-    pub ctrl: bool,
-    pub alt: bool,
-    pub shift: bool,
-    pub win: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum KeyCodeView {
     Keyboard { vk: u32 },
@@ -24,22 +15,16 @@ pub enum KeyCodeView {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HotkeyView {
-    pub modifiers: ModifiersView,
+    /// 修饰键和下面的生效方式直接用领域类型，JSON 与界面的类型一致（见 `view.rs` 的测试）
+    pub modifiers: Modifiers,
     pub key: KeyCodeView,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum HotkeyModeView {
-    Toggle,
-    Hold,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HotkeyBindingView {
     pub key: HotkeyView,
-    pub mode: HotkeyModeView,
+    pub mode: HotkeyMode,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -55,9 +40,8 @@ pub enum HotkeyTargetView {
 
 impl From<Hotkey> for HotkeyView {
     fn from(hotkey: Hotkey) -> Self {
-        let Modifiers { ctrl, alt, shift, win } = hotkey.modifiers;
         Self {
-            modifiers: ModifiersView { ctrl, alt, shift, win },
+            modifiers: hotkey.modifiers,
             key: match hotkey.key {
                 KeyCode::Keyboard { vk } => KeyCodeView::Keyboard { vk },
                 KeyCode::MouseX1 => KeyCodeView::MouseX1,
@@ -69,9 +53,8 @@ impl From<Hotkey> for HotkeyView {
 
 impl From<HotkeyView> for Hotkey {
     fn from(view: HotkeyView) -> Self {
-        let ModifiersView { ctrl, alt, shift, win } = view.modifiers;
         Self {
-            modifiers: Modifiers { ctrl, alt, shift, win },
+            modifiers: view.modifiers,
             key: match view.key {
                 KeyCodeView::Keyboard { vk } => KeyCode::Keyboard { vk },
                 KeyCodeView::MouseX1 => KeyCode::MouseX1,
@@ -85,10 +68,7 @@ impl From<HotkeyBinding> for HotkeyBindingView {
     fn from(binding: HotkeyBinding) -> Self {
         Self {
             key: binding.key.into(),
-            mode: match binding.mode {
-                HotkeyMode::Toggle => HotkeyModeView::Toggle,
-                HotkeyMode::Hold => HotkeyModeView::Hold,
-            },
+            mode: binding.mode,
         }
     }
 }
@@ -97,10 +77,7 @@ impl From<HotkeyBindingView> for HotkeyBinding {
     fn from(view: HotkeyBindingView) -> Self {
         Self {
             key: view.key.into(),
-            mode: match view.mode {
-                HotkeyModeView::Toggle => HotkeyMode::Toggle,
-                HotkeyModeView::Hold => HotkeyMode::Hold,
-            },
+            mode: view.mode,
         }
     }
 }

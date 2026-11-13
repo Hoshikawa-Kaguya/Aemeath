@@ -48,7 +48,7 @@ use crate::recording::{RecorderStateView, RecorderView, RecordingView, prepare_r
 use crate::view::{
     AppearanceView, ConfigStatusView, DeviceView, DuplicateView, EngineState, EngineStatsView, EngineView, FormatView,
     NodeStatus, NodeView, NoticeKind, NoticeView, PairVerdict, ProgramView, RegistrationView, RouteVerdict, RouteView,
-    SlotRef, SlotView, ThemeModeView, ViewState, kind_view,
+    SlotRef, SlotView, ViewState, kind_view,
 };
 
 /// 数据目录下存放背景图的文件夹
@@ -1818,7 +1818,7 @@ impl Controller {
             .filter(|path| path.is_file())
             .map(|path| path.display().to_string());
         AppearanceView {
-            theme_mode: ThemeModeView::from(appearance.theme_mode),
+            theme_mode: appearance.theme_mode,
             accent: appearance.accent.clone(),
             background_path,
             overlay_percent: appearance.overlay_percent,
@@ -1896,7 +1896,7 @@ impl Controller {
             panic_mute: self.overlay.panic_mute,
             recording: RecordingView {
                 folder: recording_folder(&self.config.preferences).display().to_string(),
-                defaults: self.config.preferences.recording_defaults.into(),
+                defaults: self.config.preferences.recording_defaults,
             },
             slots,
             notices: self.notices.iter().cloned().collect(),
@@ -1966,7 +1966,7 @@ impl Controller {
             record_hotkey: node.record_hotkey.map(HotkeyBindingView::from),
             recorder: match node.kind {
                 NodeKind::Recorder { settings } => Some(RecorderView {
-                    settings: settings.into(),
+                    settings,
                     state: self
                         .recorder_status
                         .get(&node.id)

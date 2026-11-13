@@ -117,39 +117,12 @@ impl EngineState {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppearanceView {
-    pub theme_mode: ThemeModeView,
+    /// 领域类型直接发给界面，JSON 与界面的类型一致（见本文件的测试）
+    pub theme_mode: ThemeMode,
     pub accent: Option<String>,
     /// 背景图的完整路径；没有设置或文件已丢失时为 None
     pub background_path: Option<String>,
     pub overlay_percent: u8,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum ThemeModeView {
-    System,
-    Dark,
-    Light,
-}
-
-impl From<ThemeMode> for ThemeModeView {
-    fn from(mode: ThemeMode) -> Self {
-        match mode {
-            ThemeMode::System => Self::System,
-            ThemeMode::Dark => Self::Dark,
-            ThemeMode::Light => Self::Light,
-        }
-    }
-}
-
-impl From<ThemeModeView> for ThemeMode {
-    fn from(mode: ThemeModeView) -> Self {
-        match mode {
-            ThemeModeView::System => Self::System,
-            ThemeModeView::Dark => Self::Dark,
-            ThemeModeView::Light => Self::Light,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -582,6 +555,45 @@ mod tests {
     use aemeath_protocol::ids::NodeId;
 
     use super::*;
+
+    /// 这些领域类型直接发给界面、从界面收回，JSON 必须与 `types.ts` 一致
+    #[test]
+    fn domain_types_sent_as_they_are_match_the_frontend_types() {
+        use aemeath_core::hotkeys::{HotkeyMode, Modifiers};
+        use aemeath_protocol::topology::{RecordDepth, RecordFormat, RecorderSettings};
+        use serde_json::json;
+
+        let settings = RecorderSettings {
+            format: RecordFormat::Flac,
+            depth: RecordDepth::Int24,
+        };
+        assert_eq!(
+            serde_json::to_value(settings).unwrap(),
+            json!({ "format": "flac", "depth": "int24" })
+        );
+        let from_ui: RecorderSettings = serde_json::from_value(json!({ "format": "wav", "depth": "float32" })).unwrap();
+        assert_eq!(
+            (from_ui.format, from_ui.depth),
+            (RecordFormat::Wav, RecordDepth::Float32)
+        );
+        assert_eq!(serde_json::to_value(RecordDepth::Int16).unwrap(), json!("int16"));
+
+        for (mode, text) in [
+            (ThemeMode::System, "system"),
+            (ThemeMode::Dark, "dark"),
+            (ThemeMode::Light, "light"),
+        ] {
+            assert_eq!(serde_json::to_value(mode).unwrap(), json!(text));
+            assert_eq!(serde_json::from_value::<ThemeMode>(json!(text)).unwrap(), mode);
+        }
+        for (mode, text) in [(HotkeyMode::Toggle, "toggle"), (HotkeyMode::Hold, "hold")] {
+            assert_eq!(serde_json::to_value(mode).unwrap(), json!(text));
+            assert_eq!(serde_json::from_value::<HotkeyMode>(json!(text)).unwrap(), mode);
+        }
+        let modifiers = json!({ "ctrl": true, "alt": false, "shift": true, "win": false });
+        let parsed: Modifiers = serde_json::from_value(modifiers.clone()).unwrap();
+        assert_eq!(serde_json::to_value(parsed).unwrap(), modifiers);
+    }
 
     #[test]
     fn config_status_matches_the_frontend_type() {

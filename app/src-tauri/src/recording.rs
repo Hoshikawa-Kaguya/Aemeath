@@ -5,63 +5,9 @@ use std::path::{Path, PathBuf};
 use aemeath_core::naming::recording_file_name;
 use aemeath_core::preferences::Preferences;
 use aemeath_protocol::message::{RecorderState, RecordingFailure};
-use aemeath_protocol::topology::{RecordDepth, RecordFormat, RecorderSettings};
+use aemeath_protocol::topology::RecorderSettings;
 use aemeath_sys::clock::local_date_time;
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum RecordFormatView {
-    Wav,
-    Flac,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum RecordDepthView {
-    Int16,
-    Int24,
-    Float32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RecorderSettingsView {
-    pub format: RecordFormatView,
-    pub depth: RecordDepthView,
-}
-
-impl From<RecorderSettings> for RecorderSettingsView {
-    fn from(settings: RecorderSettings) -> Self {
-        Self {
-            format: match settings.format {
-                RecordFormat::Wav => RecordFormatView::Wav,
-                RecordFormat::Flac => RecordFormatView::Flac,
-            },
-            depth: match settings.depth {
-                RecordDepth::Int16 => RecordDepthView::Int16,
-                RecordDepth::Int24 => RecordDepthView::Int24,
-                RecordDepth::Float32 => RecordDepthView::Float32,
-            },
-        }
-    }
-}
-
-impl From<RecorderSettingsView> for RecorderSettings {
-    fn from(view: RecorderSettingsView) -> Self {
-        Self {
-            format: match view.format {
-                RecordFormatView::Wav => RecordFormat::Wav,
-                RecordFormatView::Flac => RecordFormat::Flac,
-            },
-            depth: match view.depth {
-                RecordDepthView::Int16 => RecordDepth::Int16,
-                RecordDepthView::Int24 => RecordDepth::Int24,
-                RecordDepthView::Float32 => RecordDepth::Float32,
-            },
-        }
-    }
-}
+use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -107,7 +53,8 @@ impl From<&RecorderState> for RecorderStateView {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecorderView {
-    pub settings: RecorderSettingsView,
+    /// 领域类型直接发给界面，JSON 与界面的类型一致（见 `view.rs` 的测试）
+    pub settings: RecorderSettings,
     pub state: RecorderStateView,
 }
 
@@ -116,7 +63,7 @@ pub struct RecorderView {
 #[serde(rename_all = "camelCase")]
 pub struct RecordingView {
     pub folder: String,
-    pub defaults: RecorderSettingsView,
+    pub defaults: RecorderSettings,
 }
 
 /// 录音文件夹：用户设置的，否则是 `%USERPROFILE%\Music\Aemeath`。
