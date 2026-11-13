@@ -21,10 +21,11 @@ use aemeath_usbip::server::{ConnectionId, ServerEvent};
 use aemeath_usbip::stream::{CHANNELS as SLOT_CHANNELS, CapturePacer};
 use aemeath_usbip::wire::{Direction, Submit, UrbStatus, encode_ret_unlink};
 
+use crate::fifo::FrameFifo;
 use crate::mixer::{MAX_BLOCK_FRAMES, Mixer};
 use crate::port::PortIssues;
 use crate::resampler_worker::ResamplerWorker;
-use crate::slot::SlotStream;
+use crate::slot::{SlotStream, stream_buffer};
 use crate::timeline::{MICROFRAMES_PER_MS, Timeline};
 use crate::{EngineEvent, STEREO};
 
@@ -107,6 +108,9 @@ pub struct Scheduler {
     loop_issues: LoopIssues,
     last_issue_log: i64,
     resamplers: ResamplerWorker,
+    /// 给下一条连接用的槽位流缓冲，用掉后由辅助线程补一份
+    spare_buffer: Option<FrameFifo>,
+    buffer_requested: bool,
     load: Arc<RealtimeLoad>,
 }
 
@@ -137,6 +141,9 @@ impl Scheduler {
             loop_issues: LoopIssues::default(),
             last_issue_log: 0,
             resamplers,
+            // 在控制线程上构造，这里分配不算实时线程的开销
+            spare_buffer: Some(stream_buffer()),
+            buffer_requested: false,
             load,
         }
     }
@@ -177,7 +184,12 @@ impl Scheduler {
     }
 
     /// 装上辅助线程构建好的重采样器；连接已经关了或结果已过期的，交回辅助线程释放。
+    /// 同时收下补好的槽位流缓冲（同一时间只请求一份，到达时备用的一定已经用掉）。
     fn install_built_resamplers(&mut self) {
+        if let Some(buffer) = self.resamplers.try_receive_buffer() {
+            self.spare_buffer = Some(buffer);
+            self.buffer_requested = false;
+        }
         while let Some((connection, built)) = self.resamplers.try_receive() {
             let unused = match self.streams.get_mut(&connection) {
                 Some(stream) => stream.install(built),
@@ -230,7 +242,13 @@ impl Scheduler {
                     connection,
                     writer,
                 } => {
-                    let mut stream = SlotStream::new(slot, writer);
+                    // 几条连接同时到来、备用的还没补上时，只能在本线程分配
+                    let buffer = self.spare_buffer.take().unwrap_or_else(stream_buffer);
+                    if !self.buffer_requested {
+                        self.resamplers.prepare_buffer();
+                        self.buffer_requested = true;
+                    }
+                    let mut stream = SlotStream::new(slot, writer, buffer);
                     if let Some(mixer) = &self.mixer {
                         // 流还没开始，这里不会产生构建工作
                         let _ = stream.set_processing(Some(mixer.sample_rate()), mixer.slot_resampler(slot));
@@ -468,13 +486,11 @@ impl Scheduler {
         }
     }
 
-    /// 丢弃一条连接的全部状态；它的重采样器交给辅助线程释放。
+    /// 丢弃一条连接的全部状态；槽位流（缓冲和重采样器）交给辅助线程释放。
     fn drop_connection(&mut self, connection: ConnectionId, slot: SlotId) {
-        if let Some(mut stream) = self.streams.remove(&connection) {
-            if let Some(resampler) = stream.take_resampler() {
-                self.resamplers.retire(resampler);
-            }
+        if let Some(stream) = self.streams.remove(&connection) {
             let stats = stream.stats;
+            self.resamplers.retire_stream(stream);
             tracing::info!(
                 %slot,
                 restarts = stats.restarts,

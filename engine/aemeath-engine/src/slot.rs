@@ -178,15 +178,21 @@ pub struct SlotStream {
     pub stats: SlotStats,
 }
 
+/// 槽位流用的缓冲（约 600 KB）。分配和释放都要几百微秒（实测最长约 240 µs），调度线程上用辅助线程预先备好的。
+pub fn stream_buffer() -> FrameFifo {
+    FrameFifo::with_capacity(FIFO_CAPACITY_FRAMES)
+}
+
 impl SlotStream {
-    pub fn new(slot: SlotId, writer: ConnectionWriter) -> Self {
+    /// `fifo` 由 [`stream_buffer`] 创建。
+    pub fn new(slot: SlotId, writer: ConnectionWriter, fifo: FrameFifo) -> Self {
         Self {
             slot,
             writer,
             format: None,
             engine_rate: None,
             next_microframe: None,
-            fifo: FrameFifo::with_capacity(FIFO_CAPACITY_FRAMES),
+            fifo,
             pending: VecDeque::with_capacity(MAX_PENDING_PACKETS),
             readable_frames: 0,
             pacer: CapturePacer::default(),
@@ -281,11 +287,6 @@ impl SlotStream {
         self.resampler = Some(built);
         self.prefill_capture();
         None
-    }
-
-    /// 连接关闭时取走重采样器，由辅助线程释放。
-    pub fn take_resampler(&mut self) -> Option<SlotResampler> {
-        self.resampler.take()
     }
 
     /// 输出方向：重采样成块到达，先垫一段静音，URB 到期时缓冲里才总有数据。
@@ -564,7 +565,7 @@ mod tests {
             direction,
             number: SlotNumber::new(1).unwrap(),
         };
-        SlotStream::new(slot, ConnectionWriter::spawn(writer, 0).unwrap().0)
+        SlotStream::new(slot, ConnectionWriter::spawn(writer, 0).unwrap().0, stream_buffer())
     }
 
     fn submit() -> Submit {

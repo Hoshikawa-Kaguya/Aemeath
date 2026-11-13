@@ -1,5 +1,6 @@
 //! 槽位重采样器的构建和释放放在辅助线程：调度线程是实时线程，构建 Sinc 滤波器表要几毫秒（实测最长约 4.8 ms），
 //! 会让所有槽位和混音一起迟到。调度线程只发请求、在循环里收结果，都不阻塞。
+//! 槽位流的缓冲（分配、释放各要几百微秒）也由这里预先分配、最后释放。
 
 use std::io;
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -7,18 +8,28 @@ use std::thread;
 
 use aemeath_usbip::server::ConnectionId;
 
-use crate::slot::{ResamplerSpec, ResamplerWork, SlotResampler};
+use crate::fifo::FrameFifo;
+use crate::slot::{ResamplerSpec, ResamplerWork, SlotResampler, SlotStream, stream_buffer};
 
+#[expect(
+    clippy::large_enum_variant,
+    reason = "装箱要在调度线程上分配，正是这里要避免的；消息只移动一次"
+)]
 enum Job {
     Build(ConnectionId, ResamplerSpec),
     /// 换下来的重采样器，大块内存也不在调度线程上释放
     Retire(SlotResampler),
+    /// 连接关闭后的整个槽位流
+    RetireStream(SlotStream),
+    /// 为下一条连接备好一份槽位流的缓冲
+    PrepareBuffer,
 }
 
 /// 调度线程持有。析构时请求通道关闭，辅助线程随之退出。
 pub struct ResamplerWorker {
     jobs: Sender<Job>,
     built: Receiver<(ConnectionId, SlotResampler)>,
+    buffers: Receiver<FrameFifo>,
 }
 
 impl ResamplerWorker {
@@ -26,10 +37,26 @@ impl ResamplerWorker {
     pub fn start() -> io::Result<Self> {
         let (jobs, requests) = channel();
         let (finished, built) = channel();
+        let (prepared, buffers) = channel();
         thread::Builder::new()
             .name("aemeath-resampler-builder".to_owned())
-            .spawn(move || run(&requests, &finished))?;
-        Ok(Self { jobs, built })
+            .spawn(move || run(&requests, &finished, &prepared))?;
+        Ok(Self { jobs, built, buffers })
+    }
+
+    /// 把关闭了的槽位流交给辅助线程释放。
+    pub fn retire_stream(&self, stream: SlotStream) {
+        let _ = self.jobs.send(Job::RetireStream(stream));
+    }
+
+    /// 请求一份槽位流的缓冲，由 [`Self::try_receive_buffer`] 取回。
+    pub fn prepare_buffer(&self) {
+        let _ = self.jobs.send(Job::PrepareBuffer);
+    }
+
+    /// 取一份备好的缓冲，没有时立刻返回 None。
+    pub fn try_receive_buffer(&self) -> Option<FrameFifo> {
+        self.buffers.try_recv().ok()
     }
 
     /// 交出槽位流要求的工作：先释放换下来的旧重采样器，再请求构建新的。结果由 [`Self::try_receive`] 取回。
@@ -53,8 +80,8 @@ impl ResamplerWorker {
     }
 }
 
-/// 辅助线程的主循环：依次构建或释放重采样器，直到请求通道关闭。
-fn run(requests: &Receiver<Job>, finished: &Sender<(ConnectionId, SlotResampler)>) {
+/// 辅助线程的主循环：依次处理请求，直到请求通道关闭。
+fn run(requests: &Receiver<Job>, finished: &Sender<(ConnectionId, SlotResampler)>, prepared: &Sender<FrameFifo>) {
     while let Ok(job) = requests.recv() {
         match job {
             Job::Build(connection, spec) => {
@@ -63,6 +90,10 @@ fn run(requests: &Receiver<Job>, finished: &Sender<(ConnectionId, SlotResampler)
                 }
             }
             Job::Retire(resampler) => drop(resampler),
+            Job::RetireStream(stream) => drop(stream),
+            Job::PrepareBuffer => {
+                let _ = prepared.send(stream_buffer());
+            }
         }
     }
 }
@@ -106,5 +137,21 @@ mod tests {
         };
         assert_eq!(received.0, connection);
         assert_eq!(received.1.generation(), 7);
+    }
+
+    #[test]
+    fn prepares_stream_buffers_off_the_calling_thread() {
+        let worker = ResamplerWorker::start().unwrap();
+        assert!(worker.try_receive_buffer().is_none(), "nothing until asked");
+        worker.prepare_buffer();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let buffer = loop {
+            if let Some(buffer) = worker.try_receive_buffer() {
+                break buffer;
+            }
+            assert!(Instant::now() < deadline, "no buffer was prepared");
+            thread::sleep(Duration::from_millis(1));
+        };
+        assert!(buffer.is_empty());
     }
 }
