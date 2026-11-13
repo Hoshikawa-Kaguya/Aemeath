@@ -391,7 +391,7 @@ impl Workspace {
         Ok(())
     }
 
-    /// 删除连线，返回被删除的连线（供撤销）。
+    /// 删除连线，返回被删除的连线。
     pub fn disconnect(&mut self, from: NodeId, to: NodeId) -> Result<Route, EditError> {
         let index = self
             .routes
@@ -399,13 +399,6 @@ impl Workspace {
             .position(|route| route.from == from && route.to == to)
             .ok_or(EditError::UnknownRoute { from, to })?;
         Ok(self.routes.remove(index))
-    }
-
-    /// 恢复一条被删除的连线（撤销）。仍按连线规则检查，因为期间拓扑可能已经变了。
-    pub fn restore_route(&mut self, route: Route) -> Result<(), EditError> {
-        self.check_route(route.from, route.to)?;
-        self.routes.push(route);
-        Ok(())
     }
 
     /// 设定连线的发送增益。
@@ -520,13 +513,6 @@ impl Workspace {
             .iter_mut()
             .find(|route| route.from == from && route.to == to)
             .ok_or(EditError::UnknownRoute { from, to })
-    }
-
-    /// 恢复到之前的快照（撤销）。保留两者中较大的"下一个节点 ID"：撤销新建节点之后，ID 也不会被再次分配。
-    pub fn restore(&mut self, snapshot: Workspace) {
-        let next_node_id = self.next_node_id.max(snapshot.next_node_id);
-        *self = snapshot;
-        self.next_node_id = next_node_id;
     }
 
     /// 配置文件读入后的一致性：节点 ID 不能达到或超过下一个待分配的 ID；控制台只引用存在的节点、且不重复。
@@ -669,12 +655,9 @@ mod tests {
         assert_eq!(workspace.slot_formats().get(&moved), Some(&format));
         assert_eq!(workspace.slot_formats().get(&first), None);
 
-        // 删除后槽位空出，撤销（恢复快照）时设置随节点回来
-        let snapshot = workspace.clone();
+        // 删除后槽位空出，设置不留在槽位上
         workspace.remove_node(game).unwrap();
         assert!(workspace.slot_formats().is_empty());
-        workspace.restore(snapshot);
-        assert_eq!(workspace.slot_formats().get(&moved), Some(&format));
 
         let bus = add(&mut workspace, "Bus", NodeSpec::Bus);
         assert_eq!(
@@ -852,17 +835,6 @@ mod tests {
     }
 
     #[test]
-    fn restoring_a_snapshot_keeps_node_ids_unique() {
-        let mut workspace = Workspace::new(EngineSettings::default());
-        let before = workspace.clone();
-        let added = add(&mut workspace, "A", NodeSpec::Bus);
-        workspace.restore(before);
-        assert!(workspace.nodes().is_empty());
-        let next = add(&mut workspace, "B", NodeSpec::Bus);
-        assert_ne!(added, next, "an undone node's ID is not handed out again");
-    }
-
-    #[test]
     fn node_ids_are_never_reused() {
         let mut workspace = Workspace::new(EngineSettings::default());
         let first = add(&mut workspace, "A", NodeSpec::Bus);
@@ -940,20 +912,5 @@ mod tests {
         workspace.set_strip(mic, gated).unwrap();
         assert_eq!(workspace.node(mic).unwrap().strip, gated);
         assert_eq!(workspace.set_strip(bus, gated), Err(EditError::GateNotAllowed(bus)));
-    }
-
-    #[test]
-    fn deleted_routes_can_be_restored_unless_the_topology_changed() {
-        let mut workspace = Workspace::new(EngineSettings::default());
-        let a = add(&mut workspace, "A", NodeSpec::Bus);
-        let b = add(&mut workspace, "B", NodeSpec::Bus);
-        workspace.connect(a, b).unwrap();
-        workspace.set_route_gain(a, b, GainDb::new(-6.0).unwrap()).unwrap();
-        let removed = workspace.disconnect(a, b).unwrap();
-        workspace.connect(b, a).unwrap();
-        assert_eq!(workspace.restore_route(removed), Err(RouteRejection::Loop.into()));
-        workspace.disconnect(b, a).unwrap();
-        workspace.restore_route(removed).unwrap();
-        assert_eq!(workspace.route(a, b).unwrap().gain.db(), -6.0);
     }
 }

@@ -23,7 +23,6 @@ pub struct ViewState {
     pub engine: EngineView,
     /// 首次注册的进度；已注册时为 None
     pub registration: Option<RegistrationView>,
-    pub can_undo: bool,
     pub usbip_version: Option<String>,
     /// 驱动版本比 Aemeath 附带的新，没有经过测试
     pub usbip_untested: bool,

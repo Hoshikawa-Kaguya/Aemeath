@@ -53,8 +53,6 @@ use crate::view::{
 
 /// 数据目录下存放背景图的文件夹
 pub const BACKGROUND_FOLDER: &str = "background";
-/// 撤销最多保留的步数
-const UNDO_LIMIT: usize = 50;
 /// 端点变化后等这么久再做后备匹配，让成批的变化通知都到齐
 const REMATCH_SETTLE: Duration = Duration::from_millis(300);
 /// 事件密集到达时（例如注册时 16 个槽位同时变化），合并成一次推送
@@ -310,31 +308,6 @@ pub enum Edit {
     SetBackgroundFile(Option<String>),
     SetLastPage(String),
     SetWindowPlacement(WindowPlacement),
-    Undo,
-}
-
-impl Edit {
-    /// 结构性的修改才进入撤销记录；移动、增益、标签位置这类连续调整和标签显隐不进入
-    fn is_undoable(&self) -> bool {
-        matches!(
-            self,
-            Self::AddNode { .. }
-                | Self::ApplyPreset { .. }
-                | Self::RemoveNode(_)
-                | Self::RenameNode { .. }
-                | Self::ChangeSlot { .. }
-                | Self::SetDeviceSettings { .. }
-                | Self::ReplaceDevice { .. }
-                | Self::ReplaceProgram { .. }
-                | Self::SetAppResampler { .. }
-                | Self::SetSlotSettings { .. }
-                | Self::SetRecorderSettings { .. }
-                | Self::Connect { .. }
-                | Self::Disconnect { .. }
-                | Self::SetRouteEnabled { .. }
-                | Self::SetNodeMuted { .. }
-        )
-    }
 }
 
 enum Request {
@@ -560,7 +533,6 @@ struct Controller {
     store: ConfigStore,
     /// 启动时配置文件不可用（读不了，或是更新的版本写的）：只在内存中使用，不覆盖它
     read_only: bool,
-    undo: Vec<Workspace>,
     client: EngineClient,
     client_events: mpsc::UnboundedReceiver<ClientEvent>,
     maintainer: Option<SlotMaintainer>,
@@ -726,7 +698,6 @@ impl Controller {
             background_dir,
             store,
             read_only,
-            undo: Vec::new(),
             client,
             client_events,
             maintainer,
@@ -917,15 +888,13 @@ impl Controller {
         }
     }
 
-    /// 执行一次编辑：成功后记入撤销记录（可撤销的编辑）、保存配置并下发新拓扑；失败时工作台不变。
+    /// 执行一次编辑：成功后保存配置并下发新拓扑；失败时工作台不变。
     fn apply(&mut self, edit: Edit) -> Result<(), CommandError> {
         if let Edit::SetEngineRate(rate) = edit
             && rate != self.config.workspace.engine.sample_rate
         {
             self.stop_all_recordings();
         }
-        let before = self.config.workspace.clone();
-        let undoable = edit.is_undoable();
         let workspace = &mut self.config.workspace;
         match edit {
             Edit::ApplyPreset {
@@ -1109,16 +1078,6 @@ impl Controller {
                     _ => placement,
                 });
             }
-            Edit::Undo => match self.undo.pop() {
-                Some(snapshot) => workspace.restore(snapshot),
-                None => return Ok(()),
-            },
-        }
-        if undoable && self.config.workspace != before {
-            self.undo.push(before);
-            if self.undo.len() > UNDO_LIMIT {
-                self.undo.remove(0);
-            }
         }
         self.save();
         self.sync_engine();
@@ -1195,7 +1154,7 @@ impl Controller {
         self.schedule_emit();
     }
 
-    /// 切换型热键：静音和连线开关是正式修改，写进配置，但不进撤销记录。
+    /// 切换型热键：静音和连线开关是正式修改，写进配置。
     fn fire_hotkey(&mut self, target: HotkeyTarget) {
         match target {
             HotkeyTarget::NodeMute(node) => {
@@ -1554,7 +1513,6 @@ impl Controller {
 
     /// 落点节点被删除后：正有会话的程序立即清除指派，其余的记为"待清除"，
     /// 免得这个槽位以后被别的节点占用时，这些程序意外落进去。
-    // shortcut: 撤销删除节点时不恢复这些指派，用户要在应用页重新指派；需要时把记录放进撤销快照
     async fn release_landings(&mut self, endpoint: &EndpointId) {
         let affected: Vec<String> = self.landings_on(endpoint).map(str::to_owned).collect();
         if affected.is_empty() {
@@ -1846,7 +1804,6 @@ impl Controller {
                 total: progress.total(),
                 failing: progress.failing().into_iter().map(SlotRef::from).collect(),
             }),
-            can_undo: !self.undo.is_empty(),
             usbip_version: self.usbip_version.map(|version| version.to_string()),
             usbip_untested: self
                 .usbip_version

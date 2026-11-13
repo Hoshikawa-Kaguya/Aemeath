@@ -3,7 +3,7 @@ import { useI18n } from 'vue-i18n'
 import AppIcon from '@/components/AppIcon.vue'
 import { useAppStore } from '@/stores/app'
 
-// 删除后的"撤销"提示，以及命令失败的原因
+// 删除等操作的结果提示，以及命令失败的原因
 const { t } = useI18n()
 const store = useAppStore()
 </script>
@@ -12,9 +12,6 @@ const store = useAppStore()
   <Transition name="toast">
     <div v-if="store.toast" class="toast" role="status" aria-live="polite">
       <span class="message">{{ store.toast.message }}</span>
-      <fluent-button v-if="store.toast.undoable" size="small" @click="store.undo()">{{
-        t('toast.undo')
-      }}</fluent-button>
       <button type="button" class="close" :aria-label="t('toast.dismiss')" @click="store.hideToast()">
         <AppIcon name="x" />
       </button>

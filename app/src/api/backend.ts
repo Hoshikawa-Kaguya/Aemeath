@@ -120,7 +120,6 @@ export const backend = {
   setNodeMuted: (node: number, muted: boolean) => invoke<ViewState>('set_node_muted', { node, muted }),
   /** `thresholdDb` 为 null 表示关闭门限 */
   setNodeGate: (node: number, thresholdDb: number | null) => invoke<ViewState>('set_node_gate', { node, thresholdDb }),
-  undo: () => invoke<ViewState>('undo'),
   setLanguage: (language: LanguagePreference) => invoke<ViewState>('set_language', { language }),
   setLastPage: (page: string) => invoke<ViewState>('set_last_page', { page }),
   listDevices: (direction: 'input' | 'output') => invoke<DeviceChoice[]>('list_devices', { direction }),

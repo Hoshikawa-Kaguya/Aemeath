@@ -179,7 +179,7 @@ pub fn all_hotkeys(workspace: &Workspace, preferences: &Preferences) -> Vec<(Hot
     list
 }
 
-/// 临时叠加：编译拓扑时叠加，不写进配置，也不进撤销记录。
+/// 临时叠加：编译拓扑时叠加，不写进配置。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct HotkeyOverlay {
     /// 紧急静音：全部输出节点静音
@@ -344,7 +344,7 @@ mod tests {
     }
 
     #[test]
-    fn hotkeys_go_away_with_their_owner_and_come_back_on_undo() {
+    fn hotkeys_go_away_with_their_owner() {
         let Fixture {
             mut workspace,
             mut preferences,
@@ -360,11 +360,9 @@ mod tests {
             Some(key),
         )
         .unwrap();
-        let before = workspace.clone();
+        assert_eq!(all_hotkeys(&workspace, &preferences).len(), 1);
         workspace.remove_node(mic).unwrap();
         assert!(all_hotkeys(&workspace, &preferences).is_empty());
-        workspace.restore(before);
-        assert_eq!(all_hotkeys(&workspace, &preferences).len(), 1);
     }
 
     #[test]

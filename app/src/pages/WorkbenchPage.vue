@@ -35,7 +35,7 @@ import {
   type WorkbenchActions,
 } from '@/workbench/context'
 
-// 工作台：节点与连线、拖线校验并说明原因、选中后按 Del 删除、撤销。
+// 工作台：节点与连线、拖线校验并说明原因、选中后按 Del 删除。
 // 连线规则只在后端定义一次（aemeath_protocol::topology::check_route）：拖线开始时取回全部候选节点的判定，
 // 拖动中按指针下方的节点即时提示。放在整个节点上即可连线，不必对准端口，小小的端口不好瞄准。
 
@@ -145,15 +145,13 @@ const dragTip = computed(() => {
   return { text: t('drag.hint'), bad: false }
 })
 
-/** 节点从快照里消失（删除、撤销添加）后，先以不可交互的"幽灵"淡出再移除；连线随快照立即消失 */
+/** 节点从快照里消失（删除）后，先以不可交互的"幽灵"淡出再移除；连线随快照立即消失 */
 const leavingNodes = shallowRef<Node<NodeData>[]>([])
 watch(
   () => store.nodes,
   (now, before) => {
     const present = new Set(now.map((node) => node.id))
     const isLeaving = (id: number) => leavingNodes.value.some((ghost) => ghost.data?.node.id === id)
-    // 撤销删除时节点回来了：立即去掉它的幽灵，避免同一个 ID 出现两次
-    leavingNodes.value = leavingNodes.value.filter((ghost) => !present.has(ghost.data?.node.id ?? -1))
     const duration = exitDuration()
     if (duration === 0) return
     for (const node of before ?? []) {
@@ -525,16 +523,9 @@ function isTyping(target: EventTarget | null): boolean {
   return target instanceof Element && target.closest('input, textarea, select, fluent-dialog') !== null
 }
 
-/** 工作台的快捷键：Ctrl+Z 撤销、Esc 取消选中、菜单键打开菜单、Del 删除选中的对象 */
+/** 工作台的快捷键：Esc 取消选中、菜单键打开菜单、Del 删除选中的对象 */
 function onKeyDown(event: KeyboardEvent): void {
   if (isTyping(event.target)) {
-    return
-  }
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
-    event.preventDefault()
-    if (store.state?.canUndo) {
-      void store.undo()
-    }
     return
   }
   if (event.key === 'Escape') {
@@ -590,9 +581,6 @@ onBeforeUnmount(() => {
         <h2>{{ t('nav.workbench') }}</h2>
         <span class="caption ellipsis">{{ t('wb.hint') }}</span>
         <div class="spacer"></div>
-        <fluent-button appearance="subtle" :disabled="!store.state?.canUndo" @click="store.undo()">
-          <AppIcon slot="start" name="undo" />{{ t('wb.undo') }}
-        </fluent-button>
         <fluent-button appearance="subtle" @click="addNode">
           <AppIcon slot="start" name="plus" />{{ t('wb.add') }}
         </fluent-button>

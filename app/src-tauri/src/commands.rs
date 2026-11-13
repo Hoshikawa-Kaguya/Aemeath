@@ -679,7 +679,7 @@ pub async fn set_route_label(
         .await
 }
 
-/// 显示或隐藏连线标签（连线右键菜单）。只影响显示，不进入撤销记录。
+/// 显示或隐藏连线标签（连线右键菜单）。只影响显示。
 #[tauri::command]
 pub async fn set_route_label_visible(
     controller: State<'_, ControllerHandle>,
@@ -729,11 +729,6 @@ pub async fn set_node_gate(
             threshold_db,
         })
         .await
-}
-
-#[tauri::command]
-pub async fn undo(controller: State<'_, ControllerHandle>) -> Reply<ViewState> {
-    controller.edit(Edit::Undo).await
 }
 
 #[tauri::command]

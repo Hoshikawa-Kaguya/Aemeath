@@ -331,7 +331,6 @@ export interface ViewState {
     stats: EngineStats | null
   }
   registration: RegistrationView | null
-  canUndo: boolean
   usbipVersion: string | null
   /** 驱动版本比 Aemeath 附带的新，没有经过测试 */
   usbipUntested: boolean

@@ -185,7 +185,6 @@ fn main() -> ExitCode {
             commands::set_node_gain,
             commands::set_node_muted,
             commands::set_node_gate,
-            commands::undo,
             commands::set_language,
             commands::set_last_page,
             commands::list_devices,

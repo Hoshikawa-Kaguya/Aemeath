@@ -89,7 +89,6 @@
     "hint": "从端口拖动即可连线 · 单击连线选中后按 Del 删除 · 右键连线可显示连线标签，在标签上滚动滚轮调增益",
     "add": "添加节点",
     "fit": "适应窗口",
-    "undo": "撤销",
     "zoom": "{percent}%"
   },
   "node": {
@@ -144,7 +143,6 @@
     "nodeDeleting": "删除中…",
     "nodeDeleted": "已删除节点：{name}",
     "deviceReplaced": "{node} 已改用新接入的同名设备：{device}",
-    "undo": "撤销",
     "dismiss": "关闭",
     "landingRestored": "已把 {app} 放回 {landing}",
     "recordingFailed": "{node} 的录音已停止：{reason}"
@@ -467,7 +465,8 @@
     "hotkey": "热键…"
   },
   "confirm": {
-    "deleteLanding": "有 {n} 个应用落在这里，删除后它们改为跟随系统默认。"
+    "deleteNode": "删除 {name}？它的连线和热键会一起删除，删除后不能恢复。",
+    "deleteLandingNode": "删除 {name}？它的连线和热键会一起删除，落在这里的 {n} 个应用改为跟随系统默认。删除后不能恢复。"
   },
   "rec": {
     "sub": "每个录音节点把送进来的声音写成这个文件夹里的文件。主程序重启时录音不会中断。WAV 文件在接近 4 GB 时自动分段。",

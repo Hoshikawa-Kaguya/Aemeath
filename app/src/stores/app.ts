@@ -14,8 +14,6 @@ export type Page = (typeof PAGES)[number]
 
 export interface Toast {
   message: string
-  /** 提示条带"撤销"按钮 */
-  undoable: boolean
 }
 
 export interface Confirmation {
@@ -51,9 +49,9 @@ export const useAppStore = defineStore('app', () => {
   const routes = computed(() => state.value?.routes ?? [])
   const nodeById = computed(() => new Map(nodes.value.map((node) => [node.id, node])))
 
-  /** 底部的短暂提示；`undoable` 时带"撤销"按钮。新提示会替换旧的 */
-  function showToast(message: string, undoable = false): void {
-    toast.value = { message, undoable }
+  /** 底部的短暂提示。新提示会替换旧的 */
+  function showToast(message: string): void {
+    toast.value = { message }
     window.clearTimeout(toastTimer)
     toastTimer = window.setTimeout(() => (toast.value = null), TOAST_MS)
   }
@@ -194,11 +192,6 @@ export const useAppStore = defineStore('app', () => {
     update.value = await backend.getUpdateState()
   }
 
-  async function undo(): Promise<void> {
-    hideToast()
-    await run(backend.undo)
-  }
-
   /** 打开确认对话框，返回用户是否确认 */
   function confirm(message: string, action: string): Promise<boolean> {
     confirmation.value?.resolve(false)
@@ -212,19 +205,21 @@ export const useAppStore = defineStore('app', () => {
     confirmation.value = null
   }
 
-  /** 删除节点，删除后的提示带"撤销" */
+  /** 删除节点：删除后不能恢复，所以先确认；有应用落在这个节点上时同时说明影响的应用数 */
   async function removeNode(node: NodeView): Promise<void> {
-    // 落点节点被删除时提示影响的应用数，但不阻止。查询失败时按没有应用处理：删除照常可以撤销
+    const { t } = i18n.global
+    // 查询失败时按没有应用处理
     const landed = await backend.landingCount(node.id).catch(() => 0)
-    if (landed > 0) {
-      const { t } = i18n.global
-      if (!(await confirm(t('confirm.deleteLanding', { n: landed }), t('menu.deleteNode')))) {
-        return
-      }
+    const message =
+      landed > 0
+        ? t('confirm.deleteLandingNode', { name: node.name, n: landed })
+        : t('confirm.deleteNode', { name: node.name })
+    if (!(await confirm(message, t('menu.deleteNode')))) {
+      return
     }
-    showToast(i18n.global.t('toast.nodeDeleting'))
+    showToast(t('toast.nodeDeleting'))
     if (await run(() => backend.removeNode(node.id))) {
-      showToast(i18n.global.t('toast.nodeDeleted', { name: node.name }), true)
+      showToast(t('toast.nodeDeleted', { name: node.name }))
     }
   }
 
@@ -234,12 +229,12 @@ export const useAppStore = defineStore('app', () => {
     command(node.id).catch((error: unknown) => showToast(errorText(error)))
   }
 
-  /** 删除连线，删除后的提示带"撤销" */
+  /** 删除连线，不用确认：重连一次即可 */
   async function disconnect(from: number, to: number): Promise<void> {
     const src = nodeById.value.get(from)?.name ?? ''
     const dst = nodeById.value.get(to)?.name ?? ''
     if (await run(() => backend.disconnect(from, to))) {
-      showToast(i18n.global.t('toast.routeDeleted', { src, dst }), true)
+      showToast(i18n.global.t('toast.routeDeleted', { src, dst }))
     }
   }
 
@@ -252,7 +247,6 @@ export const useAppStore = defineStore('app', () => {
     nodeById,
     start,
     run,
-    undo,
     removeNode,
     toggleRecording,
     disconnect,

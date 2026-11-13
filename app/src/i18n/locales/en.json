@@ -89,7 +89,6 @@
     "hint": "Drag from a port to connect · Click a route, then press Del to delete · Right-click a route to show its label, then scroll over the label to change the gain",
     "add": "Add node",
     "fit": "Fit to window",
-    "undo": "Undo",
     "zoom": "{percent}%"
   },
   "node": {
@@ -144,7 +143,6 @@
     "nodeDeleting": "Deleting…",
     "nodeDeleted": "Node deleted: {name}",
     "deviceReplaced": "{node} now uses the newly connected device with the same name: {device}",
-    "undo": "Undo",
     "dismiss": "Dismiss",
     "landingRestored": "{app} was moved back to {landing}",
     "recordingFailed": "{node} stopped recording: {reason}"
@@ -467,7 +465,8 @@
     "quit": "Quit Aemeath"
   },
   "confirm": {
-    "deleteLanding": "{n} app(s) land on this node. After it's deleted, they'll follow the system default."
+    "deleteNode": "Delete {name}? Its routes and hotkeys are deleted with it. This can't be undone.",
+    "deleteLandingNode": "Delete {name}? Its routes and hotkeys are deleted with it, and the {n} app(s) that land on it will follow the system default. This can't be undone."
   },
   "rec": {
     "sub": "Each recorder node writes what is routed into it to a file in this folder. Recording continues when the main window restarts. WAV files are split automatically before they reach 4 GB.",

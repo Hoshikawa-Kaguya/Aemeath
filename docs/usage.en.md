@@ -31,7 +31,7 @@ Each box is a **node**, and each line between nodes is a **route**. Sound flows 
 - **Add node** from the toolbar, or right-click empty space.
 - **Connect** by dragging from a node's port onto another node. Nodes that cannot be connected explain why while you drag.
 - **Gain**: usually adjusted on the nodes. To adjust a single route, right-click it and choose "Show route label", then hover the label and scroll (1 dB per step); click the dot on the label to turn the route on or off. Route labels are hidden by default.
-- **Delete** with Del, undo with Ctrl+Z. **Node settings…** in the node menu changes the name, slot, gate, device format and resampler.
+- **Delete** with Del. Deleting a node asks for confirmation first and can't be undone; routes are deleted right away. **Node settings…** in the node menu changes the name, slot, gate, device format and resampler.
 
 The **route matrix** shows every route as a source × destination grid. The **console** shows pinned nodes as channel strips ("Pin node", or "Pin to console" in a node's menu).
 

@@ -19,7 +19,6 @@ export type IconName =
   | 'clock'
   | 'info'
   | 'lang'
-  | 'undo'
   | 'grip'
   | 'more'
   | 'apps'
