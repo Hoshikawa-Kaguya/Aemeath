@@ -321,6 +321,8 @@ impl BridgeResampler {
 pub struct RateController {
     target_ms: f64,
     integral: f64,
+    /// 误差连续在积分范围之外的时长（秒）
+    outside_s: f64,
 }
 
 /// 比例系数：缓冲占用每偏离 1 ms，校正 40 ppm（取值理由见 [`RateController`]）
@@ -331,6 +333,9 @@ pub const DEFAULT_KI_PPM_PER_MS_S: f64 = 1.0;
 pub const MAX_CORRECTION_PPM: f64 = 1000.0;
 /// 只有缓冲占用误差在这个范围内才累积积分（ms）
 pub const INTEGRATE_WITHIN_MS: f64 = 3.0;
+/// 误差连续在积分范围之外这么久（秒）后照样积分：漂移超过约 120 ppm 时，比例项要 3 ms 以上的误差才抵得过，
+/// 误差就一直停在范围之外，积分永远学不到漂移。一次性的跳变不会持续这么久
+const INTEGRATE_ANYWAY_AFTER_S: f64 = 60.0;
 const PPM: f64 = 1e-6;
 
 /// 一次更新的结果，供日志使用。
@@ -349,6 +354,7 @@ impl RateController {
         Self {
             target_ms,
             integral: 0.0,
+            outside_s: 0.0,
         }
     }
 
@@ -356,6 +362,11 @@ impl RateController {
     pub fn update(&mut self, average_level_ms: f64, period_s: f64) -> RateUpdate {
         let error_ms = average_level_ms - self.target_ms;
         if error_ms.abs() <= INTEGRATE_WITHIN_MS {
+            self.outside_s = 0.0;
+        } else {
+            self.outside_s += period_s;
+        }
+        if error_ms.abs() <= INTEGRATE_WITHIN_MS || self.outside_s >= INTEGRATE_ANYWAY_AFTER_S {
             self.integral += error_ms * period_s;
         }
         // 抗积分饱和：积分项单独不得超过校正上限
@@ -632,6 +643,21 @@ mod tests {
         let mut level = 15.0;
         let mut update = RateUpdate::default();
         for _ in 0..600 {
+            level += (drift_ppm - update.correction_ppm) * 1e-3;
+            update = controller.update(level, 1.0);
+        }
+        assert!((update.integral_ppm - drift_ppm).abs() < 1.0, "{update:?}");
+        assert!(update.error_ms.abs() < 0.1, "{update:?}");
+    }
+
+    #[test]
+    fn a_drift_too_large_for_the_integration_window_is_still_learned() {
+        // 300 ppm 时比例项要 7.5 ms 的误差才抵得过，误差一直在积分范围之外
+        let drift_ppm = 300.0;
+        let mut controller = RateController::new(15.0);
+        let mut level = 15.0;
+        let mut update = RateUpdate::default();
+        for _ in 0..900 {
             level += (drift_ppm - update.correction_ppm) * 1e-3;
             update = controller.update(level, 1.0);
         }
