@@ -122,6 +122,11 @@ class MeterRenderer {
   }
 
   private feed(samples: MeterSample[]): void {
+    // 没有电平表时不累加：否则回到工作台时每个表都从这段时间的最高峰开始回落，像刚爆过音
+    if (this.meters.size === 0) {
+      this.levels.clear()
+      return
+    }
     for (const sample of samples) {
       const current = this.levels.get(sample.node) ?? { left: -Infinity, right: -Infinity }
       current.left = Math.max(current.left, toDb(sample.left))

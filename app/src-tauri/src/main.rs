@@ -120,6 +120,10 @@ fn main() -> ExitCode {
                 let placement = window::capture(&app);
                 tauri::async_runtime::spawn(window::remember(app, placement));
             }
+            // 窗口销毁后 Channel 的发送照样成功（只是往事件循环投消息），不主动退订会一直推下去
+            if matches!(event, WindowEvent::Destroyed) {
+                window.app_handle().state::<MeterHub>().unsubscribe();
+            }
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_state,

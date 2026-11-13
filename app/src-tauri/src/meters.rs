@@ -2,7 +2,7 @@
 //!
 //! 每 [`PUSH_INTERVAL`] 取走一次峰值，编码成原始字节发出，不经过 JSON：每个节点 12 字节，
 //! 依次是节点 ID（u32）、左声道峰值、右声道峰值（f32），全部小端。界面在两次推送之间自己做衰减动画。
-//! 窗口关闭（WebView 被销毁）后发送失败，就停止推送，直到新窗口重新订阅。
+//! 窗口销毁时退订（发送本身不会因此失败），停止推送，直到新窗口重新订阅。
 
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
@@ -61,5 +61,10 @@ impl MeterHub {
     /// 新窗口订阅电平，替换掉之前的订阅。
     pub fn subscribe(&self, channel: Channel<InvokeResponseBody>) {
         *self.subscriber.lock().unwrap_or_else(PoisonError::into_inner) = Some(channel);
+    }
+
+    /// 窗口销毁时停止推送，直到新窗口重新订阅。
+    pub fn unsubscribe(&self) {
+        *self.subscriber.lock().unwrap_or_else(PoisonError::into_inner) = None;
     }
 }
