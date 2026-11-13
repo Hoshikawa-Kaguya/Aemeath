@@ -127,13 +127,6 @@ impl Drop for ProcessExit {
     }
 }
 
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct Translation {
-    language: u16,
-    code_page: u16,
-}
-
 /// 可执行文件的"文件说明"（`FileDescription`），例如 "Google Chrome"；读不到或为空时为 None。
 pub fn file_description(path: &Path) -> Option<String> {
     let wide = HSTRING::from(path.as_os_str());
@@ -146,32 +139,48 @@ pub fn file_description(path: &Path) -> Option<String> {
     // SAFETY: data 的长度正是 size
     unsafe { GetFileVersionInfoW(&wide, None, size, data.as_mut_ptr().cast()) }.ok()?;
 
-    let translations = query_value(&data, r"\VarFileInfo\Translation")?;
-    if translations.1 < size_of::<Translation>() as u32 {
+    // 翻译表：每项是语言（u16）和代码页（u16），小端
+    let translation = query_value(&data, r"\VarFileInfo\Translation", 1)?;
+    let [language_low, language_high, page_low, page_high, ..] = *translation else {
         return None;
-    }
-    // SAFETY: 系统返回的指针在 data 内，长度已检查；用 read_unaligned 避开对齐要求
-    let first = unsafe { translations.0.cast::<Translation>().read_unaligned() };
+    };
     let block = format!(
         r"\StringFileInfo\{:04x}{:04x}\FileDescription",
-        first.language, first.code_page
+        u16::from_le_bytes([language_low, language_high]),
+        u16::from_le_bytes([page_low, page_high])
     );
-    let (text, chars) = query_value(&data, &block)?;
-    // SAFETY: 这是字符串值，系统返回的指针在 data 内，chars 是字符数（含结尾的 NUL）
-    let units = unsafe { std::slice::from_raw_parts(text.cast::<u16>(), chars as usize) };
-    let end = units.iter().position(|unit| *unit == 0).unwrap_or(units.len());
-    let description = String::from_utf16_lossy(&units[..end]).trim().to_owned();
+    // 字符串值的长度按 UTF-16 字符计（含结尾的 NUL）
+    let text = query_value(&data, &block, 2)?;
+    let units: Vec<u16> = text
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| u16::from_le_bytes(*pair))
+        .take_while(|unit| *unit != 0)
+        .collect();
+    let description = String::from_utf16_lossy(&units).trim().to_owned();
     (!description.is_empty()).then_some(description)
 }
 
-/// 返回值指向 `data` 内部。
-fn query_value(data: &[u8], sub_block: &str) -> Option<(*const c_void, u32)> {
+/// 查一个值，返回它在 `data` 里的字节。长度来自文件本身，可能是错的：超出 `data` 的部分不要，
+/// 所以按偏移从 `data` 里取，不直接用系统返回的指针和长度建切片。`unit` 是长度的单位（字节数）。
+fn query_value<'a>(data: &'a [u8], sub_block: &str, unit: usize) -> Option<&'a [u8]> {
     let name = HSTRING::from(sub_block);
     let mut value: *mut c_void = std::ptr::null_mut();
     let mut length = 0u32;
     // SAFETY: data 是 GetFileVersionInfoW 填好的版本信息块，name 以 NUL 结尾，两个输出参数都有效
     let found = unsafe { VerQueryValueW(data.as_ptr().cast(), PCWSTR(name.as_ptr()), &mut value, &mut length) };
-    (found.as_bool() && !value.is_null()).then_some((value.cast_const(), length))
+    if !found.as_bool() || value.is_null() {
+        return None;
+    }
+    bytes_within(data, value.cast_const().cast(), length as usize * unit)
+}
+
+/// `pointer` 指向 `data` 内时，返回从那里开始、最多 `len` 字节、不超出 `data` 的部分。
+fn bytes_within(data: &[u8], pointer: *const u8, len: usize) -> Option<&[u8]> {
+    let offset = (pointer as usize).checked_sub(data.as_ptr() as usize)?;
+    let end = offset.saturating_add(len).min(data.len());
+    data.get(offset..end)
 }
 
 #[cfg(test)]
@@ -192,6 +201,23 @@ mod tests {
         let system = system_directory().unwrap();
         assert!(system.is_absolute());
         assert!(system.join("pnputil.exe").is_file());
+    }
+
+    #[test]
+    fn values_are_cut_at_the_end_of_the_version_block() {
+        let data = [1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+        let inside = data[8..].as_ptr();
+        assert_eq!(bytes_within(&data, inside, 2), Some(&data[8..10]));
+        assert_eq!(
+            bytes_within(&data, inside, 1000),
+            Some(&data[8..10]),
+            "a wrong length stays inside"
+        );
+        assert_eq!(
+            bytes_within(&data, data.as_ptr().wrapping_add(20), 2),
+            None,
+            "past the end"
+        );
     }
 
     #[test]
