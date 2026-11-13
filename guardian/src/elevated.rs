@@ -124,6 +124,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_release_script_bundles_the_same_installer() {
+        let script = include_str!("../../scripts/release.ps1");
+        assert!(script.contains(&format!("$UsbipVersion = '{}'", UsbipVersion::BUNDLED)));
+        assert!(script.contains(&format!("$UsbipSha256 = '{INSTALLER_SHA256}'")));
+    }
+
+    #[test]
     fn checks_the_installer_digest() {
         assert!(!matches_checksum(b"not the installer"));
         assert_eq!(INSTALLER_SHA256.len(), 64);

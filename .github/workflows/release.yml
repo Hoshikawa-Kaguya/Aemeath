@@ -20,7 +20,7 @@ jobs:
     # 只支持 Windows 11 x64
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       # 版本号写在 scripts/version.json 和 Cargo.toml 两处，都要与 tag 一致；不一致就不发布
       - name: Check the version
@@ -38,10 +38,10 @@ jobs:
           "prerelease=$($json.Contains('-'))" >> $env:GITHUB_OUTPUT
 
       # 前端：pnpm 的版本取自 app/package.json 的 packageManager 字段
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           package_json_file: app/package.json
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
           cache: pnpm
@@ -50,7 +50,10 @@ jobs:
         working-directory: app
         run: pnpm install --frozen-lockfile
 
-      - uses: dtolnay/rust-toolchain@stable
+      # 钉了提交，工具链要显式指定
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
 
       - name: Build and package
         shell: pwsh

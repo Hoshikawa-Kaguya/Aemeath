@@ -42,15 +42,15 @@ try {
         Push-Location app
         try {
             # tauri build 负责嵌入前端资源；不生成 Tauri 自己的安装包
-            pnpm tauri build --no-bundle @FeatureFlags
+            pnpm tauri build --no-bundle @FeatureFlags -- --locked
         }
         finally {
             Pop-Location
         }
     }
     Invoke-Step 'Build the engine and the guardian' {
-        cargo build --release -p aemeath-host @FeatureFlags
-        cargo build --release -p aemeath-guardian @FeatureFlags
+        cargo build --release --locked -p aemeath-host @FeatureFlags
+        cargo build --release --locked -p aemeath-guardian @FeatureFlags
     }
     Invoke-Step 'Collect the executables' {
         foreach ($exe in 'Aemeath.exe', 'aemeath-host.exe', 'aemeath-app.exe') {
