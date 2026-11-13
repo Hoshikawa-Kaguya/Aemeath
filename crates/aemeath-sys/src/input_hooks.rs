@@ -12,9 +12,9 @@ use windows::Win32::Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    HOT_KEY_MODIFIERS, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYEVENTF_KEYUP, MOD_ALT, MOD_CONTROL,
-    MOD_NOREPEAT, MOD_SHIFT, MOD_WIN, MOUSEEVENTF_XDOWN, MOUSEEVENTF_XUP, MOUSEINPUT, RegisterHotKey, SendInput,
-    UnregisterHotKey, VIRTUAL_KEY,
+    GetAsyncKeyState, HOT_KEY_MODIFIERS, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYEVENTF_KEYUP,
+    MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, MOD_WIN, MOUSEEVENTF_XDOWN, MOUSEEVENTF_XUP, MOUSEINPUT,
+    RegisterHotKey, SendInput, UnregisterHotKey, VIRTUAL_KEY,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, GetMessageW, HHOOK, KBDLLHOOKSTRUCT, MSG, MSLLHOOKSTRUCT, PM_NOREMOVE, PeekMessageW,
@@ -191,6 +191,14 @@ impl Drop for InputThread {
     }
 }
 
+/// 这个虚拟键（含鼠标侧键）现在是否按着。当前桌面不是活动桌面时（UAC、锁屏）总是 false。
+pub fn is_key_down(vk: u32) -> bool {
+    // SAFETY: 没有前置条件；不认识的键码返回 0
+    let state = unsafe { GetAsyncKeyState(vk as i32) };
+    // 最高位表示按着
+    state < 0
+}
+
 /// 返回系统实际注入的事件数；被拦截时是 0。
 fn send_input(input: INPUT) -> u32 {
     // SAFETY: input 是有效的 INPUT，长度和结构大小都正确
@@ -257,31 +265,24 @@ struct Hooks {
 }
 
 impl Hooks {
-    /// 按需安装或卸载键盘、鼠标的低级钩子；已是目标状态的不动。
+    /// 按需安装或卸载键盘、鼠标的低级钩子。已安装的也先卸再装：回调超时的钩子会被 Windows 静默移除，
+    /// 句柄还在但已经失效，重新设置绑定时借机恢复。
     fn set(&mut self, keyboard: bool, mouse: bool) -> windows::core::Result<()> {
         // SAFETY: 取本进程的模块句柄，不增加引用计数
         let module: HINSTANCE = unsafe { GetModuleHandleW(None)? }.into();
-        // SAFETY: 回调是 'static 的 extern 函数；句柄由 Hooks 持有，卸载一次
+        // SAFETY: 回调是 'static 的 extern 函数；句柄由 Hooks 持有，卸载一次（已被系统移除的句柄卸载失败，忽略）
         unsafe {
-            match (keyboard, self.keyboard) {
-                (true, None) => {
-                    self.keyboard = Some(SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_proc), Some(module), 0)?);
-                }
-                (false, Some(hook)) => {
-                    let _ = UnhookWindowsHookEx(hook);
-                    self.keyboard = None;
-                }
-                _ => {}
+            if let Some(hook) = self.keyboard.take() {
+                let _ = UnhookWindowsHookEx(hook);
             }
-            match (mouse, self.mouse) {
-                (true, None) => {
-                    self.mouse = Some(SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_proc), Some(module), 0)?);
-                }
-                (false, Some(hook)) => {
-                    let _ = UnhookWindowsHookEx(hook);
-                    self.mouse = None;
-                }
-                _ => {}
+            if let Some(hook) = self.mouse.take() {
+                let _ = UnhookWindowsHookEx(hook);
+            }
+            if keyboard {
+                self.keyboard = Some(SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_proc), Some(module), 0)?);
+            }
+            if mouse {
+                self.mouse = Some(SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_proc), Some(module), 0)?);
             }
         }
         Ok(())
@@ -290,6 +291,8 @@ impl Hooks {
 
 /// 输入线程的消息循环。热键注册和钩子都绑定在线程上，所以全部在这个线程里做；其他线程的命令经消息唤醒后处理。
 fn run(commands: &Receiver<Command>, ready: &Sender<u32>) {
+    // 钩子回调在这个线程上执行，系统忙时排不上就会超时、钩子被移除；提权失败也照常工作，只是更容易超时
+    let _ = crate::thread_priority::raise_current_thread();
     let mut message = MSG::default();
     // SAFETY: 让系统为本线程建立消息队列，之后 PostThreadMessageW 才不会失败
     let _ = unsafe { PeekMessageW(&mut message, None, 0, 0, PM_NOREMOVE) };

@@ -4,12 +4,13 @@
 //! 钩子只在有绑定需要时才安装，没有这类绑定时进程不挂任何全局钩子。
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::mpsc::Receiver;
+use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use aemeath_core::hotkeys::{Hotkey, HotkeyBinding, HotkeyMode, HotkeyTarget, KeyCode, Modifiers};
-use aemeath_sys::input_hooks::{HotkeyModifiers, InputThread, InputThreadError, RawInput, SideButton};
+use aemeath_sys::input_hooks::{HotkeyModifiers, InputThread, InputThreadError, RawInput, SideButton, is_key_down};
 use tokio::sync::mpsc;
 use tracing::warn;
 
@@ -24,6 +25,10 @@ const VK_LCONTROL: u32 = 0xA2;
 const VK_RCONTROL: u32 = 0xA3;
 const VK_LMENU: u32 = 0xA4;
 const VK_RMENU: u32 = 0xA5;
+const VK_XBUTTON1: u32 = 0x05;
+const VK_XBUTTON2: u32 = 0x06;
+/// 有按住中的按键时，每隔这么久查一次真实的按键状态
+const RECONCILE_INTERVAL: Duration = Duration::from_millis(200);
 /// RegisterHotKey 的 ID 从这里开始编号
 const FIRST_REGISTRATION_ID: i32 = 1;
 
@@ -53,6 +58,15 @@ fn is_modifier(vk: u32) -> bool {
             | VK_LMENU
             | VK_RMENU
     )
+}
+
+/// 按键对应的虚拟键码（鼠标侧键也有）。
+fn virtual_key(key: KeyCode) -> u32 {
+    match key {
+        KeyCode::Keyboard { vk } => vk,
+        KeyCode::MouseX1 => VK_XBUTTON1,
+        KeyCode::MouseX2 => VK_XBUTTON2,
+    }
 }
 
 /// 从原始输入到热键事件的纯逻辑，不碰系统。
@@ -119,14 +133,31 @@ impl Matcher {
                 });
             }
         } else {
-            let released: Vec<Hotkey> = self.active.iter().filter(|hotkey| hotkey.key == key).copied().collect();
-            for hotkey in released {
-                self.active.remove(&hotkey);
-                if let Some((target, HotkeyMode::Hold)) = self.hooked.get(&hotkey) {
-                    events.push(HotkeyEvent::Released(*target));
-                }
+            self.release_where(|hotkey| hotkey.key == key, events);
+        }
+    }
+
+    /// 结束满足条件的按住状态，按住型发出松开。
+    fn release_where(&mut self, released: impl Fn(&Hotkey) -> bool, events: &mut Vec<HotkeyEvent>) {
+        let released: Vec<Hotkey> = self.active.iter().filter(|hotkey| released(hotkey)).copied().collect();
+        for hotkey in released {
+            self.active.remove(&hotkey);
+            if let Some((target, HotkeyMode::Hold)) = self.hooked.get(&hotkey) {
+                events.push(HotkeyEvent::Released(*target));
             }
         }
+    }
+
+    /// 有按住中的热键或修饰键，需要用真实的按键状态对账。
+    fn is_holding(&self) -> bool {
+        !self.active.is_empty() || !self.held_modifiers.is_empty()
+    }
+
+    /// 按真实的按键状态补上漏掉的松开：弹出 UAC、锁屏时钩子收不到松开，否则按住说话会一直开着。
+    /// `is_down` 按虚拟键码查询。
+    fn reconcile(&mut self, is_down: impl Fn(u32) -> bool, events: &mut Vec<HotkeyEvent>) {
+        self.held_modifiers.retain(|vk| is_down(*vk));
+        self.release_where(|hotkey| !is_down(virtual_key(hotkey.key)), events);
     }
 
     /// 把一条原始输入（`RegisterHotKey` 的消息或钩子事件）翻译成热键事件。
@@ -275,13 +306,26 @@ fn apply(shared: &mut Shared, input: &InputThread) {
 }
 
 /// 转发线程：把输入线程的原始输入翻译后送给控制面。输入线程只管收消息，不在钩子回调里做匹配，免得拖慢系统输入。
+/// 有按住中的按键时定期和真实的按键状态对账。
 fn forward(raw: &Receiver<RawInput>, shared: &Mutex<Shared>, events: &mpsc::UnboundedSender<HotkeyEvent>) {
-    while let Ok(event) = raw.recv() {
-        let out = shared
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .matcher
-            .on_input(event);
+    let mut last_reconcile = Instant::now();
+    loop {
+        let input = match raw.recv_timeout(RECONCILE_INTERVAL) {
+            Ok(input) => Some(input),
+            Err(RecvTimeoutError::Timeout) => None,
+            Err(RecvTimeoutError::Disconnected) => return,
+        };
+        let mut out = Vec::new();
+        {
+            let matcher = &mut shared.lock().unwrap_or_else(PoisonError::into_inner).matcher;
+            if let Some(input) = input {
+                out = matcher.on_input(input);
+            }
+            if matcher.is_holding() && last_reconcile.elapsed() >= RECONCILE_INTERVAL {
+                matcher.reconcile(is_key_down, &mut out);
+                last_reconcile = Instant::now();
+            }
+        }
         for event in out {
             let _ = events.send(event);
         }
@@ -322,6 +366,27 @@ mod tests {
         assert_eq!(
             feed(&mut matcher, &[key(F13, true), key(F13, true), key(F13, false)]),
             vec![HotkeyEvent::Pressed(target(1)), HotkeyEvent::Released(target(1))]
+        );
+    }
+
+    #[test]
+    fn a_missed_release_is_made_up_from_the_real_key_state() {
+        let mut matcher = Matcher::default();
+        matcher.hooked.insert(bare(F13), (target(1), HotkeyMode::Hold));
+        matcher.hooked.insert(bare(KEY_M), (target(2), HotkeyMode::Hold));
+        feed(&mut matcher, &[key(VK_LSHIFT, true), key(F13, true), key(KEY_M, true)]);
+
+        // 弹出 UAC 时松开了 F13 和 Shift，钩子没收到；M 仍按着
+        let mut events = Vec::new();
+        matcher.reconcile(|vk| vk == KEY_M, &mut events);
+        assert_eq!(events, vec![HotkeyEvent::Released(target(1))]);
+        assert!(matcher.held_modifiers.is_empty());
+        assert!(matcher.is_holding(), "M is still held");
+
+        // 之后再按 F13 是一次新的按下，不会被当成自动重复
+        assert_eq!(
+            feed(&mut matcher, &[key(F13, true)]),
+            vec![HotkeyEvent::Pressed(target(1))]
         );
     }
 
