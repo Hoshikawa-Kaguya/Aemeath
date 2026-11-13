@@ -50,6 +50,8 @@ pub async fn run(config: RuntimeConfig, shutdown: impl Future<Output = ()>) -> i
         events,
         meter_banks,
     };
+    // 先建管道（要求是首个实例）再恢复拓扑：同名管道已被别人占着时直接失败退出，不先放出声音
+    let mut listener = aemeath_sys::pipe::create_pipe_server(&config.pipe_name, true)?;
     restore_cached_topology(&mut state);
     // 电平只用于显示：共享内存建不起来时记录下来，音频照常运行
     let meter_task = match meter_publisher::spawn(&config.meter_memory_name, banks) {
@@ -60,7 +62,6 @@ pub async fn run(config: RuntimeConfig, shutdown: impl Future<Output = ()>) -> i
         }
     };
 
-    let mut listener = aemeath_sys::pipe::create_pipe_server(&config.pipe_name, true)?;
     tokio::pin!(shutdown);
     loop {
         let connected = tokio::select! {

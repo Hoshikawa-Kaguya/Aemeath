@@ -270,10 +270,24 @@ async fn run(
         next_revision: 0,
         pending_topologies: Vec::new(),
     };
+    let own_sid = aemeath_sys::pipe::current_user_sid().ok();
+    let mut warned_foreign = false;
     loop {
         let mut pipe = loop {
             match ClientOptions::new().open(&config.pipe_name) {
-                Ok(pipe) => break pipe,
+                // 管道名全机共享：同机另一个用户可以抢先建同名管道，连过去就会把拓扑（设备 ID、程序和录音路径）发给它
+                Ok(pipe) => match aemeath_sys::pipe::pipe_server_user_sid(&pipe) {
+                    Ok(sid) if Some(&sid) == own_sid.as_ref() => break pipe,
+                    owner => {
+                        if !warned_foreign {
+                            warn!(
+                                ?owner,
+                                "the engine pipe is not served by the current user, not connecting"
+                            );
+                            warned_foreign = true;
+                        }
+                    }
+                },
                 Err(error)
                     if error.raw_os_error() == Some(ERROR_PIPE_BUSY)
                         || error.kind() == std::io::ErrorKind::NotFound => {}

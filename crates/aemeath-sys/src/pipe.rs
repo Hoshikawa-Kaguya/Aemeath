@@ -6,11 +6,13 @@
 
 use std::ffi::c_void;
 use std::io;
+use std::os::windows::io::AsRawHandle;
 
-use tokio::net::windows::named_pipe::{NamedPipeServer, PipeMode, ServerOptions};
-use windows::Win32::Foundation::{HLOCAL, LocalFree};
+use tokio::net::windows::named_pipe::{NamedPipeClient, NamedPipeServer, PipeMode, ServerOptions};
+use windows::Win32::Foundation::{HANDLE, HLOCAL, LocalFree};
 use windows::Win32::Security::Authorization::ConvertSidToStringSidW;
 use windows::Win32::Security::{GetTokenInformation, TOKEN_USER, TokenUser};
+use windows::Win32::System::Pipes::GetNamedPipeServerProcessId;
 use windows::core::PWSTR;
 
 use crate::security::CurrentUserOnly;
@@ -18,8 +20,19 @@ use crate::token::Token;
 
 /// 当前用户的 SID，例如 `S-1-5-21-…`。
 pub fn current_user_sid() -> io::Result<String> {
-    let token = Token::current_process()?;
+    user_sid(&Token::current_process()?)
+}
 
+/// 已连上的管道的服务端进程属于哪个用户（SID）。管道名是全机共享的，同机另一个用户可以抢先建同名管道，
+/// 客户端连上后用它核对；打不开对方进程（通常就是别的用户的进程）时返回错误。
+pub fn pipe_server_user_sid(pipe: &NamedPipeClient) -> io::Result<String> {
+    let mut process_id = 0u32;
+    // SAFETY: 句柄来自仍然打开的管道客户端；process_id 是有效的输出指针
+    unsafe { GetNamedPipeServerProcessId(HANDLE(pipe.as_raw_handle()), &mut process_id) }?;
+    user_sid(&Token::of_process(process_id)?)
+}
+
+fn user_sid(token: &Token) -> io::Result<String> {
     let mut needed = 0u32;
     // SAFETY: 第一次调用只查询所需长度（不传缓冲区），预期返回"缓冲区不足"错误，忽略之。
     let _ = unsafe { GetTokenInformation(token.0, TokenUser, None, 0, &mut needed) };
@@ -80,6 +93,16 @@ mod tests {
     fn reads_the_current_user_sid() {
         let sid = current_user_sid().unwrap();
         assert!(sid.starts_with("S-1-5-"), "{sid}");
+    }
+
+    #[tokio::test]
+    async fn the_server_of_our_own_pipe_is_the_current_user() {
+        let name = format!(r"\\.\pipe\aemeath-sys-owner-test-{}", std::process::id());
+        let _server = create_pipe_server(&name, true).unwrap();
+        let client = tokio::net::windows::named_pipe::ClientOptions::new()
+            .open(&name)
+            .unwrap();
+        assert_eq!(pipe_server_user_sid(&client).unwrap(), current_user_sid().unwrap());
     }
 
     #[tokio::test]
