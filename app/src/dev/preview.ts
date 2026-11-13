@@ -7,8 +7,12 @@ import { emit } from '@tauri-apps/api/event'
 import { mockIPC, mockWindows } from '@tauri-apps/api/mocks'
 import type {
   Capabilities,
+  DeviceSettings,
+  Direction,
   FormatView,
+  NewNodeKind,
   NodeView,
+  RecorderSettingsView,
   Resampler,
   RouteView,
   SlotSettings,
@@ -314,6 +318,34 @@ type Args = Record<string, unknown>
 function updateRoute(args: Args, change: Partial<RouteView>): ViewState {
   const routes = state.routes.map((r) => (r.from === args.from && r.to === args.to ? { ...r, ...change } : r))
   return commit({ ...state, routes })
+}
+
+/** 按"添加节点"的参数新建节点：编号接着最大的，虚拟节点和外部插入占用同方向编号最小的空闲槽位 */
+function newNode(args: Args, existing: NodeView[]): NodeView {
+  const kind = args.kind as NewNodeKind
+  const id = Math.max(0, ...existing.map((n) => n.id)) + 1
+  const direction: Direction | null =
+    kind.type === 'virtualInput' ? 'in' : kind.type === 'virtualOutput' || kind.type === 'externalInsert' ? 'out' : null
+  const used = new Set(existing.filter((n) => n.slot?.direction === direction).map((n) => n.slot?.number))
+  const number = Array.from({ length: 8 }, (_, index) => index + 1).find((candidate) => !used.has(candidate))
+  const slot = direction === null || number === undefined ? null : { direction, number }
+  return node({
+    id,
+    name: args.name as string,
+    kind: kind.type,
+    x: args.x as number,
+    y: args.y as number,
+    slot,
+    device: 'endpointId' in kind ? { endpointId: kind.endpointId, name: kind.deviceName } : null,
+    program:
+      kind.type === 'appSource'
+        ? { path: kind.program, fileName: kind.program.split('\\').pop() ?? kind.program }
+        : null,
+    resampler: kind.type === 'appSource' ? kind.resampler : null,
+    recorder: kind.type === 'recorder' ? { settings: state.recording.defaults, state: { state: 'idle' } } : null,
+    ...(args.io ? { io: args.io as DeviceSettings } : {}),
+    ...(args.slotSettings ? { slotSettings: args.slotSettings as SlotSettings } : {}),
+  })
 }
 
 function updateNode(args: Args, change: Partial<NodeView>): ViewState {
@@ -642,8 +674,49 @@ mockIPC(
       }
       case 'plugin:window|is_maximized':
         return false
-      default:
+      case 'add_node':
+        return commit({ ...state, nodes: [...state.nodes, newNode(args, state.nodes)] })
+      case 'apply_preset': {
+        if (state.nodes.length > 0) {
+          return state
+        }
+        const input = newNode({ kind: { type: 'virtualInput' }, name: args.inputName, x: 40, y: 60 }, [])
+        const output = newNode({ kind: { type: 'virtualOutput' }, name: args.outputName, x: 440, y: 60 }, [input])
+        return commit({ ...state, nodes: [input, output] })
+      }
+      case 'replace_device':
+        return updateNode(args, {
+          device: { endpointId: args.endpointId as string, name: args.deviceName as string },
+          candidates: [],
+          status: { state: 'ok' },
+        })
+      case 'replace_program': {
+        const path = args.program as string
+        return updateNode(args, { program: { path, fileName: path.split('\\').pop() ?? path } })
+      }
+      case 'set_app_resampler':
+        return updateNode(args, { resampler: args.resampler as Resampler | null })
+      case 'set_recorder_settings': {
+        const settings = args.settings as RecorderSettingsView
+        const nodes = state.nodes.map((n) =>
+          n.id === args.node && n.recorder ? { ...n, recorder: { ...n.recorder, settings } } : n,
+        )
+        return commit({ ...state, nodes })
+      }
+      case 'set_background_image':
+        return commit({ ...state, appearance: { ...state.appearance, backgroundPath: args.path as string } })
+      case 'remove_background_image':
+        return commit({ ...state, appearance: { ...state.appearance, backgroundPath: null } })
+      case 'check_slots':
+      case 'set_hotkeys_paused':
+      case 'set_tray_labels':
         return null
+      default:
+        // 插件的内部命令（事件监听等）照常放过；应用自己的命令必须有模拟，否则预览会悄悄拿到 null
+        if (cmd.startsWith('plugin:')) {
+          return null
+        }
+        throw new Error(`preview.ts has no mock for the command ${cmd}`)
     }
   },
   { shouldMockEvents: true },
