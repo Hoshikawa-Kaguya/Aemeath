@@ -42,9 +42,9 @@ enum Attempt {
 }
 
 /// 经 UAC 启动提权的自己去安装驱动，并等它结束。用户在 UAC 里选"否"时返回 `Declined`。
-fn attempt(program: &Path, config: &RuntimeConfig) -> Attempt {
-    let arguments = format!("{INSTALL_DRIVER_ARGUMENT} \"{}\"", config.data_dir.display());
-    match run_elevated(program, &arguments) {
+/// 提权进程自己算数据目录，和这里的 `config.data_dir` 相同（都是这套身份的默认目录）。
+fn attempt(program: &Path) -> Attempt {
+    match run_elevated(program, INSTALL_DRIVER_ARGUMENT) {
         Err(ElevateError::Cancelled) => Attempt::Declined,
         Err(error) => Attempt::Failed(error.to_string()),
         Ok(process) => match process.wait() {
@@ -79,7 +79,7 @@ pub fn resolve(
             info!("the user chose not to install the driver");
             return false;
         }
-        let result = task_dialog::run_with_progress(&messages::installing(language), || attempt(&program, config))
+        let result = task_dialog::run_with_progress(&messages::installing(language), || attempt(&program))
             .unwrap_or_else(|error| Attempt::Failed(error.to_string()));
         match result {
             Attempt::Installed => {
