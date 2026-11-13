@@ -813,8 +813,16 @@ impl Controller {
                 let _ = reply.send(self.view());
             }
             Request::Edit { edit, reply } => {
+                // 删除节点或换槽位后，原来的落点端点空出来，以后被别的节点占用时那些程序会意外落进去
+                let moves_slot = |node: NodeId, number: u8| {
+                    let current = self.config.workspace.node(node).and_then(|node| node.kind.slot());
+                    current.is_some_and(|slot| slot.number.get() != number)
+                };
                 let released = match &edit {
                     Edit::RemoveNode(node) => self.landing_endpoint(*node).await,
+                    Edit::ChangeSlot { node, number } if moves_slot(*node, *number) => {
+                        self.landing_endpoint(*node).await
+                    }
                     _ => None,
                 };
                 let result = self.apply(edit).map(|()| self.view());
