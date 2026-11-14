@@ -105,6 +105,7 @@ impl Engine {
             ServerConfig {
                 port: config.usbip_port,
                 profile: config.identity,
+                driver_only: true,
             },
             server_events,
         )?;

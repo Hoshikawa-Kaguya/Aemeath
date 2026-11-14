@@ -20,6 +20,7 @@ use std::time::Duration;
 
 use aemeath_protocol::ids::{SlotDirection, SlotId};
 use aemeath_sys::clock::now_hns;
+use aemeath_sys::network::{SYSTEM_PROCESS_ID, tcp_connection_owner};
 use aemeath_sys::thread_priority::raise_current_thread;
 
 use crate::descriptors::{self, Descriptors};
@@ -91,6 +92,9 @@ pub struct ServerConfig {
     pub port: u16,
     /// 槽位以开发身份还是正式身份出现在 Windows 里
     pub profile: IdentityProfile,
+    /// 只接受 usbip-win2 驱动（System 进程）发起的导入，防止本机其他程序抢先导入槽位来偷听或注入声音。
+    /// 测试里由测试进程自己导入，要关掉。
+    pub driver_only: bool,
 }
 
 /// 运行中的 USB/IP 服务端。监听和读连接都在后台线程里，这里只保留地址和导出状态。
@@ -103,6 +107,7 @@ struct Shared {
     identities: BTreeMap<SlotId, SlotIdentity>,
     state: Mutex<State>,
     events: Sender<ServerEvent>,
+    driver_only: bool,
     connections: AtomicUsize,
     next_connection: AtomicU64,
 }
@@ -137,6 +142,7 @@ impl UsbipServer {
             identities,
             state: Mutex::new(State::default()),
             events,
+            driver_only: config.driver_only,
             connections: AtomicUsize::new(0),
             next_connection: AtomicU64::new(1),
         });
@@ -222,6 +228,13 @@ fn serve(mut stream: TcpStream, connection: ConnectionId, shared: &Shared) -> io
         OpRequest::Import => {
             let mut raw = [0u8; BUSID_LEN];
             stream.read_exact(&mut raw)?;
+            if shared.driver_only && !from_driver(&stream)? {
+                tracing::warn!(
+                    connection = connection.0,
+                    "import from a process other than the driver, closing"
+                );
+                return Ok(());
+            }
             let Some(identity) = admit(&stream, &raw, connection, shared)? else {
                 return Ok(());
             };
@@ -238,6 +251,15 @@ fn serve(mut stream: TcpStream, connection: ConnectionId, shared: &Shared) -> io
             result
         }
     }
+}
+
+/// 连接的对端是否属于 System 进程。usbip-win2 的导入由内核驱动发起，实测对端 PID 是 4。
+fn from_driver(stream: &TcpStream) -> io::Result<bool> {
+    let (SocketAddr::V4(local), SocketAddr::V4(peer)) = (stream.local_addr()?, stream.peer_addr()?) else {
+        return Ok(false);
+    };
+    // 在对端那一侧看，本地端是 peer
+    Ok(tcp_connection_owner(peer, local)? == Some(SYSTEM_PROCESS_ID))
 }
 
 /// 检查导入请求；接受时登记为已导入并回复设备信息，拒绝时回复原因并返回 None。
@@ -303,7 +325,6 @@ fn import(mut stream: TcpStream, identity: SlotIdentity, connection: ConnectionI
     let mut function = Uac2Function::new(slot.direction, Descriptors::build(&identity));
     let mut decoder = UrbDecoder::new();
     let mut chunk = vec![0u8; READ_CHUNK];
-    let mut iso_interval = None;
     loop {
         // Windows 上 shutdown 不保证唤醒阻塞中的 recv（见 EXPORT_CHECK_INTERVAL），所以每次读之前都查
         if abandoned.load(Ordering::Relaxed) {
@@ -323,7 +344,7 @@ fn import(mut stream: TcpStream, identity: SlotIdentity, connection: ConnectionI
         };
         decoder.push(&chunk[..read]);
         while let Some(command) = decoder.next_command().map_err(invalid_data)? {
-            handle_command(command, slot, connection, &mut function, &mut iso_interval, shared)?;
+            handle_command(command, slot, connection, &mut function, shared)?;
         }
     }
 }
@@ -334,7 +355,6 @@ fn handle_command(
     slot: SlotId,
     connection: ConnectionId,
     function: &mut Uac2Function,
-    iso_interval: &mut Option<u32>,
     shared: &Shared,
 ) -> io::Result<()> {
     let submit = match command {
@@ -384,11 +404,6 @@ fn handle_command(
         SlotDirection::Out => (CAPTURE_ENDPOINT_NUMBER, Direction::In),
     };
     if submit.is_iso() && (submit.endpoint, submit.direction) == expected {
-        // 每条连接记一次（变化时再记）：驱动实际填的 interval 决定 URB 在时间线上的跨度
-        if *iso_interval != Some(submit.interval) {
-            tracing::info!(%slot, interval = submit.interval, packets = submit.iso_packets.len(), "isochronous URB interval");
-            *iso_interval = Some(submit.interval);
-        }
         return send(
             shared,
             ServerEvent::IsoSubmit {
@@ -453,23 +468,33 @@ mod tests {
         }
     }
 
-    fn start() -> (UsbipServer, Receiver<ServerEvent>) {
+    fn start_with(driver_only: bool) -> (UsbipServer, Receiver<ServerEvent>) {
         let (events, receiver) = mpsc::channel();
         let config = ServerConfig {
             port: 0,
             profile: IdentityProfile::Development,
+            driver_only,
         };
         (UsbipServer::start(config, events).unwrap(), receiver)
     }
 
-    /// 发出导入请求，返回 (状态, 连接)
-    fn request_import(server: &UsbipServer, busid: &str) -> (u32, TcpStream) {
+    fn start() -> (UsbipServer, Receiver<ServerEvent>) {
+        start_with(false)
+    }
+
+    fn send_import_request(server: &UsbipServer, busid: &str) -> TcpStream {
         let mut stream = TcpStream::connect(server.local_addr()).unwrap();
         let mut request = vec![0x01, 0x11, 0x80, 0x03, 0, 0, 0, 0];
         let mut raw = [0u8; BUSID_LEN];
         raw[..busid.len()].copy_from_slice(busid.as_bytes());
         request.extend_from_slice(&raw);
         stream.write_all(&request).unwrap();
+        stream
+    }
+
+    /// 发出导入请求，返回 (状态, 连接)
+    fn request_import(server: &UsbipServer, busid: &str) -> (u32, TcpStream) {
+        let mut stream = send_import_request(server, busid);
         let mut reply = [0u8; 8];
         stream.read_exact(&mut reply).unwrap();
         let status = u32::from_be_bytes([reply[4], reply[5], reply[6], reply[7]]);
@@ -499,6 +524,17 @@ mod tests {
 
         let (status, _retry) = request_import(&server, "1-1");
         assert_eq!(status, 0, "the slot is not left busy");
+    }
+
+    #[test]
+    fn imports_from_other_processes_are_closed_without_a_reply() {
+        let (server, events) = start_with(true);
+        server.set_exported(BTreeSet::from([slot(SlotDirection::In, 1)]));
+        let mut stream = send_import_request(&server, "1-1");
+        let mut reply = Vec::new();
+        stream.read_to_end(&mut reply).unwrap();
+        assert!(reply.is_empty());
+        assert!(events.try_recv().is_err(), "nothing is imported");
     }
 
     #[test]

@@ -48,6 +48,9 @@ const BUS_NUMBER: u32 = 1;
 pub const MAX_TRANSFER_LEN: u32 = 1024 * 1024;
 /// 单个 URB 的等时包数上限。Windows 实测每个 URB 最多几十个包。
 pub const MAX_ISO_PACKETS: u32 = 1024;
+/// 等时 URB 的包间隔上限（微帧）。描述符的 `bInterval = 1`，usbip-win2 实测也填 1；
+/// 放宽到 8（1 ms）留余量，更大的值只会让 URB 在时间线上占得更久。
+pub const MAX_ISO_INTERVAL: u32 = 8;
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum WireError {
@@ -67,6 +70,8 @@ pub enum WireError {
     TransferTooLarge(u32),
     #[error("{0} isochronous packets exceed the limit")]
     TooManyPackets(u32),
+    #[error("isochronous interval {0} exceeds the limit")]
+    IntervalTooLarge(u32),
     #[error("an isochronous packet lies outside the transfer buffer")]
     PacketOutOfBounds,
 }
@@ -346,6 +351,10 @@ impl UrbDecoder {
             count if count > MAX_ISO_PACKETS => return Err(WireError::TooManyPackets(count)),
             count => count,
         };
+        // 控制传输的 interval 没有意义，只限等时 URB
+        if packet_count > 0 && interval > MAX_ISO_INTERVAL {
+            return Err(WireError::IntervalTooLarge(interval));
+        }
 
         // 上面的上限保证这些长度都不会溢出
         let data_len = if direction == Direction::Out {
@@ -650,6 +659,34 @@ mod tests {
         assert_eq!(
             decoder.next_command(),
             Err(WireError::TooManyPackets(MAX_ISO_PACKETS + 1))
+        );
+    }
+
+    #[test]
+    fn rejects_long_isochronous_intervals() {
+        // submit_header 的第 10 个字是 interval
+        const INTERVAL_OFFSET: usize = 9 * 4;
+        let with_interval = |iso: bool, interval: u32| {
+            let mut bytes = submit_header(1, DIRECTION_IN, 2, 0, if iso { 1 } else { NOT_ISO });
+            bytes[INTERVAL_OFFSET..INTERVAL_OFFSET + 4].copy_from_slice(&interval.to_be_bytes());
+            if iso {
+                bytes.extend(iso_descriptor(0, 0));
+            }
+            bytes
+        };
+
+        let mut decoder = UrbDecoder::new();
+        decoder.push(&with_interval(true, MAX_ISO_INTERVAL));
+        assert!(matches!(decoder.next_command(), Ok(Some(UrbCommand::Submit(_)))));
+        decoder.push(&with_interval(false, MAX_ISO_INTERVAL + 1));
+        assert!(
+            matches!(decoder.next_command(), Ok(Some(UrbCommand::Submit(_)))),
+            "control transfers are not limited"
+        );
+        decoder.push(&with_interval(true, MAX_ISO_INTERVAL + 1));
+        assert_eq!(
+            decoder.next_command(),
+            Err(WireError::IntervalTooLarge(MAX_ISO_INTERVAL + 1))
         );
     }
 

@@ -48,6 +48,7 @@ fn main() -> ExitCode {
     let config = ServerConfig {
         port,
         profile: IdentityProfile::Development,
+        driver_only: true,
     };
     let server = match UsbipServer::start(config, events) {
         Ok(server) => server,

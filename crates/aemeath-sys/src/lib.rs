@@ -13,6 +13,7 @@ pub mod devices;
 pub mod elevation;
 pub mod icon;
 pub mod input_hooks;
+pub mod network;
 pub mod pipe;
 pub mod policy_config;
 pub mod process;
