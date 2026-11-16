@@ -255,7 +255,6 @@
   "strip.gainAria": "Accessible name of a strip's gain fader.",
   "strip.mute": "Button on a strip that mutes the node. Keep it short: the strip is narrow.",
   "strip.muteAria": "Accessible name of the mute button.",
-  "strip.dragHint": "Tooltip of a strip's title: the full node name, and that dragging reorders strips.",
   "mx.title": "Heading of the route matrix pane (a grid of sources × destinations).",
   "mx.pinOnly": "Switch that limits the matrix to nodes pinned to the console.",
   "mx.from": "Corner label for the rows (sources). Kept in English in both languages, like the prototype.",

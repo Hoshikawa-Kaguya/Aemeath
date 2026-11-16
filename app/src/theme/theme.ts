@@ -87,6 +87,12 @@ export function initTheme(): void {
   query.addEventListener('change', apply)
 }
 
+/** 时长令牌（如 `--dur-fast`）的毫秒数，给脚本里的动画用；Windows 关闭"动画效果"时为 0 */
+export function motionMs(token: string): number {
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return 0
+  return parseFloat(getComputedStyle(document.documentElement).getPropertyValue(token)) || 0
+}
+
 /** 应用深浅色和主题色。 */
 export function applyAppearance(next: Pick<Appearance, 'themeMode' | 'accent'>): void {
   current = next

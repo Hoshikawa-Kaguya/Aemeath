@@ -396,8 +396,7 @@
     "gateAria": "{name} 的门限阈值",
     "gainAria": "{name} 的增益",
     "mute": "静音",
-    "muteAria": "静音 {name}",
-    "dragHint": "{name} · 拖动标题可以调整顺序"
+    "muteAria": "静音 {name}"
   },
   "mx": {
     "title": "路由矩阵",

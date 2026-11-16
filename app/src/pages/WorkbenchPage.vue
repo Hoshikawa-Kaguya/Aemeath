@@ -18,6 +18,7 @@ import AppIcon from '@/components/AppIcon.vue'
 import { SEPARATOR, isMenuKey, openMenu, openMenuAt, type MenuItem } from '@/menu/contextMenu'
 import { useAppStore } from '@/stores/app'
 import { nodeCode, nodeSubtitle } from '@/stores/nodeLabels'
+import { motionMs } from '@/theme/theme'
 import AddNodeDialog from '@/workbench/AddNodeDialog.vue'
 import IoNode from '@/workbench/IoNode.vue'
 import ConsolePane from '@/workbench/ConsolePane.vue'
@@ -82,6 +83,7 @@ const pane = useTemplateRef<HTMLElement>('pane')
 const addDialog = useTemplateRef<InstanceType<typeof AddNodeDialog>>('addDialog')
 const settingsDialog = useTemplateRef<InstanceType<typeof NodeSettingsDialog>>('settingsDialog')
 const routeHotkeyDialog = useTemplateRef<InstanceType<typeof RouteHotkeyDialog>>('routeHotkeyDialog')
+const consolePane = useTemplateRef<InstanceType<typeof ConsolePane>>('consolePane')
 /** 从菜单选了"改名"的节点 */
 const renaming = ref<number | null>(null)
 /** 路由矩阵里悬停的格子：工作台上高亮对应的连线和两端节点 */
@@ -146,7 +148,7 @@ watch(
   (now, before) => {
     const present = new Set(now.map((node) => node.id))
     const isLeaving = (id: number) => leavingNodes.value.some((ghost) => ghost.data?.node.id === id)
-    const duration = exitDuration()
+    const duration = motionMs('--dur-fast')
     if (duration === 0) return
     for (const node of before ?? []) {
       if (present.has(node.id) || isLeaving(node.id)) continue
@@ -173,12 +175,6 @@ watch(
     }
   },
 )
-
-/** 收起动画的时长（ms，即 `--dur-fast`）；Windows 关闭"动画效果"时为 0 */
-function exitDuration(): number {
-  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return 0
-  return parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--dur-fast')) || 0
-}
 
 const liveNodes = computed<Node<NodeData>[]>(() =>
   store.nodes.map((node) => {
@@ -531,7 +527,7 @@ function isTyping(target: EventTarget | null): boolean {
   return target instanceof Element && target.closest('input, textarea, select, fluent-dialog') !== null
 }
 
-/** 工作台的快捷键：Esc 取消选中、菜单键打开菜单、Del 删除选中的对象 */
+/** 工作台的快捷键：Esc 取消选中、菜单键打开菜单、Del 删除选中的对象、Alt+←/→ 移动连线标签或控制台里的通道条 */
 function onKeyDown(event: KeyboardEvent): void {
   if (isTyping(event.target)) {
     return
@@ -544,10 +540,17 @@ function onKeyDown(event: KeyboardEvent): void {
     event.preventDefault()
     return
   }
-  const route = selectedRoute.value
-  if (route?.labelVisible === true && event.altKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+  if (event.altKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+    const step = event.key === 'ArrowRight' ? 1 : -1
+    const route = selectedRoute.value
+    const current = selection.value
+    if (route?.labelVisible === true) {
+      actions.moveLabel(route, route.labelPosition + step * LABEL_STEP)
+    } else if (current?.type !== 'node' || consolePane.value?.moveBy(current.id, step) !== true) {
+      return
+    }
+    // 也挡住 WebView2 把 Alt+← 当作后退
     event.preventDefault()
-    actions.moveLabel(route, route.labelPosition + (event.key === 'ArrowRight' ? LABEL_STEP : -LABEL_STEP))
     return
   }
   if (event.key !== 'Delete' && event.key !== 'Backspace') {
@@ -672,7 +675,13 @@ onBeforeUnmount(() => {
       @select="onMatrixSelect"
       @hover="matrixHover = $event"
     />
-    <ConsolePane class="console" :node-menu="nodeMenu" />
+    <ConsolePane
+      ref="consolePane"
+      class="console"
+      :node-menu="nodeMenu"
+      :selected="selection?.type === 'node' ? selection.id : null"
+      @select="actions.selectNode"
+    />
     <AddNodeDialog ref="addDialog" />
     <NodeSettingsDialog ref="settingsDialog" />
     <RouteHotkeyDialog ref="routeHotkeyDialog" />

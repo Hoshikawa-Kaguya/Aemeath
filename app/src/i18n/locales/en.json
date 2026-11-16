@@ -391,8 +391,7 @@
     "gateAria": "{name} gate threshold",
     "gainAria": "{name} gain",
     "mute": "Mute",
-    "muteAria": "Mute {name}",
-    "dragHint": "{name} · Drag the title to reorder"
+    "muteAria": "Mute {name}"
   },
   "mx": {
     "title": "Route matrix",

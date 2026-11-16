@@ -104,14 +104,13 @@ function onKeyDown(event: KeyboardEvent): void {
     @contextmenu="emit('menu', $event)"
     @keydown="onKeyDown"
   >
-    <div v-tip="t('strip.dragHint', { name: node.name })" class="strip-head" draggable="true">
+    <div v-tip="node.name" class="strip-head">
       <span class="code">{{ nodeCode(node, store.nodes) }}</span>
       <b class="ellipsis">{{ node.name }}</b>
       <button
         type="button"
         class="more"
         :aria-label="t('menu.aria', { name: node.name })"
-        draggable="false"
         @click.stop="emit('menu', $event)"
       >
         <AppIcon name="more" />
