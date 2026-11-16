@@ -15,7 +15,7 @@ import type {
 } from '@/api/types'
 import { i18n, localeFor, setLocale } from '@/i18n'
 import { applyAppearance } from '@/theme/theme'
-import { GAIN_MAX_DB, GAIN_MIN_DB } from '@/workbench/context'
+import { nudgedGain } from '@/workbench/context'
 import { isRecording } from '@/stores/nodeLabels'
 import { describeTarget } from '@/workbench/hotkeyLabels'
 
@@ -270,9 +270,9 @@ export const useAppStore = defineStore('app', () => {
     return run(() => backend.setRouteEnabled(route.from, route.to, !route.enabled))
   }
 
-  /** 把连线增益调整若干个 1 dB，限制在界面允许的范围内 */
+  /** 把连线增益调整若干步（每步 `GAIN_STEP_DB`），限制在界面允许的范围内 */
   function nudgeRouteGain(route: RouteView, steps: number): void {
-    const gain = Math.min(GAIN_MAX_DB, Math.max(GAIN_MIN_DB, Math.round(route.gainDb) + steps))
+    const gain = nudgedGain(route.gainDb, steps)
     if (gain !== route.gainDb) {
       void run(() => backend.setRouteGain(route.from, route.to, gain))
     }

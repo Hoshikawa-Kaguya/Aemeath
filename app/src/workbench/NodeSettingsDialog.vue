@@ -19,7 +19,7 @@ import ProgramIcon from '@/components/ProgramIcon.vue'
 import { useAppStore } from '@/stores/app'
 import { NODE_NAME_MAX, slotName } from '@/stores/nodeLabels'
 import DeviceSettingsFields from './DeviceSettingsFields.vue'
-import { GATE_MAX_DB, GATE_OFF_POSITION, gateToPosition, positionToGate } from './gate'
+import { GATE_MAX_DB, GATE_OFF_POSITION, GATE_STEP_DB, gateToPosition, positionToGate } from './gate'
 import HotkeyField from './HotkeyField.vue'
 import { pickProgram } from './pickProgram'
 import ResamplerField from './ResamplerField.vue'
@@ -270,7 +270,7 @@ defineExpose({ open })
             type="range"
             :min="GATE_OFF_POSITION"
             :max="GATE_MAX_DB"
-            step="1"
+            :step="GATE_STEP_DB"
             :aria-valuetext="gateText"
           />
           <span class="caption">{{ t('nodeSettings.gateHint') }}</span>

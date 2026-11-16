@@ -409,7 +409,7 @@
     "lgOn": "On (number = send gain in dB)",
     "lgOff": "Connected but off",
     "lgNone": "Not connected",
-    "lgKeys": "Click: create or toggle · Del: delete · Scroll over a cell: ±1 dB",
+    "lgKeys": "Click: create or toggle · Del: delete · Scroll over a cell: ±0.5 dB",
     "newRoute": "Create route",
     "lgDup": "The same sound arrives twice"
   },

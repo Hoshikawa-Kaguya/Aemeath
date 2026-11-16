@@ -9,8 +9,9 @@ import { isMenuKey } from '@/menu/contextMenu'
 import NodeMeter from '@/meters/NodeMeter.vue'
 import { useAppStore } from '@/stores/app'
 import { isRecording, nodeCode, recordedTime } from '@/stores/nodeLabels'
-import { GAIN_MAX_DB, GAIN_MIN_DB } from './context'
-import { GATE_MAX_DB, GATE_OFF_POSITION, gateToPosition, positionToGate } from './gate'
+import { GAIN_MAX_DB, GAIN_MIN_DB, GAIN_STEP_DB, nudgedGain } from './context'
+import { GATE_MAX_DB, GATE_OFF_POSITION, GATE_STEP_DB, gateToPosition, positionToGate } from './gate'
+import { createHoverWheel, type HoverWheel } from './hoverWheel'
 import { throttled } from './throttle'
 
 // 控制台上的一条竖排通道条（GLOSSARY：通道条）：节点名、LEVEL / GAIN / GATE 三列竖条（门限只有输入节点才有，没有时去掉一列、通道条变窄）、静音。
@@ -20,8 +21,8 @@ const emit = defineEmits<{ menu: [event: MouseEvent | KeyboardEvent] }>()
 const { t } = useI18n()
 const store = useAppStore()
 
-/** 推子的步进（dB） */
-const GAIN_STEP = 0.5
+/** 最后一次滚轮之后这么久（ms）才恢复接收后端推来的值：滚动中途回来的旧快照不会把推子拉回去 */
+const WHEEL_IDLE_MS = 300
 
 const isInput = computed(() => roleOf(props.node.kind) === 'in')
 const recording = computed(() => isRecording(props.node))
@@ -65,6 +66,44 @@ function onGate(): void {
 /** 松开推子或滑块，恢复接收后端推来的值 */
 function done(): void {
   adjusting = false
+}
+
+const gainWheel = createHoverWheel()
+const gateWheel = createHoverWheel()
+let wheelIdle = 0
+
+/**
+ * 悬停在 GAIN、GATE 列上滚动即调值，每格一步。与路由矩阵相同：滚动控制台时扫过不算（hoverWheel.ts），
+ * 按住 Ctrl 时总是调。滚轮没有松开事件，停下一会儿后再恢复接收后端的值
+ */
+function wheelSteps(event: WheelEvent, wheel: HoverWheel): number {
+  if (!wheel.accepts() && !event.ctrlKey) {
+    return 0
+  }
+  event.preventDefault()
+  const steps = wheel.steps(event)
+  if (steps !== 0) {
+    adjusting = true
+    window.clearTimeout(wheelIdle)
+    wheelIdle = window.setTimeout(done, WHEEL_IDLE_MS)
+  }
+  return steps
+}
+
+function onGainWheel(event: WheelEvent): void {
+  const steps = wheelSteps(event, gainWheel)
+  if (steps !== 0) {
+    gain.value = nudgedGain(gain.value, steps)
+    sendGain(gain.value)
+  }
+}
+
+function onGateWheel(event: WheelEvent): void {
+  const steps = wheelSteps(event, gateWheel)
+  if (steps !== 0) {
+    gatePosition.value = Math.min(GATE_MAX_DB, Math.max(GATE_OFF_POSITION, gatePosition.value + steps * GATE_STEP_DB))
+    sendGate(positionToGate(gatePosition.value))
+  }
 }
 
 /** 双击推子回到 0 dB */
@@ -121,7 +160,7 @@ function onKeyDown(event: KeyboardEvent): void {
         <span class="tag">LEVEL</span>
         <NodeMeter class="level" :node="node.id" :muted="node.muted" orientation="vertical" />
       </div>
-      <div class="col">
+      <div class="col" @mouseenter="gainWheel.enter()" @wheel="onGainWheel">
         <span class="tag">GAIN</span>
         <input
           v-model.number="gain"
@@ -129,7 +168,7 @@ function onKeyDown(event: KeyboardEvent): void {
           type="range"
           :min="GAIN_MIN_DB"
           :max="GAIN_MAX_DB"
-          :step="GAIN_STEP"
+          :step="GAIN_STEP_DB"
           :aria-label="t('strip.gainAria', { name: node.name })"
           :aria-valuetext="formatGain(gain)"
           @input="onGain"
@@ -138,7 +177,7 @@ function onKeyDown(event: KeyboardEvent): void {
         />
         <span class="readout">{{ formatGain(gain) }}</span>
       </div>
-      <div v-if="isInput" v-tip="gateText" class="col">
+      <div v-if="isInput" v-tip="gateText" class="col" @mouseenter="gateWheel.enter()" @wheel="onGateWheel">
         <span class="tag">GATE</span>
         <input
           v-model.number="gatePosition"
@@ -146,7 +185,7 @@ function onKeyDown(event: KeyboardEvent): void {
           type="range"
           :min="GATE_OFF_POSITION"
           :max="GATE_MAX_DB"
-          step="1"
+          :step="GATE_STEP_DB"
           :aria-label="t('strip.gateAria', { name: node.name })"
           :aria-valuetext="gateText"
           @input="onGate"

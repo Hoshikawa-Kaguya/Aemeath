@@ -9,7 +9,7 @@ export interface WorkbenchActions {
   selectRoute(route: RouteView): void
   selectNode(node: NodeView): void
   toggleRoute(route: RouteView): void
-  /** 滚轮调增益：每格 ±1 dB */
+  /** 滚轮调增益：每格一步（`GAIN_STEP_DB`） */
   nudgeGain(route: RouteView, steps: number): void
   /** 沿连线移动标签：`position` 是标签在连线上的位置（0–1） */
   moveLabel(route: RouteView, position: number): void
@@ -56,3 +56,11 @@ export interface RouteData {
 /** 界面上增益的调节范围。后端允许 −120 到 +24 dB，界面只开放常用的一段，推子才不会太灵敏 */
 export const GAIN_MIN_DB = -60
 export const GAIN_MAX_DB = 12
+/** 增益的步进（dB）：推子、滚轮、键盘都按它调 */
+export const GAIN_STEP_DB = 0.5
+
+/** 把增益调整若干步：先对齐到步进，再限制在界面允许的范围内 */
+export function nudgedGain(db: number, steps: number): number {
+  const snapped = Math.round(db / GAIN_STEP_DB) * GAIN_STEP_DB
+  return Math.min(GAIN_MAX_DB, Math.max(GAIN_MIN_DB, snapped + steps * GAIN_STEP_DB))
+}

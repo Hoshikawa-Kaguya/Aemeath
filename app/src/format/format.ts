@@ -18,9 +18,9 @@ export function formatGain(db: number): string {
   return `${sign}${Math.abs(rounded)} dB`
 }
 
-/** 门限阈值：−45 dBFS（取整） */
+/** 门限阈值：−45 dBFS、−45.5 dBFS；最多保留一位小数 */
 export function formatThreshold(db: number): string {
-  const rounded = Math.round(db)
+  const rounded = Math.round(db * 10) / 10
   return rounded === 0 ? '0 dBFS' : `${MINUS}${Math.abs(rounded)} dBFS`
 }
 
