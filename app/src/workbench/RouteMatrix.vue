@@ -317,57 +317,52 @@ function isHot(node: NodeView, axis: 'from' | 'to'): boolean {
           </tr>
         </thead>
         <tbody>
-          <template v-for="(row, rowIndex) in rows" :key="row.id">
-            <tr v-if="rowIndex > 0 && rowGroupStart.has(rowIndex)" class="gap" aria-hidden="true">
-              <td :colspan="columns.length + 2"></td>
-            </tr>
-            <tr>
-              <th
-                v-if="rowGroupStart.has(rowIndex)"
-                v-tip="t(`grp.${rowGroupStart.get(rowIndex)?.role}`)"
-                class="vgrp"
-                :data-grp="rowGroupStart.get(rowIndex)?.role"
-                :rowspan="rowGroupStart.get(rowIndex)?.count"
-                scope="rowgroup"
+          <tr v-for="(row, rowIndex) in rows" :key="row.id">
+            <th
+              v-if="rowGroupStart.has(rowIndex)"
+              v-tip="t(`grp.${rowGroupStart.get(rowIndex)?.role}`)"
+              class="vgrp"
+              :data-grp="rowGroupStart.get(rowIndex)?.role"
+              :rowspan="rowGroupStart.get(rowIndex)?.count"
+              scope="rowgroup"
+            >
+              <span>{{ t(`grp.${rowGroupStart.get(rowIndex)?.role}`) }}</span>
+            </th>
+            <th v-tip="row.name" class="rh" :class="{ hl: isHot(row, 'from') }" scope="row">
+              <b>{{ nodeCode(row, store.nodes) }}</b>
+            </th>
+            <td v-for="(column, columnIndex) in columns" :key="column.id">
+              <span v-if="row.id === column.id" class="cell self" aria-hidden="true"></span>
+              <button
+                v-else
+                v-tip="describe(row, column)"
+                type="button"
+                class="cell"
+                :class="{
+                  on: routeMap.get(key(row.id, column.id))?.enabled === true,
+                  off: routeMap.get(key(row.id, column.id))?.enabled === false,
+                  sel: isSelected(row.id, column.id),
+                  duplicate: routeMap.get(key(row.id, column.id))?.duplicate != null,
+                }"
+                :data-row="rowIndex"
+                :data-column="columnIndex"
+                :tabindex="focusCell.row === rowIndex && focusCell.column === columnIndex ? 0 : -1"
+                :disabled="!routeMap.has(key(row.id, column.id)) && verdicts.has(key(row.id, column.id))"
+                :aria-label="describe(row, column)"
+                @click="click(row, column)"
+                @wheel="onWheel($event, row, column)"
+                @contextmenu="onContextMenu($event, row, column)"
+                @keydown="onKeyDown($event, rowIndex, columnIndex, row, column)"
+                @mouseenter="(hoverWheel.enter(), setHover({ from: row.id, to: column.id }))"
+                @focus="
+                  ((focusCell = { row: rowIndex, column: columnIndex }), setHover({ from: row.id, to: column.id }))
+                "
+                @blur="setHover(null)"
               >
-                <span>{{ t(`grp.${rowGroupStart.get(rowIndex)?.role}`) }}</span>
-              </th>
-              <th v-tip="row.name" class="rh" :class="{ hl: isHot(row, 'from') }" scope="row">
-                <b>{{ nodeCode(row, store.nodes) }}</b>
-              </th>
-              <td v-for="(column, columnIndex) in columns" :key="column.id">
-                <span v-if="row.id === column.id" class="cell self" aria-hidden="true"></span>
-                <button
-                  v-else
-                  v-tip="describe(row, column)"
-                  type="button"
-                  class="cell"
-                  :class="{
-                    on: routeMap.get(key(row.id, column.id))?.enabled === true,
-                    off: routeMap.get(key(row.id, column.id))?.enabled === false,
-                    sel: isSelected(row.id, column.id),
-                    duplicate: routeMap.get(key(row.id, column.id))?.duplicate != null,
-                  }"
-                  :data-row="rowIndex"
-                  :data-column="columnIndex"
-                  :tabindex="focusCell.row === rowIndex && focusCell.column === columnIndex ? 0 : -1"
-                  :disabled="!routeMap.has(key(row.id, column.id)) && verdicts.has(key(row.id, column.id))"
-                  :aria-label="describe(row, column)"
-                  @click="click(row, column)"
-                  @wheel="onWheel($event, row, column)"
-                  @contextmenu="onContextMenu($event, row, column)"
-                  @keydown="onKeyDown($event, rowIndex, columnIndex, row, column)"
-                  @mouseenter="(hoverWheel.enter(), setHover({ from: row.id, to: column.id }))"
-                  @focus="
-                    ((focusCell = { row: rowIndex, column: columnIndex }), setHover({ from: row.id, to: column.id }))
-                  "
-                  @blur="setHover(null)"
-                >
-                  {{ cellText(routeMap.get(key(row.id, column.id))) }}
-                </button>
-              </td>
-            </tr>
-          </template>
+                {{ cellText(routeMap.get(key(row.id, column.id))) }}
+              </button>
+            </td>
+          </tr>
         </tbody>
       </table>
     </div>
@@ -546,11 +541,6 @@ table.mx {
 
 :lang(en) .mx tbody th.vgrp span {
   transform: translate(-50%, -50%) rotate(180deg);
-}
-
-.mx tr.gap > td {
-  height: 6px;
-  padding: 0;
 }
 
 .mx th.rh {
