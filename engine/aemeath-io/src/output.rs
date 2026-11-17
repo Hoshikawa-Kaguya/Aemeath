@@ -25,6 +25,8 @@ use crate::{
 const CHUNKS_PER_SECOND: u32 = 1000;
 /// 开流前等待环形缓冲攒够目标占用时的轮询间隔
 const PRIME_POLL: Duration = Duration::from_millis(1);
+/// 开流后丢掉积压时重新淡入的时长，与引擎端口开始收发时的淡入相同
+const FADE_MS: f64 = 10.0;
 
 /// 启动外部输出的 IO 线程。
 ///
@@ -134,13 +136,6 @@ fn run_session(
         }
         thread::sleep(PRIME_POLL);
     }
-    // 设备离线期间引擎仍在写入，缓冲里可能积压了几百毫秒的旧数据；丢到目标占用，避免重新上线后延迟一直偏大
-    let backlog = consumer.slots() - prime_samples;
-    if backlog > 0
-        && let Ok(chunk) = consumer.read_chunk(backlog)
-    {
-        chunk.commit_all();
-    }
     // 先写满一个缓冲的静音再开流（独占模式要求开流前预先填好一个周期）
     let available = stream.client.get_available_space_in_frames()? as usize;
     codec.write_stereo(&vec![0.0; available * STEREO], &mut bytes);
@@ -155,6 +150,9 @@ fn run_session(
             config.engine_rate,
         ) + frames_to_ms(queue.len() / STEREO, device_rate)
     };
+    let fade_frames = ms_to_frames(FADE_MS, config.engine_rate);
+    let mut faded_frames = fade_frames;
+    let mut first_event = true;
     let mut watch = EventWatch::new(online);
     loop {
         if stop.load(Ordering::Relaxed) || consumer.is_abandoned() {
@@ -163,6 +161,23 @@ fn run_session(
         }
         if let Waited::Timeout = watch.wait(stream)? {
             continue;
+        }
+        if first_event {
+            first_event = false;
+            // 打开设备、开流要一段时间（实测 768 kHz 独占约 100 ms），引擎期间一直在写。积压的是设备开始播放之前的旧数据，
+            // 丢到目标占用，不算溢出；不丢的话会一直多出这段延迟。引擎端口开头的淡入在丢掉的那段里，所以从这里重新淡入
+            let backlog = consumer.slots().saturating_sub(prime_samples);
+            if backlog > 0
+                && let Ok(chunk) = consumer.read_chunk(backlog)
+            {
+                chunk.commit_all();
+                tracing::info!(
+                    endpoint = %config.endpoint.0,
+                    dropped_ms = format!("{:.1}", frames_to_ms(backlog / STEREO, config.engine_rate)),
+                    "dropped the audio queued while the device was starting"
+                );
+            }
+            faded_frames = 0;
         }
         log.level(level(consumer, &resampler, &queue));
 
@@ -190,6 +205,7 @@ fn run_session(
                 input[first.len()..first.len() + second.len()].copy_from_slice(second);
                 chunk.commit_all();
             }
+            fade_in(&mut input[..needed], &mut faded_frames, fade_frames);
             resampled.clear();
             let started = Instant::now();
             resampler.process(&input[..needed], &mut resampled)?;
@@ -209,5 +225,35 @@ fn run_session(
             resampler.set_relative_ratio(relative_ratio(update.correction_ppm))?;
             log.after_control(update);
         }
+    }
+}
+
+/// 线性淡入（交错立体声）：`done` 是已经淡入的帧数，到 `total` 为止，之后原样通过。
+fn fade_in(samples: &mut [f32], done: &mut usize, total: usize) {
+    for frame in samples.as_chunks_mut::<STEREO>().0 {
+        if *done >= total {
+            return;
+        }
+        *done += 1;
+        let gain = *done as f32 / total as f32;
+        frame[0] *= gain;
+        frame[1] *= gain;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fade_in_continues_across_blocks_then_passes_through() {
+        let mut done = 0;
+        let mut first = [1.0f32; 6];
+        fade_in(&mut first, &mut done, 4);
+        assert_eq!(first, [0.25, 0.25, 0.5, 0.5, 0.75, 0.75]);
+        let mut second = [1.0f32; 6];
+        fade_in(&mut second, &mut done, 4);
+        assert_eq!(second, [1.0; 6]);
+        assert_eq!(done, 4);
     }
 }
