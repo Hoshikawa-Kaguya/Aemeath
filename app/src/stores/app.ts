@@ -65,6 +65,8 @@ export const useAppStore = defineStore('app', () => {
   const rateSwitching = ref(false)
   let rateSwitchTimer = 0
   const update = shallowRef<UpdateView | null>(null)
+  /** 设置页正在拖动的遮罩值：拖动时只预览，松手才保存；不在拖动时为 null */
+  const overlayPreview = ref<number | null>(null)
 
   const nodes = computed(() => state.value?.nodes ?? [])
   const routes = computed(() => state.value?.routes ?? [])
@@ -300,6 +302,7 @@ export const useAppStore = defineStore('app', () => {
     rateSwitching,
     setEngineRate,
     update,
+    overlayPreview,
     showToast,
     hideToast,
     errorText,

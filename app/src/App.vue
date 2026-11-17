@@ -41,7 +41,10 @@ onMounted(() => {
   <IconSprite />
   <template v-if="backdrop">
     <div class="backdrop" :style="backdrop"></div>
-    <div class="backdrop overlay" :style="{ opacity: (appearance?.overlayPercent ?? 0) / 100 }"></div>
+    <div
+      class="backdrop overlay"
+      :style="{ opacity: (store.overlayPreview ?? appearance?.overlayPercent ?? 0) / 100 }"
+    ></div>
   </template>
   <div class="window" :class="{ 'has-backdrop': backdrop }">
     <!-- 左列从窗口顶部开始，竖分隔线贯穿全高；右列上方是状态区 -->

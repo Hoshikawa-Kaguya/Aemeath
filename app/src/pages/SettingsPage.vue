@@ -108,24 +108,31 @@ watch(
   { immediate: true },
 )
 
-function updateAppearance(change: Partial<Omit<Appearance, 'backgroundPath'>>): void {
+async function updateAppearance(change: Partial<Omit<Appearance, 'backgroundPath'>>): Promise<void> {
   const current = appearance.value
   if (current !== undefined) {
     const { themeMode, accent, overlayPercent } = current
-    void store.run(() => backend.setAppearance({ themeMode, accent, overlayPercent, ...change }))
+    await store.run(() => backend.setAppearance({ themeMode, accent, overlayPercent, ...change }))
   }
 }
 
 function setThemeMode(event: Event): void {
-  updateAppearance({ themeMode: (event.target as HTMLSelectElement).value as ThemeMode })
+  void updateAppearance({ themeMode: (event.target as HTMLSelectElement).value as ThemeMode })
 }
 
 function setAccent(accent: string | null): void {
-  updateAppearance({ accent })
+  void updateAppearance({ accent })
 }
 
-function setOverlay(): void {
-  updateAppearance({ overlayPercent: overlay.value })
+/** 拖动遮罩滑块时只预览，不写配置 */
+function previewOverlay(event: Event): void {
+  store.overlayPreview = Number((event.target as HTMLInputElement).value)
+}
+
+/** 松手才保存；拿到新状态后再撤掉预览，遮罩不会闪回旧值 */
+async function setOverlay(): Promise<void> {
+  await updateAppearance({ overlayPercent: overlay.value })
+  store.overlayPreview = null
 }
 
 async function chooseBackground(): Promise<void> {
@@ -336,6 +343,7 @@ function redetectAll(): void {
             min="0"
             :max="MAX_OVERLAY"
             :aria-label="t('set.overlay')"
+            @input="previewOverlay"
             @change="setOverlay"
           />
         </div>
