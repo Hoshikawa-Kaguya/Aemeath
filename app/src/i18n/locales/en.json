@@ -510,7 +510,6 @@
     "hint": "Click the field, then press the key. Esc cancels, Backspace clears.",
     "none": "Not set",
     "pressKey": "Press a key…",
-    "pressToToggle": "Press to toggle",
     "clear": "Clear",
     "occupied": "In use by another program",
     "mouseX1": "Mouse button 4",

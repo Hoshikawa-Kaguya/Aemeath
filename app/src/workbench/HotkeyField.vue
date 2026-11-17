@@ -80,7 +80,6 @@ onBeforeUnmount(() => {
     <button type="button" class="key" :class="{ capturing }" :disabled="capturing" @click="startCapture">
       {{ capturing ? t('hotkey.pressKey') : binding === null ? t('hotkey.none') : formatHotkey(binding.key) }}
     </button>
-    <span class="caption hint">{{ t('hotkey.pressToToggle') }}</span>
     <button v-if="binding !== null" type="button" class="clear" :aria-label="t('hotkey.clear')" @click="apply(null)">
       {{ t('hotkey.clear') }}
     </button>
@@ -119,11 +118,6 @@ onBeforeUnmount(() => {
 .key.capturing {
   border-color: var(--accent);
   color: var(--accent-text);
-}
-
-.hint {
-  flex: none;
-  white-space: nowrap;
 }
 
 .clear {

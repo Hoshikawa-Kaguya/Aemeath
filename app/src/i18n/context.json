@@ -380,7 +380,6 @@
   "hotkey.hint": "Hint in the route hotkey dialog.",
   "hotkey.none": "Hotkey field with no key.",
   "hotkey.pressKey": "Hotkey field while waiting for a key.",
-  "hotkey.pressToToggle": "Small text next to every hotkey field: each press of the hotkey flips the state (mute, route on/off, recording).",
   "hotkey.clear": "Button that removes a hotkey.",
   "hotkey.occupied": "Shown when Windows refuses to register the hotkey.",
   "hotkey.mouseX1": "Name of a mouse side button.",

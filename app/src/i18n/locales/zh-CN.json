@@ -510,7 +510,6 @@
     "hint": "点击后按下按键。Esc 取消，Backspace 清除。",
     "none": "未设置",
     "pressKey": "请按下按键…",
-    "pressToToggle": "按下切换",
     "clear": "清除",
     "occupied": "被其他程序占用",
     "mouseX1": "鼠标侧键 4",
