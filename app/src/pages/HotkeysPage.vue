@@ -22,10 +22,6 @@ function rowOf(target: HotkeyTargetView): HotkeyRowView | undefined {
   return rows.value.find((row) => row.target.type === target.type)
 }
 
-function toggleOnly(target: HotkeyTargetView): boolean {
-  return target.type === 'allRecording' || target.type === 'toggleWindow' || target.type === 'nodeRecord'
-}
-
 const dedicated = computed(() => rows.value.filter((row) => !isGlobal(row.target)))
 </script>
 
@@ -40,12 +36,7 @@ const dedicated = computed(() => rows.value.filter((row) => !isGlobal(row.target
       <div class="cardlist">
         <div v-for="target in GLOBAL_TARGETS" :key="target.type" class="card-row">
           <b class="ellipsis">{{ describeTarget(target, store.nodes) }}</b>
-          <HotkeyField
-            :target="target"
-            :binding="rowOf(target)?.binding ?? null"
-            :occupied="rowOf(target)?.occupied"
-            :toggle-only="toggleOnly(target)"
-          />
+          <HotkeyField :target="target" :binding="rowOf(target)?.binding ?? null" :occupied="rowOf(target)?.occupied" />
         </div>
       </div>
 
@@ -56,12 +47,7 @@ const dedicated = computed(() => rows.value.filter((row) => !isGlobal(row.target
           <b v-tip="describeTarget(row.target, store.nodes)" class="ellipsis">
             {{ describeTarget(row.target, store.nodes) }}
           </b>
-          <HotkeyField
-            :target="row.target"
-            :binding="row.binding"
-            :occupied="row.occupied"
-            :toggle-only="toggleOnly(row.target)"
-          />
+          <HotkeyField :target="row.target" :binding="row.binding" :occupied="row.occupied" />
         </div>
       </div>
       <p class="caption note">{{ t('hotkey.note') }}</p>

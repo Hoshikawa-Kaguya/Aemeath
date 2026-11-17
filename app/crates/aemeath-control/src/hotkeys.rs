@@ -1,7 +1,7 @@
-//! 热键服务：把绑定列表注册到系统，把原始输入翻译成"触发、按下、松开"。
+//! 热键服务：把绑定列表注册到系统，把原始输入翻译成被触发的热键。
 //!
-//! 键盘的切换型用 `RegisterHotKey`（会吞掉按键，所以必须带修饰键）；按住型和鼠标侧键用低级钩子（不吞键）。
-//! 钩子只在有绑定需要时才安装，没有这类绑定时进程不挂任何全局钩子。
+//! 键盘按键用 `RegisterHotKey`（会吞掉按键，所以必须带修饰键）；鼠标侧键用低级鼠标钩子（不吞键），
+//! 带修饰键的侧键另外要低级键盘钩子跟踪修饰键。钩子只在有侧键绑定时才安装，没有时进程不挂任何全局钩子。
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use aemeath_core::hotkeys::{Hotkey, HotkeyBinding, HotkeyMode, HotkeyTarget, KeyCode, Modifiers};
+use aemeath_core::hotkeys::{Hotkey, HotkeyBinding, HotkeyTarget, KeyCode, Modifiers};
 use aemeath_sys::input_hooks::{HotkeyModifiers, InputThread, InputThreadError, RawInput, SideButton, is_key_down};
 use tokio::sync::mpsc;
 use tracing::warn;
@@ -25,23 +25,10 @@ const VK_LCONTROL: u32 = 0xA2;
 const VK_RCONTROL: u32 = 0xA3;
 const VK_LMENU: u32 = 0xA4;
 const VK_RMENU: u32 = 0xA5;
-const VK_XBUTTON1: u32 = 0x05;
-const VK_XBUTTON2: u32 = 0x06;
-/// 有按住中的按键时，每隔这么久查一次真实的按键状态
+/// 有按着的修饰键时，每隔这么久查一次真实的按键状态
 const RECONCILE_INTERVAL: Duration = Duration::from_millis(200);
 /// RegisterHotKey 的 ID 从这里开始编号
 const FIRST_REGISTRATION_ID: i32 = 1;
-
-/// 热键事件。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HotkeyEvent {
-    /// 切换型被按下
-    Fired(HotkeyTarget),
-    /// 按住型被按下
-    Pressed(HotkeyTarget),
-    /// 按住型被松开
-    Released(HotkeyTarget),
-}
 
 fn is_modifier(vk: u32) -> bool {
     matches!(
@@ -60,26 +47,15 @@ fn is_modifier(vk: u32) -> bool {
     )
 }
 
-/// 按键对应的虚拟键码（鼠标侧键也有）。
-fn virtual_key(key: KeyCode) -> u32 {
-    match key {
-        KeyCode::Keyboard { vk } => vk,
-        KeyCode::MouseX1 => VK_XBUTTON1,
-        KeyCode::MouseX2 => VK_XBUTTON2,
-    }
-}
-
-/// 从原始输入到热键事件的纯逻辑，不碰系统。
+/// 从原始输入到被触发的热键的纯逻辑，不碰系统。
 #[derive(Default)]
 struct Matcher {
-    /// 按键组合 → 目标（钩子负责的绑定：按住型和鼠标侧键）
-    hooked: BTreeMap<Hotkey, (HotkeyTarget, HotkeyMode)>,
+    /// 按键组合 → 目标（钩子负责的绑定：鼠标侧键）
+    hooked: BTreeMap<Hotkey, HotkeyTarget>,
     /// RegisterHotKey 的 ID → 目标
     registered: BTreeMap<i32, HotkeyTarget>,
     /// 当前按下的修饰键（区分左右，松开一边不影响另一边）
     held_modifiers: BTreeSet<u32>,
-    /// 正被按住的按键组合
-    active: BTreeSet<Hotkey>,
 }
 
 impl Matcher {
@@ -93,101 +69,53 @@ impl Matcher {
         }
     }
 
-    /// 绑定的修饰键都按着就算匹配，多按的修饰键不影响：游戏里按住 Shift 奔跑时，按键说话仍然要能用。
+    /// 绑定的修饰键都按着就算匹配，多按的修饰键不影响：游戏里按住 Shift 奔跑时，侧键热键仍然要能用。
     /// 同时匹配几个时取修饰键最多的那个，否则绑了 X1 之后 Ctrl+X1 永远触发不了。
-    fn find(&self, key: KeyCode) -> Option<Hotkey> {
+    fn find(&self, key: KeyCode) -> Option<HotkeyTarget> {
         let current = self.modifiers();
         self.hooked
-            .keys()
-            .filter(|hotkey| {
+            .iter()
+            .filter(|(hotkey, _)| {
                 hotkey.key == key
                     && (!hotkey.modifiers.ctrl || current.ctrl)
                     && (!hotkey.modifiers.alt || current.alt)
                     && (!hotkey.modifiers.shift || current.shift)
                     && (!hotkey.modifiers.win || current.win)
             })
-            .max_by_key(|hotkey| {
+            .max_by_key(|(hotkey, _)| {
                 let held = hotkey.modifiers;
                 [held.ctrl, held.alt, held.shift, held.win]
                     .into_iter()
                     .filter(|&on| on)
                     .count()
             })
-            .copied()
+            .map(|(_, target)| *target)
     }
 
-    /// 钩子收到的一次按下或松开：按下时匹配当前修饰键，切换型触发一次，按住型开始；松开时结束按住型。
-    fn on_key(&mut self, key: KeyCode, down: bool, events: &mut Vec<HotkeyEvent>) {
-        if down {
-            let Some(hotkey) = self.find(key) else {
-                return;
-            };
-            // 自动重复的按下事件不算新的按下
-            if !self.active.insert(hotkey) {
-                return;
-            }
-            if let Some((target, mode)) = self.hooked.get(&hotkey) {
-                events.push(match mode {
-                    HotkeyMode::Toggle => HotkeyEvent::Fired(*target),
-                    HotkeyMode::Hold => HotkeyEvent::Pressed(*target),
-                });
-            }
-        } else {
-            self.release_where(|hotkey| hotkey.key == key, events);
-        }
-    }
-
-    /// 结束满足条件的按住状态，按住型发出松开。
-    fn release_where(&mut self, released: impl Fn(&Hotkey) -> bool, events: &mut Vec<HotkeyEvent>) {
-        let released: Vec<Hotkey> = self.active.iter().filter(|hotkey| released(hotkey)).copied().collect();
-        for hotkey in released {
-            self.active.remove(&hotkey);
-            if let Some((target, HotkeyMode::Hold)) = self.hooked.get(&hotkey) {
-                events.push(HotkeyEvent::Released(*target));
-            }
-        }
-    }
-
-    /// 有按住中的热键或修饰键，需要用真实的按键状态对账。
-    fn is_holding(&self) -> bool {
-        !self.active.is_empty() || !self.held_modifiers.is_empty()
-    }
-
-    /// 按真实的按键状态补上漏掉的松开：弹出 UAC、锁屏时钩子收不到松开，否则按住说话会一直开着。
+    /// 按真实的按键状态去掉漏掉的修饰键松开：弹出 UAC、锁屏时钩子收不到松开，否则修饰键会一直算作按着。
     /// `is_down` 按虚拟键码查询。
-    fn reconcile(&mut self, is_down: impl Fn(u32) -> bool, events: &mut Vec<HotkeyEvent>) {
+    fn reconcile(&mut self, is_down: impl Fn(u32) -> bool) {
         self.held_modifiers.retain(|vk| is_down(*vk));
-        self.release_where(|hotkey| !is_down(virtual_key(hotkey.key)), events);
     }
 
-    /// 把一条原始输入（`RegisterHotKey` 的消息或钩子事件）翻译成热键事件。
-    fn on_input(&mut self, input: RawInput) -> Vec<HotkeyEvent> {
-        let mut events = Vec::new();
+    /// 把一条原始输入（`RegisterHotKey` 的消息或钩子事件）翻译成被触发的热键。
+    fn on_input(&mut self, input: RawInput) -> Option<HotkeyTarget> {
         match input {
-            RawInput::Hotkey(id) => {
-                if let Some(target) = self.registered.get(&id) {
-                    events.push(HotkeyEvent::Fired(*target));
-                }
-            }
+            RawInput::Hotkey(id) => self.registered.get(&id).copied(),
             RawInput::Key { vk, down } if is_modifier(vk) => {
                 if down {
                     self.held_modifiers.insert(vk);
                 } else {
                     self.held_modifiers.remove(&vk);
                 }
+                None
             }
-            RawInput::Key { vk, down } => {
-                self.on_key(KeyCode::Keyboard { vk }, down, &mut events);
-            }
-            RawInput::Mouse { button, down } => {
-                let key = match button {
-                    SideButton::X1 => KeyCode::MouseX1,
-                    SideButton::X2 => KeyCode::MouseX2,
-                };
-                self.on_key(key, down, &mut events);
-            }
+            RawInput::Key { .. } | RawInput::Mouse { down: false, .. } => None,
+            RawInput::Mouse { button, down: true } => self.find(match button {
+                SideButton::X1 => KeyCode::MouseX1,
+                SideButton::X2 => KeyCode::MouseX2,
+            }),
         }
-        events
     }
 }
 
@@ -207,8 +135,8 @@ pub struct HotkeyService {
 }
 
 impl HotkeyService {
-    /// 启动输入线程。一开始没有绑定，由 [`Self::set_bindings`] 设定；触发的热键送往 `events`。
-    pub fn start(events: mpsc::UnboundedSender<HotkeyEvent>) -> Result<Self, InputThreadError> {
+    /// 启动输入线程。一开始没有绑定，由 [`Self::set_bindings`] 设定；被触发的热键送往 `events`。
+    pub fn start(events: mpsc::UnboundedSender<HotkeyTarget>) -> Result<Self, InputThreadError> {
         let (input, raw) = InputThread::start()?;
         let shared = Arc::new(Mutex::new(Shared {
             matcher: Matcher::default(),
@@ -260,7 +188,6 @@ fn release_all(shared: &mut Shared, input: &InputThread) {
     }
     shared.matcher.registered.clear();
     shared.matcher.hooked.clear();
-    shared.matcher.active.clear();
 }
 
 /// 按当前绑定重新注册 RegisterHotKey 和钩子。
@@ -270,8 +197,8 @@ fn apply(shared: &mut Shared, input: &InputThread) {
     let mut next_id = FIRST_REGISTRATION_ID;
     let (mut keyboard_hook, mut mouse_hook) = (false, false);
     for (target, binding) in shared.bindings.clone() {
-        match (binding.key.key, binding.mode) {
-            (KeyCode::Keyboard { vk }, HotkeyMode::Toggle) => {
+        match binding.key.key {
+            KeyCode::Keyboard { vk } => {
                 let modifiers = binding.key.modifiers;
                 let native = HotkeyModifiers {
                     ctrl: modifiers.ctrl,
@@ -288,26 +215,22 @@ fn apply(shared: &mut Shared, input: &InputThread) {
                     shared.occupied.push(target);
                 }
             }
-            (KeyCode::Keyboard { .. }, HotkeyMode::Hold) => {
-                keyboard_hook = true;
-                shared.matcher.hooked.insert(binding.key, (target, binding.mode));
-            }
-            (KeyCode::MouseX1 | KeyCode::MouseX2, _) => {
+            KeyCode::MouseX1 | KeyCode::MouseX2 => {
                 mouse_hook = true;
                 // 带修饰键的鼠标绑定要靠键盘钩子知道修饰键的状态
                 keyboard_hook |= binding.key.modifiers.any();
-                shared.matcher.hooked.insert(binding.key, (target, binding.mode));
+                shared.matcher.hooked.insert(binding.key, target);
             }
         }
     }
     if let Err(error) = input.set_hooks(keyboard_hook, mouse_hook) {
-        warn!(%error, "cannot install the input hooks, hold hotkeys and mouse buttons won't work");
+        warn!(%error, "cannot install the input hooks, mouse button hotkeys won't work");
     }
 }
 
 /// 转发线程：把输入线程的原始输入翻译后送给控制面。输入线程只管收消息，不在钩子回调里做匹配，免得拖慢系统输入。
-/// 有按住中的按键时定期和真实的按键状态对账。
-fn forward(raw: &Receiver<RawInput>, shared: &Mutex<Shared>, events: &mpsc::UnboundedSender<HotkeyEvent>) {
+/// 有按着的修饰键时定期和真实的按键状态对账。
+fn forward(raw: &Receiver<RawInput>, shared: &Mutex<Shared>, events: &mpsc::UnboundedSender<HotkeyTarget>) {
     let mut last_reconcile = Instant::now();
     loop {
         let input = match raw.recv_timeout(RECONCILE_INTERVAL) {
@@ -315,19 +238,16 @@ fn forward(raw: &Receiver<RawInput>, shared: &Mutex<Shared>, events: &mpsc::Unbo
             Err(RecvTimeoutError::Timeout) => None,
             Err(RecvTimeoutError::Disconnected) => return,
         };
-        let mut out = Vec::new();
-        {
+        let fired = {
             let matcher = &mut shared.lock().unwrap_or_else(PoisonError::into_inner).matcher;
-            if let Some(input) = input {
-                out = matcher.on_input(input);
-            }
-            if matcher.is_holding() && last_reconcile.elapsed() >= RECONCILE_INTERVAL {
-                matcher.reconcile(is_key_down, &mut out);
+            if !matcher.held_modifiers.is_empty() && last_reconcile.elapsed() >= RECONCILE_INTERVAL {
+                matcher.reconcile(is_key_down);
                 last_reconcile = Instant::now();
             }
-        }
-        for event in out {
-            let _ = events.send(event);
+            input.and_then(|input| matcher.on_input(input))
+        };
+        if let Some(target) = fired {
+            let _ = events.send(target);
         }
     }
 }
@@ -337,127 +257,35 @@ mod tests {
     use super::*;
     use aemeath_protocol::ids::NodeId;
 
-    const F13: u32 = 0x7C;
-    const KEY_M: u32 = 0x4D;
-
-    fn key(vk: u32, down: bool) -> RawInput {
-        RawInput::Key { vk, down }
-    }
-
-    fn bare(vk: u32) -> Hotkey {
-        Hotkey {
-            modifiers: Modifiers::default(),
-            key: KeyCode::Keyboard { vk },
-        }
-    }
-
     fn target(id: u32) -> HotkeyTarget {
         HotkeyTarget::NodeMute(NodeId(id))
     }
 
-    fn feed(matcher: &mut Matcher, inputs: &[RawInput]) -> Vec<HotkeyEvent> {
-        inputs.iter().flat_map(|input| matcher.on_input(*input)).collect()
+    fn side(modifiers: Modifiers, key: KeyCode) -> Hotkey {
+        Hotkey { modifiers, key }
+    }
+
+    fn ctrl() -> Modifiers {
+        Modifiers {
+            ctrl: true,
+            ..Modifiers::default()
+        }
+    }
+
+    fn feed(matcher: &mut Matcher, inputs: &[RawInput]) -> Vec<HotkeyTarget> {
+        inputs.iter().filter_map(|input| matcher.on_input(*input)).collect()
+    }
+
+    fn click(button: SideButton, down: bool) -> RawInput {
+        RawInput::Mouse { button, down }
     }
 
     #[test]
-    fn hold_fires_once_despite_key_repeat_and_releases() {
+    fn side_buttons_fire_on_press_only() {
         let mut matcher = Matcher::default();
-        matcher.hooked.insert(bare(F13), (target(1), HotkeyMode::Hold));
-        assert_eq!(
-            feed(&mut matcher, &[key(F13, true), key(F13, true), key(F13, false)]),
-            vec![HotkeyEvent::Pressed(target(1)), HotkeyEvent::Released(target(1))]
-        );
-    }
-
-    #[test]
-    fn a_missed_release_is_made_up_from_the_real_key_state() {
-        let mut matcher = Matcher::default();
-        matcher.hooked.insert(bare(F13), (target(1), HotkeyMode::Hold));
-        matcher.hooked.insert(bare(KEY_M), (target(2), HotkeyMode::Hold));
-        feed(&mut matcher, &[key(VK_LSHIFT, true), key(F13, true), key(KEY_M, true)]);
-
-        // 弹出 UAC 时松开了 F13 和 Shift，钩子没收到；M 仍按着
-        let mut events = Vec::new();
-        matcher.reconcile(|vk| vk == KEY_M, &mut events);
-        assert_eq!(events, vec![HotkeyEvent::Released(target(1))]);
-        assert!(matcher.held_modifiers.is_empty());
-        assert!(matcher.is_holding(), "M is still held");
-
-        // 之后再按 F13 是一次新的按下，不会被当成自动重复
-        assert_eq!(
-            feed(&mut matcher, &[key(F13, true)]),
-            vec![HotkeyEvent::Pressed(target(1))]
-        );
-    }
-
-    #[test]
-    fn a_bare_hold_still_works_while_a_modifier_is_held() {
-        let mut matcher = Matcher::default();
-        matcher.hooked.insert(bare(F13), (target(1), HotkeyMode::Hold));
-        assert_eq!(
-            feed(&mut matcher, &[key(VK_LSHIFT, true), key(F13, true)]),
-            vec![HotkeyEvent::Pressed(target(1))]
-        );
-    }
-
-    #[test]
-    fn the_most_specific_binding_wins() {
-        let chord = Hotkey {
-            modifiers: Modifiers {
-                ctrl: true,
-                ..Modifiers::default()
-            },
-            key: KeyCode::Keyboard { vk: F13 },
-        };
-        let mut matcher = Matcher::default();
-        matcher.hooked.insert(bare(F13), (target(1), HotkeyMode::Hold));
-        matcher.hooked.insert(chord, (target(2), HotkeyMode::Hold));
-        assert_eq!(
-            feed(&mut matcher, &[key(VK_LCONTROL, true), key(F13, true)]),
-            vec![HotkeyEvent::Pressed(target(2))]
-        );
-    }
-
-    #[test]
-    fn a_modified_hold_needs_its_modifier_and_survives_releasing_it_first() {
-        let chord = Hotkey {
-            modifiers: Modifiers {
-                ctrl: true,
-                ..Modifiers::default()
-            },
-            key: KeyCode::Keyboard { vk: KEY_M },
-        };
-        let mut matcher = Matcher::default();
-        matcher.hooked.insert(chord, (target(2), HotkeyMode::Hold));
-        assert!(feed(&mut matcher, &[key(KEY_M, true), key(KEY_M, false)]).is_empty());
-        assert_eq!(
-            feed(
-                &mut matcher,
-                &[
-                    key(VK_LCONTROL, true),
-                    key(KEY_M, true),
-                    key(VK_LCONTROL, false),
-                    key(KEY_M, false)
-                ]
-            ),
-            vec![HotkeyEvent::Pressed(target(2)), HotkeyEvent::Released(target(2))]
-        );
-    }
-
-    #[test]
-    fn mouse_side_buttons_work_in_both_modes() {
-        let mut matcher = Matcher::default();
-        let side = |key| Hotkey {
-            modifiers: Modifiers::default(),
-            key,
-        };
         matcher
             .hooked
-            .insert(side(KeyCode::MouseX1), (target(3), HotkeyMode::Toggle));
-        matcher
-            .hooked
-            .insert(side(KeyCode::MouseX2), (target(4), HotkeyMode::Hold));
-        let click = |button, down| RawInput::Mouse { button, down };
+            .insert(side(Modifiers::default(), KeyCode::MouseX1), target(3));
         assert_eq!(
             feed(
                 &mut matcher,
@@ -465,25 +293,59 @@ mod tests {
                     click(SideButton::X1, true),
                     click(SideButton::X1, false),
                     click(SideButton::X2, true),
-                    click(SideButton::X2, false),
                 ]
             ),
-            vec![
-                HotkeyEvent::Fired(target(3)),
-                HotkeyEvent::Pressed(target(4)),
-                HotkeyEvent::Released(target(4)),
-            ]
+            vec![target(3)]
         );
+    }
+
+    #[test]
+    fn the_most_specific_binding_wins_and_extra_modifiers_are_fine() {
+        let mut matcher = Matcher::default();
+        matcher
+            .hooked
+            .insert(side(Modifiers::default(), KeyCode::MouseX1), target(1));
+        matcher.hooked.insert(side(ctrl(), KeyCode::MouseX1), target(2));
+        let key = |vk, down| RawInput::Key { vk, down };
+        assert_eq!(
+            feed(
+                &mut matcher,
+                &[
+                    key(VK_LCONTROL, true),
+                    click(SideButton::X1, true),
+                    key(VK_LCONTROL, false),
+                    key(VK_LSHIFT, true),
+                    click(SideButton::X1, true),
+                ]
+            ),
+            vec![target(2), target(1)]
+        );
+    }
+
+    #[test]
+    fn a_missed_modifier_release_is_made_up_from_the_real_key_state() {
+        let mut matcher = Matcher::default();
+        matcher
+            .hooked
+            .insert(side(Modifiers::default(), KeyCode::MouseX1), target(1));
+        matcher.hooked.insert(side(ctrl(), KeyCode::MouseX1), target(2));
+        feed(
+            &mut matcher,
+            &[RawInput::Key {
+                vk: VK_LCONTROL,
+                down: true,
+            }],
+        );
+        // 弹出 UAC 时松开了 Ctrl，钩子没收到
+        matcher.reconcile(|_| false);
+        assert_eq!(feed(&mut matcher, &[click(SideButton::X1, true)]), vec![target(1)]);
     }
 
     #[test]
     fn registered_hotkeys_map_their_id_to_the_target() {
         let mut matcher = Matcher::default();
         matcher.registered.insert(7, target(5));
-        assert_eq!(
-            feed(&mut matcher, &[RawInput::Hotkey(7)]),
-            vec![HotkeyEvent::Fired(target(5))]
-        );
+        assert_eq!(feed(&mut matcher, &[RawInput::Hotkey(7)]), vec![target(5)]);
         assert!(feed(&mut matcher, &[RawInput::Hotkey(8)]).is_empty());
     }
 }

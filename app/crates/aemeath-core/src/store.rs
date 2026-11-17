@@ -11,18 +11,26 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::hotkeys::HotkeyBinding;
 use crate::model::EngineSettings;
 use crate::preferences::Preferences;
 use crate::workspace::Workspace;
 
 /// 配置文件的结构版本。结构有不兼容的变化时加一，并在 [`ConfigStore::load`] 中加入迁移。
 ///
-/// 2：新增控制台的固定顺序、通道条的门限。新字段都有默认值，版本 1 的文件可以直接读入；
-/// 提升版本是为了让只认识版本 1 的程序明确拒绝新文件，而不是因为不认识的字段把它当作损坏的配置。
-/// 3：新增应用源、外部插入、录音节点与热键。规则同上。
-/// 4：重采样算法的表示改变，不做迁移，版本 3 的配置解析失败后备份并从空配置开始。
-/// 5：连线新增"是否显示连线标签"，默认不显示。版本 4 的文件直接读入，连线标签全部隐藏。
-pub const CONFIG_VERSION: u32 = 5;
+/// 6：热键去掉"切换/按住"方式，一律是切换。版本 5 的文件由 [`migrate_hotkey_modes`] 迁移。
+pub const CONFIG_VERSION: u32 = 6;
+/// 能迁移的上一个版本
+const PREVIOUS_VERSION: u32 = 5;
+/// 配置里存放热键绑定的字段：节点、连线、全局热键
+const HOTKEY_FIELDS: [&str; 6] = [
+    "mute_hotkey",
+    "record_hotkey",
+    "toggle_hotkey",
+    "all_recording",
+    "panic_mute",
+    "toggle_window",
+];
 const CONFIG_FILE: &str = "workspace.json";
 const TEMP_SUFFIX: &str = "tmp";
 const BACKUP_INFIX: &str = "corrupt";
@@ -177,7 +185,16 @@ impl ConfigStore {
 
 /// 解析并校验配置；返回错误说明（写进日志和提示中）。
 fn parse(bytes: &[u8]) -> Result<Config, String> {
-    let file: ConfigFile = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+    let file: ConfigFile = match serde_json::from_slice::<VersionOnly>(bytes) {
+        Ok(VersionOnly {
+            version: PREVIOUS_VERSION,
+        }) => serde_json::from_slice(bytes).and_then(|mut value| {
+            migrate_hotkey_modes(&mut value);
+            serde_json::from_value(value)
+        }),
+        _ => serde_json::from_slice(bytes),
+    }
+    .map_err(|error| error.to_string())?;
     let workspace = file.workspace;
     workspace.check().map_err(|error| error.to_string())?;
     Ok(Config {
@@ -186,9 +203,46 @@ fn parse(bytes: &[u8]) -> Result<Config, String> {
     })
 }
 
+/// 版本 5 → 6：去掉热键绑定的 `mode`，按住型改成切换。
+/// 不带修饰键的键盘按键以前只能做按住型，不符合切换的规则，删掉这个绑定。
+fn migrate_hotkey_modes(file: &mut serde_json::Value) {
+    file["version"] = CONFIG_VERSION.into();
+    for path in ["/workspace/nodes", "/workspace/routes"] {
+        if let Some(owners) = file.pointer_mut(path).and_then(serde_json::Value::as_array_mut) {
+            owners.iter_mut().for_each(migrate_owner);
+        }
+    }
+    if let Some(global) = file.pointer_mut("/preferences/global_hotkeys") {
+        migrate_owner(global);
+    }
+}
+
+fn migrate_owner(owner: &mut serde_json::Value) {
+    let Some(owner) = owner.as_object_mut() else {
+        return;
+    };
+    for field in HOTKEY_FIELDS {
+        let Some(binding) = owner.get_mut(field) else {
+            continue;
+        };
+        if let Some(binding) = binding.as_object_mut() {
+            binding.remove("mode");
+        }
+        // 解析不了的留给随后的整体解析报告为损坏
+        if serde_json::from_value::<HotkeyBinding>(binding.clone()).is_ok_and(|binding| !binding.is_valid()) {
+            tracing::warn!(
+                field,
+                "a hold hotkey without a modifier cannot become a toggle, removed"
+            );
+            owner.remove(field);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hotkeys::{HotkeyTarget, all_hotkeys};
     use crate::model::{NodeName, Position};
     use crate::workspace::NodeSpec;
 
@@ -299,34 +353,36 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// 升级迁移：版本 4 的配置没有 `label_visible`，读入后连线标签全部隐藏，其余内容照常读入
+    /// 升级迁移：版本 5 的热键带 `mode`。迁移后都是切换，不带修饰键的键盘按住型被删掉，其余照常读入
     #[test]
-    fn version_4_files_load_with_route_labels_hidden() {
-        let dir = temp_dir("v4");
+    fn version_5_hotkeys_become_toggles() {
+        let dir = temp_dir("v5");
         let store = ConfigStore::new(&dir);
-        let mut config = sample();
-        let route = config.workspace.routes()[0];
-        config
-            .workspace
-            .set_route_label_visible(route.from, route.to, true)
-            .unwrap();
-        store.save(&config).unwrap();
+        store.save(&sample()).unwrap();
         let mut file: serde_json::Value = serde_json::from_slice(&std::fs::read(store.path()).unwrap()).unwrap();
-        assert_eq!(file["workspace"]["routes"][0]["label_visible"], true);
-
-        // 版本 4 的文件没有这个字段
-        file["version"] = 4.into();
-        file["workspace"]["routes"][0]
-            .as_object_mut()
-            .unwrap()
-            .remove("label_visible");
+        file["version"] = 5.into();
+        file["workspace"]["nodes"][0]["mute_hotkey"] =
+            serde_json::json!({"key": {"key": {"type": "keyboard", "vk": 0x7C}}, "mode": "hold"});
+        file["workspace"]["routes"][0]["toggle_hotkey"] = serde_json::json!(
+            {"key": {"modifiers": {"ctrl": true}, "key": {"type": "keyboard", "vk": 0x4D}}, "mode": "hold"}
+        );
+        file["preferences"]["global_hotkeys"]["panic_mute"] =
+            serde_json::json!({"key": {"key": {"type": "mouse_x1"}}, "mode": "toggle"});
         std::fs::write(store.path(), serde_json::to_vec(&file).unwrap()).unwrap();
-        assert!(matches!(
-            store.load().unwrap(),
-            Loaded::Existing(loaded)
-                if !loaded.workspace.routes().is_empty()
-                    && loaded.workspace.routes().iter().all(|route| !route.label_visible)
-        ));
+
+        let Loaded::Existing(loaded) = store.load().unwrap() else {
+            unreachable!("expected the version 5 file to be migrated")
+        };
+        let targets: Vec<HotkeyTarget> = all_hotkeys(&loaded.workspace, &loaded.preferences)
+            .into_iter()
+            .map(|(target, _)| target)
+            .collect();
+        let route = loaded.workspace.routes()[0];
+        assert_eq!(
+            targets,
+            vec![HotkeyTarget::PanicMute, HotkeyTarget::RouteToggle(route.from, route.to)]
+        );
+        assert_eq!(loaded.workspace.nodes().len(), sample().workspace.nodes().len());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

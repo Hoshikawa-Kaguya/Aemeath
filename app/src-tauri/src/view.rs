@@ -559,7 +559,7 @@ mod tests {
     /// 这些领域类型直接发给界面、从界面收回，JSON 必须与 `types.ts` 一致
     #[test]
     fn domain_types_sent_as_they_are_match_the_frontend_types() {
-        use aemeath_core::hotkeys::{HotkeyMode, Modifiers};
+        use aemeath_core::hotkeys::Modifiers;
         use aemeath_protocol::topology::{RecordDepth, RecordFormat, RecorderSettings};
         use serde_json::json;
 
@@ -585,10 +585,6 @@ mod tests {
         ] {
             assert_eq!(serde_json::to_value(mode).unwrap(), json!(text));
             assert_eq!(serde_json::from_value::<ThemeMode>(json!(text)).unwrap(), mode);
-        }
-        for (mode, text) in [(HotkeyMode::Toggle, "toggle"), (HotkeyMode::Hold, "hold")] {
-            assert_eq!(serde_json::to_value(mode).unwrap(), json!(text));
-            assert_eq!(serde_json::from_value::<HotkeyMode>(json!(text)).unwrap(), mode);
         }
         let modifiers = json!({ "ctrl": true, "alt": false, "shift": true, "win": false });
         let parsed: Modifiers = serde_json::from_value(modifiers.clone()).unwrap();

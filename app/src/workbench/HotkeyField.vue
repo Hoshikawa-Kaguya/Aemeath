@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { onBeforeUnmount, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { backend } from '@/api/backend'
-import type { HotkeyBindingView, HotkeyModeView, HotkeyTargetView, HotkeyView } from '@/api/types'
+import type { HotkeyBindingView, HotkeyTargetView } from '@/api/types'
 import { useAppStore } from '@/stores/app'
 import { captureFromKey, captureFromPointer, formatHotkey, type CaptureResult } from './hotkeyLabels'
 
@@ -11,29 +11,15 @@ import { captureFromKey, captureFromPointer, formatHotkey, type CaptureResult } 
 const props = defineProps<{
   target: HotkeyTargetView
   binding: HotkeyBindingView | null
-  /** 录音和显示/隐藏主窗口只能用切换 */
-  toggleOnly?: boolean
   occupied?: boolean
 }>()
 const { t } = useI18n()
 const store = useAppStore()
 
 const capturing = ref(false)
-const mode = computed<HotkeyModeView>(() => props.binding?.mode ?? 'toggle')
 
 async function apply(binding: HotkeyBindingView | null): Promise<void> {
   await store.run(() => backend.setHotkey(props.target, binding))
-}
-
-/** 键盘的切换型必须带修饰键：单键直接录成按住型，用户可以再改 */
-function modeFor(key: HotkeyView, wanted: HotkeyModeView): HotkeyModeView {
-  const bare =
-    key.key.type === 'keyboard' &&
-    !key.modifiers.ctrl &&
-    !key.modifiers.alt &&
-    !key.modifiers.shift &&
-    !key.modifiers.win
-  return bare && wanted === 'toggle' && !props.toggleOnly ? 'hold' : wanted
 }
 
 /** 录入期间暂停全部热键，否则按下的组合会被系统热键吞掉，或者直接触发操作 */
@@ -62,7 +48,7 @@ function endCapture(): void {
 function finish(result: CaptureResult): void {
   endCapture()
   if (result.type === 'captured') {
-    void apply({ key: result.key, mode: modeFor(result.key, mode.value) })
+    void apply({ key: result.key })
   } else if (result.type === 'cleared') {
     void apply(null)
   }
@@ -87,12 +73,6 @@ onBeforeUnmount(() => {
     endCapture()
   }
 })
-
-function setMode(event: Event): void {
-  if (props.binding !== null) {
-    void apply({ ...props.binding, mode: (event.target as HTMLSelectElement).value as HotkeyModeView })
-  }
-}
 </script>
 
 <template>
@@ -100,17 +80,7 @@ function setMode(event: Event): void {
     <button type="button" class="key" :class="{ capturing }" :disabled="capturing" @click="startCapture">
       {{ capturing ? t('hotkey.pressKey') : binding === null ? t('hotkey.none') : formatHotkey(binding.key) }}
     </button>
-    <select
-      class="select mode"
-      :value="mode"
-      :disabled="binding === null || toggleOnly"
-      :aria-label="t('hotkey.mode')"
-      @change="setMode"
-    >
-      <button><selectedcontent></selectedcontent></button>
-      <option value="toggle">{{ t('hotkey.toggle') }}</option>
-      <option value="hold">{{ t('hotkey.hold') }}</option>
-    </select>
+    <span class="caption hint">{{ t('hotkey.pressToToggle') }}</span>
     <button v-if="binding !== null" type="button" class="clear" :aria-label="t('hotkey.clear')" @click="apply(null)">
       {{ t('hotkey.clear') }}
     </button>
@@ -151,10 +121,9 @@ function setMode(event: Event): void {
   color: var(--accent-text);
 }
 
-/* 对话框里的 .field .select 是 100% 宽，这里要按内容自适应，否则会撑出水平滚动条 */
-.hotkey-field .mode {
+.hint {
   flex: none;
-  width: auto;
+  white-space: nowrap;
 }
 
 .clear {

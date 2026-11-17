@@ -13,7 +13,7 @@ use std::time::{Duration, SystemTime};
 
 use aemeath_control::audio_policy::{AppSession, AudioPolicy};
 use aemeath_control::engine_client::{ClientConfig, ClientEvent, EngineClient, EngineProber, Timing};
-use aemeath_control::hotkeys::{HotkeyEvent, HotkeyService};
+use aemeath_control::hotkeys::HotkeyService;
 use aemeath_control::slots::endpoints::{EndpointProbe, ExternalDevice};
 use aemeath_control::slots::registration::{RegistrationProgress, all_slots, registration_topology};
 use aemeath_control::slots::{MaintainerConfig, MaintainerTiming, SlotMaintainer, SlotStatus, uninstall};
@@ -87,10 +87,8 @@ pub enum CommandError {
     ProgramInUse,
     #[error("the program path is not valid")]
     InvalidProgram,
-    #[error("a toggle hotkey on the keyboard needs a modifier")]
+    #[error("a hotkey on the keyboard needs a modifier")]
     HotkeyModifierRequired,
-    #[error("this action can only be a toggle")]
-    HotkeyToggleOnly,
     #[error("this key is already bound")]
     HotkeyConflict { target: HotkeyTargetView },
     #[error("the node or route no longer exists")]
@@ -104,7 +102,6 @@ impl From<HotkeyError> for CommandError {
         match error {
             HotkeyError::UnknownTarget => Self::NotFound,
             HotkeyError::ModifierRequired => Self::HotkeyModifierRequired,
-            HotkeyError::ToggleOnly => Self::HotkeyToggleOnly,
             HotkeyError::Conflict(target) => Self::HotkeyConflict { target: target.into() },
         }
     }
@@ -571,7 +568,7 @@ struct Controller {
     /// 槽位当前的端点 ID（判断重复路由时把会话的落点对应到节点）
     slot_endpoints: BTreeMap<SlotId, String>,
     hotkeys: Option<HotkeyService>,
-    hotkey_events: mpsc::UnboundedReceiver<HotkeyEvent>,
+    hotkey_events: mpsc::UnboundedReceiver<HotkeyTarget>,
     /// `RegisterHotKey` 失败的绑定
     occupied_hotkeys: Vec<HotkeyTarget>,
     /// 已注册的绑定，内容不变时不重新注册
@@ -1182,33 +1179,18 @@ impl Controller {
         if bindings == self.registered_hotkeys {
             return;
         }
-        // 被删除的对象不再有松开事件，清掉它们的临时叠加
-        self.overlay
-            .held
-            .retain(|target| bindings.iter().any(|(own, _)| own == target));
         if let Some(service) = &self.hotkeys {
             self.occupied_hotkeys = service.set_bindings(bindings.clone());
         }
         self.registered_hotkeys = bindings;
     }
 
-    /// 处理热键：切换型直接改配置；按住型只改临时叠加，松开时撤掉。
-    fn on_hotkey(&mut self, event: HotkeyEvent) {
-        match event {
-            HotkeyEvent::Fired(target) => self.fire_hotkey(target),
-            HotkeyEvent::Pressed(target) => {
-                self.overlay.held.insert(target);
-                self.sync_engine();
-            }
-            HotkeyEvent::Released(target) => {
-                self.overlay.held.remove(&target);
-                self.sync_engine();
-            }
-        }
+    /// 处理热键：静音和连线开关是正式修改，写进配置；紧急静音只改临时叠加。
+    fn on_hotkey(&mut self, target: HotkeyTarget) {
+        self.fire_hotkey(target);
         self.schedule_emit();
     }
 
-    /// 切换型热键：静音和连线开关是正式修改，写进配置。
     fn fire_hotkey(&mut self, target: HotkeyTarget) {
         match target {
             HotkeyTarget::NodeMute(node) => {

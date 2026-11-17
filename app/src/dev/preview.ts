@@ -221,7 +221,6 @@ let state: ViewState = {
       target: { type: 'panicMute' },
       binding: {
         key: { modifiers: { ctrl: true, alt: true, shift: false, win: false }, key: { type: 'keyboard', vk: 0x4d } },
-        mode: 'toggle',
       },
       occupied: false,
     },
@@ -229,7 +228,6 @@ let state: ViewState = {
       target: { type: 'nodeMute', node: 1 },
       binding: {
         key: { modifiers: { ctrl: false, alt: false, shift: false, win: false }, key: { type: 'mouseX1' } },
-        mode: 'hold',
       },
       occupied: false,
     },
@@ -237,7 +235,6 @@ let state: ViewState = {
       target: { type: 'routeToggle', from: 1, to: 3 },
       binding: {
         key: { modifiers: { ctrl: true, alt: false, shift: false, win: false }, key: { type: 'keyboard', vk: 0x7c } },
-        mode: 'toggle',
       },
       occupied: true,
     },

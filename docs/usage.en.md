@@ -47,7 +47,7 @@ External devices are opened in exclusive mode by default for lower latency; swit
 
 ## 5. Recording and hotkeys
 
-Add a recorder node and connect what you want to record; start and stop it on the **Recordings** page or in the console. Set hotkeys on the **Hotkeys** page: global hotkeys (all recorders, panic mute, show/hide window) and hotkeys owned by a node or route. Each works as **Toggle** or **Hold**.
+Add a recorder node and connect what you want to record; start and stop it on the **Recordings** page or in the console. Set hotkeys on the **Hotkeys** page: global hotkeys (all recorders, panic mute, show/hide window) and hotkeys owned by a node or route. Each hotkey toggles: one press flips the state. Keyboard keys need Ctrl, Alt, Shift or Win; mouse side buttons can be used on their own.
 
 ## 6. Uninstalling
 

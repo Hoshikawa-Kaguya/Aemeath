@@ -182,11 +182,8 @@ export interface HotkeyView {
   key: KeyCodeView
 }
 
-export type HotkeyModeView = 'toggle' | 'hold'
-
 export interface HotkeyBindingView {
   key: HotkeyView
-  mode: HotkeyModeView
 }
 
 export type HotkeyTargetView =
@@ -399,7 +396,6 @@ export type CommandError =
   | { code: 'programInUse' }
   | { code: 'invalidProgram' }
   | { code: 'hotkeyModifierRequired' }
-  | { code: 'hotkeyToggleOnly' }
   | { code: 'hotkeyConflict'; target: HotkeyTargetView }
   | { code: 'notFound' }
   | { code: 'failed'; message: string }

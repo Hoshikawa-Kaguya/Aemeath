@@ -324,7 +324,7 @@ defineExpose({ open })
 
         <div v-if="node.recorder" class="field">
           <span>{{ t('hotkey.recordLabel') }}</span>
-          <HotkeyField :target="{ type: 'nodeRecord', node: node.id }" :binding="node.recordHotkey" toggle-only />
+          <HotkeyField :target="{ type: 'nodeRecord', node: node.id }" :binding="node.recordHotkey" />
         </div>
 
         <label class="check">

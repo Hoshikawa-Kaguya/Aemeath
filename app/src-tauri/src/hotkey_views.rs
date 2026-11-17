@@ -1,6 +1,6 @@
 //! 热键在界面上的表示（字段名为 camelCase）。
 
-use aemeath_core::hotkeys::{Hotkey, HotkeyBinding, HotkeyMode, HotkeyTarget, KeyCode, Modifiers};
+use aemeath_core::hotkeys::{Hotkey, HotkeyBinding, HotkeyTarget, KeyCode, Modifiers};
 use aemeath_protocol::ids::NodeId;
 use serde::{Deserialize, Serialize};
 
@@ -15,7 +15,7 @@ pub enum KeyCodeView {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HotkeyView {
-    /// 修饰键和下面的生效方式直接用领域类型，JSON 与界面的类型一致（见 `view.rs` 的测试）
+    /// 修饰键直接用领域类型，JSON 与界面的类型一致（见 `view.rs` 的测试）
     pub modifiers: Modifiers,
     pub key: KeyCodeView,
 }
@@ -24,7 +24,6 @@ pub struct HotkeyView {
 #[serde(rename_all = "camelCase")]
 pub struct HotkeyBindingView {
     pub key: HotkeyView,
-    pub mode: HotkeyMode,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,17 +67,13 @@ impl From<HotkeyBinding> for HotkeyBindingView {
     fn from(binding: HotkeyBinding) -> Self {
         Self {
             key: binding.key.into(),
-            mode: binding.mode,
         }
     }
 }
 
 impl From<HotkeyBindingView> for HotkeyBinding {
     fn from(view: HotkeyBindingView) -> Self {
-        Self {
-            key: view.key.into(),
-            mode: view.mode,
-        }
+        Self { key: view.key.into() }
     }
 }
 

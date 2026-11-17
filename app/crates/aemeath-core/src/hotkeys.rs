@@ -1,8 +1,8 @@
-//! 热键（GLOSSARY：热键、全局热键、专属热键）：按键组合、绑定、校验与冲突检查，以及按住型的临时叠加。
+//! 热键（GLOSSARY：热键、全局热键、专属热键）：按键组合、绑定、校验与冲突检查，以及紧急静音的临时叠加。
+//!
+//! 热键一律是切换：按一下取反一次。
 //!
 //! 专属热键存放在所属的节点或连线上，随所属对象一起删除和恢复；全局热键存放在偏好设置里。
-
-use std::collections::BTreeSet;
 
 use aemeath_protocol::ids::NodeId;
 use aemeath_protocol::topology::{NodeRole, RouteTopology};
@@ -52,22 +52,11 @@ pub struct Hotkey {
     pub key: KeyCode,
 }
 
-/// 热键的生效方式。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HotkeyMode {
-    /// 按一下取反
-    Toggle,
-    /// 按住期间取反，松开后恢复；不写进配置
-    Hold,
-}
-
-/// 绑定在某个对象上的热键：按哪个组合、以哪种方式生效。
+/// 绑定在某个对象上的热键。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HotkeyBinding {
     pub key: Hotkey,
-    pub mode: HotkeyMode,
 }
 
 /// 全局热键。
@@ -93,23 +82,21 @@ pub enum HotkeyTarget {
     ToggleWindow,
 }
 
-impl HotkeyTarget {
-    /// 录音和显示/隐藏主窗口只能用切换。
-    fn toggle_only(self) -> bool {
-        matches!(self, Self::NodeRecord(_) | Self::AllRecording | Self::ToggleWindow)
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum HotkeyError {
     #[error("this object no longer exists")]
     UnknownTarget,
-    #[error("a toggle hotkey on the keyboard needs Ctrl, Alt, Shift or Win")]
+    #[error("a hotkey on the keyboard needs Ctrl, Alt, Shift or Win")]
     ModifierRequired,
-    #[error("this action can only be a toggle")]
-    ToggleOnly,
     #[error("this key is already used by {0:?}")]
     Conflict(HotkeyTarget),
+}
+
+impl HotkeyBinding {
+    /// 键盘按键必须带修饰键：系统热键会吞掉按键，单键会让这个键没法正常打字。鼠标侧键可以单独使用。
+    pub fn is_valid(self) -> bool {
+        !matches!(self.key.key, KeyCode::Keyboard { .. }) || self.key.modifiers.any()
+    }
 }
 
 /// 校验并写入一个绑定；`binding` 为 None 表示清除。
@@ -120,14 +107,8 @@ pub fn set_hotkey(
     binding: Option<HotkeyBinding>,
 ) -> Result<(), HotkeyError> {
     if let Some(binding) = binding {
-        if binding.mode == HotkeyMode::Toggle
-            && matches!(binding.key.key, KeyCode::Keyboard { .. })
-            && !binding.key.modifiers.any()
-        {
+        if !binding.is_valid() {
             return Err(HotkeyError::ModifierRequired);
-        }
-        if binding.mode == HotkeyMode::Hold && target.toggle_only() {
-            return Err(HotkeyError::ToggleOnly);
         }
         let conflict = all_hotkeys(workspace, preferences)
             .into_iter()
@@ -184,24 +165,17 @@ pub fn all_hotkeys(workspace: &Workspace, preferences: &Preferences) -> Vec<(Hot
 pub struct HotkeyOverlay {
     /// 紧急静音：全部输出节点静音
     pub panic_mute: bool,
-    /// 正被按住的热键
-    pub held: BTreeSet<HotkeyTarget>,
 }
 
 impl HotkeyOverlay {
-    /// 把正按住的热键叠加到刚编译出的拓扑上：静音和连线开关各取反一次；紧急静音时所有输出都静音。
+    /// 叠加到刚编译出的拓扑上：紧急静音时所有输出都静音。
     pub fn apply(&self, topology: &mut RouteTopology) {
-        for node in &mut topology.nodes {
-            if self.held.contains(&HotkeyTarget::NodeMute(node.id)) {
-                node.strip.muted = !node.strip.muted;
-            }
-            if self.panic_mute && node.kind.role() == NodeRole::Output {
-                node.strip.muted = true;
-            }
+        if !self.panic_mute {
+            return;
         }
-        for route in &mut topology.routes {
-            if self.held.contains(&HotkeyTarget::RouteToggle(route.from, route.to)) {
-                route.enabled = !route.enabled;
+        for node in &mut topology.nodes {
+            if node.kind.role() == NodeRole::Output {
+                node.strip.muted = true;
             }
         }
     }
@@ -218,10 +192,9 @@ mod tests {
     const F13: u32 = 0x7C;
     const KEY_M: u32 = 0x4D;
 
-    fn binding(modifiers: Modifiers, key: KeyCode, mode: HotkeyMode) -> HotkeyBinding {
+    fn binding(modifiers: Modifiers, key: KeyCode) -> HotkeyBinding {
         HotkeyBinding {
             key: Hotkey { modifiers, key },
-            mode,
         }
     }
 
@@ -267,59 +240,38 @@ mod tests {
     }
 
     #[test]
-    fn keyboard_toggles_need_a_modifier_but_holds_do_not() {
+    fn keyboard_keys_need_a_modifier_but_mouse_buttons_do_not() {
         let Fixture {
             mut workspace,
             mut preferences,
             mic,
+            recorder,
             ..
         } = fixture();
-        let target = HotkeyTarget::NodeMute(mic);
         let bare = KeyCode::Keyboard { vk: F13 };
         assert_eq!(
             set_hotkey(
                 &mut workspace,
                 &mut preferences,
-                target,
-                Some(binding(Modifiers::default(), bare, HotkeyMode::Toggle))
+                HotkeyTarget::NodeMute(mic),
+                Some(binding(Modifiers::default(), bare))
             ),
             Err(HotkeyError::ModifierRequired)
         );
         set_hotkey(
             &mut workspace,
             &mut preferences,
-            target,
-            Some(binding(Modifiers::default(), bare, HotkeyMode::Hold)),
+            HotkeyTarget::NodeRecord(recorder),
+            Some(binding(ctrl(), bare)),
         )
         .unwrap();
         set_hotkey(
             &mut workspace,
             &mut preferences,
             HotkeyTarget::PanicMute,
-            Some(binding(Modifiers::default(), KeyCode::MouseX1, HotkeyMode::Toggle)),
+            Some(binding(Modifiers::default(), KeyCode::MouseX1)),
         )
         .unwrap();
-    }
-
-    #[test]
-    fn recording_and_the_window_are_toggle_only() {
-        let Fixture {
-            mut workspace,
-            mut preferences,
-            recorder,
-            ..
-        } = fixture();
-        let hold = binding(ctrl(), KeyCode::Keyboard { vk: KEY_M }, HotkeyMode::Hold);
-        for target in [
-            HotkeyTarget::NodeRecord(recorder),
-            HotkeyTarget::AllRecording,
-            HotkeyTarget::ToggleWindow,
-        ] {
-            assert_eq!(
-                set_hotkey(&mut workspace, &mut preferences, target, Some(hold)),
-                Err(HotkeyError::ToggleOnly)
-            );
-        }
     }
 
     #[test]
@@ -331,7 +283,7 @@ mod tests {
             out,
             ..
         } = fixture();
-        let key = binding(ctrl(), KeyCode::Keyboard { vk: KEY_M }, HotkeyMode::Toggle);
+        let key = binding(ctrl(), KeyCode::Keyboard { vk: KEY_M });
         let first = HotkeyTarget::NodeMute(mic);
         set_hotkey(&mut workspace, &mut preferences, first, Some(key)).unwrap();
         set_hotkey(&mut workspace, &mut preferences, first, Some(key)).unwrap();
@@ -352,7 +304,7 @@ mod tests {
             out,
             ..
         } = fixture();
-        let key = binding(ctrl(), KeyCode::Keyboard { vk: KEY_M }, HotkeyMode::Toggle);
+        let key = binding(ctrl(), KeyCode::Keyboard { vk: KEY_M });
         set_hotkey(
             &mut workspace,
             &mut preferences,
@@ -366,24 +318,12 @@ mod tests {
     }
 
     #[test]
-    fn the_overlay_inverts_while_held_and_panic_mutes_outputs() {
-        let Fixture {
-            workspace, mic, out, ..
-        } = fixture();
+    fn panic_mute_mutes_outputs_only() {
+        let Fixture { workspace, .. } = fixture();
         let mut topology = workspace.compile(TopologyRevision(1));
-        let mut overlay = HotkeyOverlay::default();
-        overlay.held.insert(HotkeyTarget::NodeMute(mic));
-        overlay.held.insert(HotkeyTarget::RouteToggle(mic, out));
-        overlay.apply(&mut topology);
-        assert!(topology.nodes[0].strip.muted);
-        assert!(!topology.routes[0].enabled);
-
-        let mut topology = workspace.compile(TopologyRevision(1));
-        HotkeyOverlay {
-            panic_mute: true,
-            ..HotkeyOverlay::default()
-        }
-        .apply(&mut topology);
+        HotkeyOverlay::default().apply(&mut topology);
+        assert!(!topology.nodes[1].strip.muted);
+        HotkeyOverlay { panic_mute: true }.apply(&mut topology);
         assert!(!topology.nodes[0].strip.muted, "inputs stay as they are");
         assert!(topology.nodes[1].strip.muted);
     }
