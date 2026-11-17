@@ -35,6 +35,11 @@ use crate::device::DeviceRequest;
 
 /// 环形缓冲的目标占用，实测能吸收设备周期抖动又不增加太多延迟。外部输入在引擎一侧先攒够这么多才开始读取。
 pub const TARGET_LEVEL_MS: f64 = 15.0;
+/// 共享模式的流在目标占用之外多留的余量（ms），等于 Windows 音频引擎的默认周期。
+/// 音频引擎按 QPC 每个周期交付一包；设备时钟比 QPC 慢时（实测一支 USB 麦克风慢约 30 ppm），每隔几分钟攒不满一包，
+/// 就跳过一次，环形缓冲一下子少一个周期。控制器跟踪的是平均占用，补不上这种跳变，只能靠余量。
+/// 独占模式由设备时钟驱动事件，不会跳包。进程回环的客户端查不到周期，所以用固定值。
+const SHARED_MARGIN_MS: f64 = 10.0;
 /// 环形缓冲容量（ms），远大于目标占用
 const RING_CAPACITY_MS: usize = 200;
 const MILLISECONDS_PER_SECOND: usize = 1000;

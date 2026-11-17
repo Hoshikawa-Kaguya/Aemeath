@@ -122,7 +122,7 @@ fn run_session(
         VecDeque::with_capacity((buffer_frames + resampler.output_frames_max() * 2) * STEREO * 2);
     let mut stereo: Vec<f32> = Vec::with_capacity(buffer_frames * STEREO);
     let mut bytes: Vec<u8> = Vec::with_capacity(buffer_frames * stream.block_align);
-    let target_ms = TARGET_LEVEL_MS + resampler.burst_ms();
+    let target_ms = TARGET_LEVEL_MS + stream.level_margin_ms() + resampler.burst_ms();
     let mut controller = RateController::new(target_ms);
     let mut log = BridgeLog::new(&config.endpoint.0, target_ms, level.clone());
 

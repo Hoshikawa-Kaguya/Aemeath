@@ -4,7 +4,8 @@
 //! 控制器的反馈量是环形缓冲的占用：缓冲占用偏高说明设备时钟比引擎快，就把比率调低、少产出一些。
 //!
 //! FFT 的产出成批到达，缓冲占用呈锯齿形：会话开始时先写入"目标占用 + 一批"的静音，引擎的启动门槛不用改，
-//! 锯齿的谷值也不低于目标占用；控制目标取锯齿的平均值。
+//! 锯齿的谷值也不低于目标占用；控制目标取锯齿的平均值。共享模式的目标和预填充再加上余量
+//! （[`OpenStream::level_margin_ms`]）。
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -54,13 +55,14 @@ impl CapturePump {
         let chunk_frames = (device_rate.hz() / CHUNKS_PER_SECOND).max(1) as usize;
         let resampler = BridgeResampler::new(quality, device_rate, engine_rate, chunk_frames, FixedSide::Input)?;
         let burst_ms = resampler.burst_ms();
-        if burst_ms > 0.0 {
-            let samples = ms_to_frames(TARGET_LEVEL_MS + burst_ms, engine_rate) * STEREO;
+        let margin_ms = stream.level_margin_ms();
+        if burst_ms + margin_ms > 0.0 {
+            let samples = ms_to_frames(TARGET_LEVEL_MS + margin_ms + burst_ms, engine_rate) * STEREO;
             if let Ok(chunk) = producer.write_chunk_uninit(samples.min(producer.slots())) {
                 chunk.fill_from_iter(std::iter::repeat(0.0));
             }
         }
-        let target_ms = TARGET_LEVEL_MS + burst_ms / 2.0;
+        let target_ms = TARGET_LEVEL_MS + margin_ms + burst_ms / 2.0;
         let bytes = vec![0u8; stream.block_align * (device_rate.hz() / (1000 / INITIAL_READ_MS)) as usize];
         let staging = Vec::with_capacity(bytes.len() / stream.block_align * STEREO);
         let produced = Vec::with_capacity(resampler.output_frames_max() * STEREO * 8);
@@ -158,5 +160,56 @@ impl CapturePump {
     /// 环形缓冲当前的占用（ms）。
     fn level_ms(&self, producer: &Producer<f32>) -> f64 {
         frames_to_ms((self.capacity - producer.slots()) / STEREO, self.engine_rate)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use aemeath_dsp::resample::{RateController, RateUpdate, relative_ratio};
+
+    use crate::{SHARED_MARGIN_MS, TARGET_LEVEL_MS};
+
+    /// 闭环模拟共享模式的录音：音频引擎每 10 ms（QPC）交付一包，设备比 QPC 慢 30 ppm，攒不满一包时跳过这一次；
+    /// 引擎每 1 ms 读 1 ms（先读后交付，取最坏的相位），控制器每秒按平均占用调整比率。
+    /// 返回前 5 分钟之后，引擎读完时缓冲的最低占用（ms），小于 0 就是读空。
+    fn lowest_level(target_ms: f64) -> f64 {
+        const PERIOD_MS: u64 = 10;
+        const SLOW_PPM: f64 = 30.0;
+        const TOTAL_MS: u64 = 40 * 60_000;
+        const STEADY_FROM_MS: u64 = 5 * 60_000;
+        let mut controller = RateController::new(target_ms);
+        let mut update = RateUpdate::default();
+        let mut level = target_ms;
+        // 设备已经录下、还没交付的数据：从半包开始，约 3 分钟后第一次跳包，之后每 333 秒一次
+        let mut recorded_ms = PERIOD_MS as f64 / 2.0;
+        let (mut sum, mut count) = (0.0, 0u32);
+        let mut lowest = f64::MAX;
+        for now in 1..=TOTAL_MS {
+            recorded_ms += 1.0 - SLOW_PPM * 1e-6;
+            level -= 1.0;
+            if now >= STEADY_FROM_MS {
+                lowest = lowest.min(level);
+            }
+            if now % PERIOD_MS == 0 && recorded_ms >= PERIOD_MS as f64 {
+                recorded_ms -= PERIOD_MS as f64;
+                sum += level;
+                level += PERIOD_MS as f64 * relative_ratio(update.correction_ppm);
+                sum += level;
+                count += 2;
+            }
+            if now % 1000 == 0 {
+                update = controller.update(sum / f64::from(count.max(1)), 1.0);
+                (sum, count) = (0.0, 0);
+            }
+        }
+        lowest
+    }
+
+    #[test]
+    fn a_skipped_shared_packet_needs_the_margin() {
+        let without = lowest_level(TARGET_LEVEL_MS);
+        let with = lowest_level(TARGET_LEVEL_MS + SHARED_MARGIN_MS);
+        assert!(without < 0.5, "the old target runs dry: {without} ms");
+        assert!(with > 5.0, "the margin keeps a reserve: {with} ms");
     }
 }

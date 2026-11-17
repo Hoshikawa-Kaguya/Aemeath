@@ -62,6 +62,11 @@ impl OpenStream {
         usize::from(self.format.channels)
     }
 
+    /// 环形缓冲在 [`crate::TARGET_LEVEL_MS`] 之外要多留的占用（ms）：共享模式多留一个音频引擎周期。
+    pub fn level_margin_ms(&self) -> f64 {
+        if self.exclusive { 0.0 } else { crate::SHARED_MARGIN_MS }
+    }
+
     /// 这条流的设备帧与立体声 f32 之间的转换器（每个会话一个，内部缓冲复用，不在循环里分配）。
     pub fn frame_codec(&self) -> FrameCodec {
         FrameCodec {
@@ -546,6 +551,34 @@ mod tests {
         let mut decoded = Vec::new();
         codec::decode(SampleFormat::Float32, &bytes, &mut decoded);
         assert_eq!(decoded, vec![0.375, -0.5]);
+    }
+
+    /// 模拟一台单声道播放设备：格式换算保持 1 个声道，按它的块对齐写出；只送右声道时设备收到一半的音量
+    #[test]
+    fn a_mono_output_plays_a_right_only_signal_at_half_level() {
+        for sample_format in [SampleFormat::Int16, SampleFormat::Int24, SampleFormat::Float32] {
+            let format = DeviceFormat {
+                sample_rate: SampleRate::HZ_48000,
+                sample_format,
+                channels: 1,
+            };
+            let wave = to_wave_format(format);
+            assert_eq!(to_device_format(&wave), Some(format));
+            let mut mono = FrameCodec {
+                sample_format,
+                channels: 1,
+                block_align: wave.get_blockalign() as usize,
+                samples: Vec::new(),
+            };
+            let mut bytes = Vec::new();
+            mono.write_stereo(&[0.0, 0.5, 0.0, -0.5], &mut bytes);
+            assert_eq!(bytes.len(), 2 * mono.block_align, "{sample_format:?}");
+            let mut decoded = Vec::new();
+            codec::decode(sample_format, &bytes, &mut decoded);
+            assert_eq!(decoded.len(), 2);
+            assert!((decoded[0] - 0.25).abs() < 1e-3, "{sample_format:?}: {decoded:?}");
+            assert!((decoded[1] + 0.25).abs() < 1e-3, "{sample_format:?}: {decoded:?}");
+        }
     }
 
     #[test]
