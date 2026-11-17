@@ -17,7 +17,7 @@ use aemeath_protocol::units::GainDb;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::hotkeys::HotkeyBinding;
+use crate::hotkeys::Hotkey;
 use crate::model::{DeviceRef, EngineSettings, LabelPosition, Node, NodeKind, NodeName, Position, Route};
 
 /// 第一个节点的 ID
@@ -471,21 +471,21 @@ impl Workspace {
         }
     }
 
-    pub(crate) fn mute_hotkey_mut(&mut self, id: NodeId) -> Option<&mut Option<HotkeyBinding>> {
+    pub(crate) fn mute_hotkey_mut(&mut self, id: NodeId) -> Option<&mut Option<Hotkey>> {
         self.nodes
             .iter_mut()
             .find(|node| node.id == id)
             .map(|node| &mut node.mute_hotkey)
     }
 
-    pub(crate) fn record_hotkey_mut(&mut self, id: NodeId) -> Option<&mut Option<HotkeyBinding>> {
+    pub(crate) fn record_hotkey_mut(&mut self, id: NodeId) -> Option<&mut Option<Hotkey>> {
         self.nodes
             .iter_mut()
             .find(|node| node.id == id && matches!(node.kind, NodeKind::Recorder { .. }))
             .map(|node| &mut node.record_hotkey)
     }
 
-    pub(crate) fn route_hotkey_mut(&mut self, from: NodeId, to: NodeId) -> Option<&mut Option<HotkeyBinding>> {
+    pub(crate) fn route_hotkey_mut(&mut self, from: NodeId, to: NodeId) -> Option<&mut Option<Hotkey>> {
         self.routes
             .iter_mut()
             .find(|route| route.from == from && route.to == to)

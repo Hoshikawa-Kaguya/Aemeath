@@ -14,7 +14,7 @@ use aemeath_protocol::units::{SampleRate, SampleRateError};
 use serde::{Deserialize, Serialize};
 
 use crate::device_settings::{DeviceSettingsView, ResamplerView, SlotSettingsView};
-use crate::hotkey_views::{HotkeyBindingView, HotkeyRowView};
+use crate::hotkey_views::{HotkeyRowView, HotkeyView};
 use crate::recording::{RecorderView, RecordingFailureView, RecordingView};
 
 #[derive(Debug, Clone, Serialize)]
@@ -293,8 +293,8 @@ pub struct NodeView {
     pub status: NodeStatus,
     /// 录音节点的设置与状态
     pub recorder: Option<RecorderView>,
-    pub mute_hotkey: Option<HotkeyBindingView>,
-    pub record_hotkey: Option<HotkeyBindingView>,
+    pub mute_hotkey: Option<HotkeyView>,
+    pub record_hotkey: Option<HotkeyView>,
     /// 这个应用源造成了重复路由
     pub duplicate: Option<DuplicateView>,
 }
@@ -374,7 +374,7 @@ pub struct RouteView {
     pub label_visible: bool,
     /// 这条连线在重复路径上
     pub duplicate: Option<DuplicateView>,
-    pub toggle_hotkey: Option<HotkeyBindingView>,
+    pub toggle_hotkey: Option<HotkeyView>,
 }
 
 impl RouteView {
@@ -387,7 +387,7 @@ impl RouteView {
             label_position: route.label_position.get(),
             label_visible: route.label_visible,
             duplicate,
-            toggle_hotkey: route.toggle_hotkey.map(HotkeyBindingView::from),
+            toggle_hotkey: route.toggle_hotkey.map(HotkeyView::from),
         }
     }
 }

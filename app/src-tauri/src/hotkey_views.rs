@@ -1,6 +1,6 @@
 //! 热键在界面上的表示（字段名为 camelCase）。
 
-use aemeath_core::hotkeys::{Hotkey, HotkeyBinding, HotkeyTarget, KeyCode, Modifiers};
+use aemeath_core::hotkeys::{Hotkey, HotkeyTarget, KeyCode, Modifiers};
 use aemeath_protocol::ids::NodeId;
 use serde::{Deserialize, Serialize};
 
@@ -18,12 +18,6 @@ pub struct HotkeyView {
     /// 修饰键直接用领域类型，JSON 与界面的类型一致（见 `view.rs` 的测试）
     pub modifiers: Modifiers,
     pub key: KeyCodeView,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct HotkeyBindingView {
-    pub key: HotkeyView,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -63,20 +57,6 @@ impl From<HotkeyView> for Hotkey {
     }
 }
 
-impl From<HotkeyBinding> for HotkeyBindingView {
-    fn from(binding: HotkeyBinding) -> Self {
-        Self {
-            key: binding.key.into(),
-        }
-    }
-}
-
-impl From<HotkeyBindingView> for HotkeyBinding {
-    fn from(view: HotkeyBindingView) -> Self {
-        Self { key: view.key.into() }
-    }
-}
-
 impl From<HotkeyTarget> for HotkeyTargetView {
     fn from(target: HotkeyTarget) -> Self {
         match target {
@@ -108,7 +88,7 @@ impl From<HotkeyTargetView> for HotkeyTarget {
 #[serde(rename_all = "camelCase")]
 pub struct HotkeyRowView {
     pub target: HotkeyTargetView,
-    pub binding: HotkeyBindingView,
+    pub binding: HotkeyView,
     /// `RegisterHotKey` 失败：被其他程序占用
     pub occupied: bool,
 }

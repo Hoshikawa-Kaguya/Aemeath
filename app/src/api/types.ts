@@ -111,8 +111,8 @@ export interface NodeView {
   status: NodeStatus
   /** 录音节点的设置与状态 */
   recorder: RecorderView | null
-  muteHotkey: HotkeyBindingView | null
-  recordHotkey: HotkeyBindingView | null
+  muteHotkey: HotkeyView | null
+  recordHotkey: HotkeyView | null
   /** 这个应用源造成了重复路由 */
   duplicate: DuplicateView | null
 }
@@ -182,10 +182,6 @@ export interface HotkeyView {
   key: KeyCodeView
 }
 
-export interface HotkeyBindingView {
-  key: HotkeyView
-}
-
 export type HotkeyTargetView =
   | { type: 'nodeMute'; node: number }
   | { type: 'routeToggle'; from: number; to: number }
@@ -196,7 +192,7 @@ export type HotkeyTargetView =
 
 export interface HotkeyRowView {
   target: HotkeyTargetView
-  binding: HotkeyBindingView
+  binding: HotkeyView
   /** 被其他程序占用 */
   occupied: boolean
 }
@@ -245,7 +241,7 @@ export interface RouteView {
   labelVisible: boolean
   /** 这条连线在重复路径上 */
   duplicate: DuplicateView | null
-  toggleHotkey: HotkeyBindingView | null
+  toggleHotkey: HotkeyView | null
 }
 
 export type SlotHealth =

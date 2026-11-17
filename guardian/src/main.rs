@@ -36,7 +36,7 @@ use aemeath_sys::activation;
 use aemeath_sys::process::CREATE_NO_WINDOW;
 use aemeath_sys::single_instance::SingleInstance;
 use aemeath_sys::ui_language;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use velopack::VelopackApp;
 
 use crate::supervisor::{Role, Timing};
@@ -86,6 +86,13 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+
+    // 守护进程最先启动：配置要升级时在这里写回，之后各处读到的都是当前版本
+    match ConfigStore::new(&config.data_dir).upgrade() {
+        Ok(true) => info!("upgraded the configuration file"),
+        Ok(false) => {}
+        Err(error) => warn!(%error, "cannot upgrade the configuration file"),
+    }
 
     if let Err(problem) = check_driver(&config) {
         error!(?problem, "usbip-win2 is not usable");

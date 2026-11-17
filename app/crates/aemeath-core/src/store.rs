@@ -11,14 +11,15 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::hotkeys::HotkeyBinding;
+use crate::hotkeys::Hotkey;
 use crate::model::EngineSettings;
 use crate::preferences::Preferences;
 use crate::workspace::Workspace;
 
 /// 配置文件的结构版本。结构有不兼容的变化时加一，并在 [`ConfigStore::load`] 中加入迁移。
 ///
-/// 6：热键去掉"切换/按住"方式，一律是切换。版本 5 的文件由 [`migrate_hotkey_modes`] 迁移。
+/// 6：热键去掉"切换/按住"方式，一律是切换，绑定直接存按键组合。版本 5 的文件由 [`migrate_hotkey_modes`] 迁移，
+/// 启动时由 [`ConfigStore::upgrade`] 先写回成新版本。
 pub const CONFIG_VERSION: u32 = 6;
 /// 能迁移的上一个版本
 const PREVIOUS_VERSION: u32 = 5;
@@ -142,6 +143,31 @@ impl ConfigStore {
         }
     }
 
+    /// 配置文件是上一个版本时，迁移后立即写回成当前版本，返回是否升级了。
+    ///
+    /// 启动时在读取任何设置之前调用：[`Self::peek_preferences`] 不做迁移，旧版本的文件可能读不出来。
+    /// 迁移后不合规的文件不动，留给 [`Self::load`] 备份。
+    pub fn upgrade(&self) -> io::Result<bool> {
+        let bytes = match std::fs::read(&self.path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(error),
+        };
+        if !matches!(
+            serde_json::from_slice::<VersionOnly>(&bytes),
+            Ok(VersionOnly {
+                version: PREVIOUS_VERSION
+            })
+        ) {
+            return Ok(false);
+        }
+        let Ok(config) = parse(&bytes) else {
+            return Ok(false);
+        };
+        self.save(&config)?;
+        Ok(true)
+    }
+
     /// 只读出偏好设置，不校验、也不改动配置文件（守护进程选择对话框语言时用）。读不到时返回 None。
     pub fn peek_preferences(&self) -> Option<Preferences> {
         let bytes = std::fs::read(&self.path).ok()?;
@@ -203,10 +229,9 @@ fn parse(bytes: &[u8]) -> Result<Config, String> {
     })
 }
 
-/// 版本 5 → 6：去掉热键绑定的 `mode`，按住型改成切换。
+/// 版本 5 → 6：热键绑定 `{"key": 按键组合, "mode": …}` 只留按键组合，按住型改成切换。
 /// 不带修饰键的键盘按键以前只能做按住型，不符合切换的规则，删掉这个绑定。
 fn migrate_hotkey_modes(file: &mut serde_json::Value) {
-    file["version"] = CONFIG_VERSION.into();
     for path in ["/workspace/nodes", "/workspace/routes"] {
         if let Some(owners) = file.pointer_mut(path).and_then(serde_json::Value::as_array_mut) {
             owners.iter_mut().for_each(migrate_owner);
@@ -225,11 +250,11 @@ fn migrate_owner(owner: &mut serde_json::Value) {
         let Some(binding) = owner.get_mut(field) else {
             continue;
         };
-        if let Some(binding) = binding.as_object_mut() {
-            binding.remove("mode");
+        if let Some(hotkey) = binding.get_mut("key").map(serde_json::Value::take) {
+            *binding = hotkey;
         }
         // 解析不了的留给随后的整体解析报告为损坏
-        if serde_json::from_value::<HotkeyBinding>(binding.clone()).is_ok_and(|binding| !binding.is_valid()) {
+        if serde_json::from_value::<Hotkey>(binding.clone()).is_ok_and(|hotkey| !hotkey.is_valid()) {
             tracing::warn!(
                 field,
                 "a hold hotkey without a modifier cannot become a toggle, removed"
@@ -353,9 +378,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// 升级迁移：版本 5 的热键带 `mode`。迁移后都是切换，不带修饰键的键盘按住型被删掉，其余照常读入
+    /// 升级迁移：版本 5 的热键带 `mode`。启动时先写回成新版本，之后只读偏好设置也能读出；
+    /// 迁移后都是切换，不带修饰键的键盘按住型被删掉，其余照常读入
     #[test]
-    fn version_5_hotkeys_become_toggles() {
+    fn version_5_files_are_upgraded_before_anything_reads_them() {
         let dir = temp_dir("v5");
         let store = ConfigStore::new(&dir);
         store.save(&sample()).unwrap();
@@ -369,7 +395,13 @@ mod tests {
         file["preferences"]["global_hotkeys"]["panic_mute"] =
             serde_json::json!({"key": {"key": {"type": "mouse_x1"}}, "mode": "toggle"});
         std::fs::write(store.path(), serde_json::to_vec(&file).unwrap()).unwrap();
+        assert_eq!(store.peek_preferences(), None, "the old format can't be peeked");
 
+        assert!(store.upgrade().unwrap());
+        assert!(!store.upgrade().unwrap(), "already the current version");
+        let written: serde_json::Value = serde_json::from_slice(&std::fs::read(store.path()).unwrap()).unwrap();
+        assert_eq!(written["version"], CONFIG_VERSION);
+        assert!(store.peek_preferences().unwrap().global_hotkeys.panic_mute.is_some());
         let Loaded::Existing(loaded) = store.load().unwrap() else {
             unreachable!("expected the version 5 file to be migrated")
         };

@@ -52,23 +52,16 @@ pub struct Hotkey {
     pub key: KeyCode,
 }
 
-/// 绑定在某个对象上的热键。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct HotkeyBinding {
-    pub key: Hotkey,
-}
-
 /// 全局热键。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GlobalHotkeys {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub all_recording: Option<HotkeyBinding>,
+    pub all_recording: Option<Hotkey>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub panic_mute: Option<HotkeyBinding>,
+    pub panic_mute: Option<Hotkey>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub toggle_window: Option<HotkeyBinding>,
+    pub toggle_window: Option<Hotkey>,
 }
 
 /// 热键作用的对象。
@@ -92,10 +85,10 @@ pub enum HotkeyError {
     Conflict(HotkeyTarget),
 }
 
-impl HotkeyBinding {
+impl Hotkey {
     /// 键盘按键必须带修饰键：系统热键会吞掉按键，单键会让这个键没法正常打字。鼠标侧键可以单独使用。
     pub fn is_valid(self) -> bool {
-        !matches!(self.key.key, KeyCode::Keyboard { .. }) || self.key.modifiers.any()
+        !matches!(self.key, KeyCode::Keyboard { .. }) || self.modifiers.any()
     }
 }
 
@@ -104,7 +97,7 @@ pub fn set_hotkey(
     workspace: &mut Workspace,
     preferences: &mut Preferences,
     target: HotkeyTarget,
-    binding: Option<HotkeyBinding>,
+    binding: Option<Hotkey>,
 ) -> Result<(), HotkeyError> {
     if let Some(binding) = binding {
         if !binding.is_valid() {
@@ -112,7 +105,7 @@ pub fn set_hotkey(
         }
         let conflict = all_hotkeys(workspace, preferences)
             .into_iter()
-            .find(|(other, existing)| *other != target && existing.key == binding.key);
+            .find(|(other, existing)| *other != target && *existing == binding);
         if let Some((other, _)) = conflict {
             return Err(HotkeyError::Conflict(other));
         }
@@ -132,9 +125,9 @@ pub fn set_hotkey(
 }
 
 /// 当前全部绑定。
-pub fn all_hotkeys(workspace: &Workspace, preferences: &Preferences) -> Vec<(HotkeyTarget, HotkeyBinding)> {
+pub fn all_hotkeys(workspace: &Workspace, preferences: &Preferences) -> Vec<(HotkeyTarget, Hotkey)> {
     let global = preferences.global_hotkeys;
-    let mut list: Vec<(HotkeyTarget, HotkeyBinding)> = [
+    let mut list: Vec<(HotkeyTarget, Hotkey)> = [
         (HotkeyTarget::AllRecording, global.all_recording),
         (HotkeyTarget::PanicMute, global.panic_mute),
         (HotkeyTarget::ToggleWindow, global.toggle_window),
@@ -192,10 +185,8 @@ mod tests {
     const F13: u32 = 0x7C;
     const KEY_M: u32 = 0x4D;
 
-    fn binding(modifiers: Modifiers, key: KeyCode) -> HotkeyBinding {
-        HotkeyBinding {
-            key: Hotkey { modifiers, key },
-        }
+    fn binding(modifiers: Modifiers, key: KeyCode) -> Hotkey {
+        Hotkey { modifiers, key }
     }
 
     fn ctrl() -> Modifiers {

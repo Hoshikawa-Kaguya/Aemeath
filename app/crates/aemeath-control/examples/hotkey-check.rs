@@ -5,7 +5,7 @@
 use std::time::Duration;
 
 use aemeath_control::hotkeys::HotkeyService;
-use aemeath_core::hotkeys::{Hotkey, HotkeyBinding, HotkeyTarget, KeyCode, Modifiers};
+use aemeath_core::hotkeys::{Hotkey, HotkeyTarget, KeyCode, Modifiers};
 use aemeath_protocol::ids::NodeId;
 use aemeath_sys::input_hooks::{SideButton, inject_key, inject_side_button};
 use tokio::sync::mpsc;
@@ -21,10 +21,8 @@ fn target(id: u32) -> HotkeyTarget {
     HotkeyTarget::NodeMute(NodeId(id))
 }
 
-fn chord(modifiers: Modifiers, key: KeyCode) -> HotkeyBinding {
-    HotkeyBinding {
-        key: Hotkey { modifiers, key },
-    }
+fn chord(modifiers: Modifiers, key: KeyCode) -> Hotkey {
+    Hotkey { modifiers, key }
 }
 
 async fn expect(events: &mut mpsc::UnboundedReceiver<HotkeyTarget>, wanted: Option<HotkeyTarget>, name: &str) -> bool {

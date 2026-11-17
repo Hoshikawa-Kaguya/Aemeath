@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use aemeath_core::hotkeys::{Hotkey, HotkeyBinding, HotkeyTarget, KeyCode, Modifiers};
+use aemeath_core::hotkeys::{Hotkey, HotkeyTarget, KeyCode, Modifiers};
 use aemeath_sys::input_hooks::{HotkeyModifiers, InputThread, InputThreadError, RawInput, SideButton, is_key_down};
 use tokio::sync::mpsc;
 use tracing::warn;
@@ -122,7 +122,7 @@ impl Matcher {
 struct Shared {
     matcher: Matcher,
     /// 当前的绑定，录入结束后用来恢复
-    bindings: Vec<(HotkeyTarget, HotkeyBinding)>,
+    bindings: Vec<(HotkeyTarget, Hotkey)>,
     /// `RegisterHotKey` 失败的绑定（被其他程序占用）
     occupied: Vec<HotkeyTarget>,
     registered_ids: Vec<i32>,
@@ -156,7 +156,7 @@ impl HotkeyService {
     }
 
     /// 替换全部绑定并重新注册，返回被其他程序占用的绑定。
-    pub fn set_bindings(&self, bindings: Vec<(HotkeyTarget, HotkeyBinding)>) -> Vec<HotkeyTarget> {
+    pub fn set_bindings(&self, bindings: Vec<(HotkeyTarget, Hotkey)>) -> Vec<HotkeyTarget> {
         let mut shared = self.shared.lock().unwrap_or_else(PoisonError::into_inner);
         shared.bindings = bindings;
         apply(&mut shared, &self.input);
@@ -196,10 +196,10 @@ fn apply(shared: &mut Shared, input: &InputThread) {
     shared.occupied.clear();
     let mut next_id = FIRST_REGISTRATION_ID;
     let (mut keyboard_hook, mut mouse_hook) = (false, false);
-    for (target, binding) in shared.bindings.clone() {
-        match binding.key.key {
+    for (target, hotkey) in shared.bindings.clone() {
+        match hotkey.key {
             KeyCode::Keyboard { vk } => {
-                let modifiers = binding.key.modifiers;
+                let modifiers = hotkey.modifiers;
                 let native = HotkeyModifiers {
                     ctrl: modifiers.ctrl,
                     alt: modifiers.alt,
@@ -218,8 +218,8 @@ fn apply(shared: &mut Shared, input: &InputThread) {
             KeyCode::MouseX1 | KeyCode::MouseX2 => {
                 mouse_hook = true;
                 // 带修饰键的鼠标绑定要靠键盘钩子知道修饰键的状态
-                keyboard_hook |= binding.key.modifiers.any();
-                shared.matcher.hooked.insert(binding.key, target);
+                keyboard_hook |= hotkey.modifiers.any();
+                shared.matcher.hooked.insert(hotkey, target);
             }
         }
     }

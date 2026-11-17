@@ -219,23 +219,17 @@ let state: ViewState = {
   hotkeys: [
     {
       target: { type: 'panicMute' },
-      binding: {
-        key: { modifiers: { ctrl: true, alt: true, shift: false, win: false }, key: { type: 'keyboard', vk: 0x4d } },
-      },
+      binding: { modifiers: { ctrl: true, alt: true, shift: false, win: false }, key: { type: 'keyboard', vk: 0x4d } },
       occupied: false,
     },
     {
       target: { type: 'nodeMute', node: 1 },
-      binding: {
-        key: { modifiers: { ctrl: false, alt: false, shift: false, win: false }, key: { type: 'mouseX1' } },
-      },
+      binding: { modifiers: { ctrl: false, alt: false, shift: false, win: false }, key: { type: 'mouseX1' } },
       occupied: false,
     },
     {
       target: { type: 'routeToggle', from: 1, to: 3 },
-      binding: {
-        key: { modifiers: { ctrl: true, alt: false, shift: false, win: false }, key: { type: 'keyboard', vk: 0x7c } },
-      },
+      binding: { modifiers: { ctrl: true, alt: false, shift: false, win: false }, key: { type: 'keyboard', vk: 0x7c } },
       occupied: true,
     },
   ],

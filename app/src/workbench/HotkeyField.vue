@@ -2,7 +2,7 @@
 import { onBeforeUnmount, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { backend } from '@/api/backend'
-import type { HotkeyBindingView, HotkeyTargetView } from '@/api/types'
+import type { HotkeyView, HotkeyTargetView } from '@/api/types'
 import { useAppStore } from '@/stores/app'
 import { captureFromKey, captureFromPointer, formatHotkey, type CaptureResult } from './hotkeyLabels'
 
@@ -10,7 +10,7 @@ import { captureFromKey, captureFromPointer, formatHotkey, type CaptureResult } 
 // 录入只在窗口有焦点时进行，由界面自己监听键鼠事件。Esc 取消，Backspace 清除，点别处或窗口失去焦点都回到录入前的状态。
 const props = defineProps<{
   target: HotkeyTargetView
-  binding: HotkeyBindingView | null
+  binding: HotkeyView | null
   occupied?: boolean
 }>()
 const { t } = useI18n()
@@ -18,7 +18,7 @@ const store = useAppStore()
 
 const capturing = ref(false)
 
-async function apply(binding: HotkeyBindingView | null): Promise<void> {
+async function apply(binding: HotkeyView | null): Promise<void> {
   await store.run(() => backend.setHotkey(props.target, binding))
 }
 
@@ -48,7 +48,7 @@ function endCapture(): void {
 function finish(result: CaptureResult): void {
   endCapture()
   if (result.type === 'captured') {
-    void apply({ key: result.key })
+    void apply(result.key)
   } else if (result.type === 'cleared') {
     void apply(null)
   }
@@ -78,7 +78,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="hotkey-field">
     <button type="button" class="key" :class="{ capturing }" :disabled="capturing" @click="startCapture">
-      {{ capturing ? t('hotkey.pressKey') : binding === null ? t('hotkey.none') : formatHotkey(binding.key) }}
+      {{ capturing ? t('hotkey.pressKey') : binding === null ? t('hotkey.none') : formatHotkey(binding) }}
     </button>
     <button v-if="binding !== null" type="button" class="clear" :aria-label="t('hotkey.clear')" @click="apply(null)">
       {{ t('hotkey.clear') }}

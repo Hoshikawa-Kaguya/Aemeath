@@ -2,7 +2,7 @@
 
 use aemeath_control::crash_dumps;
 use aemeath_control::slots::uninstall;
-use aemeath_core::hotkeys::HotkeyBinding;
+use aemeath_core::hotkeys::Hotkey;
 use aemeath_core::model::Position;
 use aemeath_core::preferences::{LanguagePreference, ThemeMode};
 use aemeath_protocol::ids::{EndpointId, NodeId};
@@ -22,7 +22,7 @@ use crate::apps::AppsView;
 use crate::controller::{BACKGROUND_FOLDER, CommandError, ControllerHandle, DeviceDirection, Edit, NewNodeKind};
 use crate::default_devices::DefaultDevicesView;
 use crate::device_settings::{CapabilitiesView, DeviceSettingsView, ResamplerView, SlotSettingsView};
-use crate::hotkey_views::{HotkeyBindingView, HotkeyTargetView};
+use crate::hotkey_views::{HotkeyTargetView, HotkeyView};
 use crate::meters::MeterHub;
 use crate::tray::{TrayLabels, TrayMenu};
 use crate::updates::{UpdateService, UpdateView};
@@ -479,12 +479,12 @@ fn open_in_explorer(folder: &Path) -> Reply<()> {
 pub async fn set_hotkey(
     controller: State<'_, ControllerHandle>,
     target: HotkeyTargetView,
-    binding: Option<HotkeyBindingView>,
+    binding: Option<HotkeyView>,
 ) -> Reply<ViewState> {
     controller
         .edit(Edit::SetHotkey {
             target: target.into(),
-            binding: binding.map(HotkeyBinding::from),
+            binding: binding.map(Hotkey::from),
         })
         .await
 }

@@ -19,7 +19,7 @@ use aemeath_control::slots::registration::{RegistrationProgress, all_slots, regi
 use aemeath_control::slots::{MaintainerConfig, MaintainerTiming, SlotMaintainer, SlotStatus, uninstall};
 use aemeath_control::usbip_cli::{UsbipCli, UsbipVersion};
 use aemeath_core::duplicates::{DuplicateRoute, duplicate_routes};
-use aemeath_core::hotkeys::{self, HotkeyBinding, HotkeyError, HotkeyOverlay, HotkeyTarget};
+use aemeath_core::hotkeys::{self, Hotkey, HotkeyError, HotkeyOverlay, HotkeyTarget};
 use aemeath_core::model::{DeviceRef, LabelPosition, Node, NodeKind, NodeName, Position};
 use aemeath_core::naming::same_file_name;
 use aemeath_core::preferences::{Appearance, LandingRecord, LanguagePreference, ThemeMode, WindowPlacement};
@@ -43,7 +43,7 @@ use tracing::{error, info, warn};
 use crate::apps::{self, AppsView};
 use crate::default_devices::DefaultDevicesView;
 use crate::device_settings::{CapabilitiesView, DeviceSettingsView, ResamplerView, SlotSettingsView};
-use crate::hotkey_views::{HotkeyBindingView, HotkeyRowView, HotkeyTargetView};
+use crate::hotkey_views::{HotkeyRowView, HotkeyTargetView, HotkeyView};
 use crate::recording::{RecorderStateView, RecorderView, RecordingView, prepare_recording_path, recording_folder};
 use crate::view::{
     AppearanceView, ConfigStatusView, DeviceView, DuplicateView, EngineState, EngineStatsView, EngineView, FormatView,
@@ -226,7 +226,7 @@ pub enum Edit {
     },
     SetHotkey {
         target: HotkeyTarget,
-        binding: Option<HotkeyBinding>,
+        binding: Option<Hotkey>,
     },
     SetPanicMute(bool),
     SetRecordingFolder(String),
@@ -572,7 +572,7 @@ struct Controller {
     /// `RegisterHotKey` 失败的绑定
     occupied_hotkeys: Vec<HotkeyTarget>,
     /// 已注册的绑定，内容不变时不重新注册
-    registered_hotkeys: Vec<(HotkeyTarget, HotkeyBinding)>,
+    registered_hotkeys: Vec<(HotkeyTarget, Hotkey)>,
     overlay: HotkeyOverlay,
     toggle_window: Box<dyn Fn() + Send>,
     /// 给界面的一次性提示，界面按编号只显示新的
@@ -1944,8 +1944,8 @@ impl Controller {
                 })
                 .unwrap_or_default(),
             status,
-            mute_hotkey: node.mute_hotkey.map(HotkeyBindingView::from),
-            record_hotkey: node.record_hotkey.map(HotkeyBindingView::from),
+            mute_hotkey: node.mute_hotkey.map(HotkeyView::from),
+            record_hotkey: node.record_hotkey.map(HotkeyView::from),
             recorder: match node.kind {
                 NodeKind::Recorder { settings } => Some(RecorderView {
                     settings,

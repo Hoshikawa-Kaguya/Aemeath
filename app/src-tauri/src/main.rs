@@ -59,6 +59,12 @@ fn main() -> ExitCode {
         Startup::Run(activation) => activation,
         Startup::Exit => return ExitCode::SUCCESS,
     };
+    // 通常守护进程已经升级过；开发时单独运行主程序也要在读取任何设置之前升级
+    match ConfigStore::new(&config.data_dir).upgrade() {
+        Ok(true) => tracing::info!("upgraded the configuration file"),
+        Ok(false) => {}
+        Err(error) => tracing::warn!(%error, "cannot upgrade the configuration file"),
+    }
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())

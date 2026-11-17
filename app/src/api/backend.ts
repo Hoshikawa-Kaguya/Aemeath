@@ -9,7 +9,7 @@ import type {
   DefaultDevicesView,
   DeviceChoice,
   DeviceSettings,
-  HotkeyBindingView,
+  HotkeyView,
   HotkeyTargetView,
   LanguagePreference,
   NewNodeKind,
@@ -63,7 +63,7 @@ export const backend = {
     invoke<void>('set_landing', { processId, executable, endpointId }),
   landingCount: (node: number) => invoke<number>('landing_count', { node }),
   /** `binding` 为 null 表示清除 */
-  setHotkey: (target: HotkeyTargetView, binding: HotkeyBindingView | null) =>
+  setHotkey: (target: HotkeyTargetView, binding: HotkeyView | null) =>
     invoke<ViewState>('set_hotkey', { target, binding }),
   setHotkeysPaused: (paused: boolean) => invoke<void>('set_hotkeys_paused', { paused }),
   setPanicMute: (active: boolean) => invoke<ViewState>('set_panic_mute', { active }),
