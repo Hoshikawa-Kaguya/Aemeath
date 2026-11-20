@@ -10,7 +10,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "aemeath-app"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "aemeath-control",
  "aemeath-core",
@@ -32,7 +32,7 @@ dependencies = [
 
 [[package]]
 name = "aemeath-control"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "aemeath-core",
  "aemeath-protocol",
@@ -47,7 +47,7 @@ dependencies = [
 
 [[package]]
 name = "aemeath-core"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "aemeath-protocol",
  "serde",
@@ -58,7 +58,7 @@ dependencies = [
 
 [[package]]
 name = "aemeath-dev-cleanup"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "aemeath-control",
  "aemeath-sys",
@@ -68,7 +68,7 @@ dependencies = [
 
 [[package]]
 name = "aemeath-dsp"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "aemeath-protocol",
  "rubato",
@@ -77,7 +77,7 @@ dependencies = [
 
 [[package]]
 name = "aemeath-engine"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "aemeath-dsp",
  "aemeath-io",
@@ -95,7 +95,7 @@ dependencies = [
 
 [[package]]
 name = "aemeath-guardian"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "aemeath-control",
  "aemeath-core",
@@ -111,7 +111,7 @@ dependencies = [
 
 [[package]]
 name = "aemeath-host"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "aemeath-engine",
  "aemeath-io",
@@ -128,7 +128,7 @@ dependencies = [
 
 [[package]]
 name = "aemeath-io"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "aemeath-dsp",
  "aemeath-protocol",
@@ -140,7 +140,7 @@ dependencies = [
 
 [[package]]
 name = "aemeath-protocol"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "serde",
  "serde_json",
@@ -149,7 +149,7 @@ dependencies = [
 
 [[package]]
 name = "aemeath-runtime"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "aemeath-sys",
  "aemeath-usbip",
@@ -162,7 +162,7 @@ dependencies = [
 
 [[package]]
 name = "aemeath-sys"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "aemeath-protocol",
  "thiserror 2.0.21",
@@ -173,7 +173,7 @@ dependencies = [
 
 [[package]]
 name = "aemeath-usbip"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "aemeath-protocol",
  "aemeath-sys",
