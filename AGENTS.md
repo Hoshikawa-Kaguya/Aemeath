@@ -30,6 +30,7 @@
 - agent 跑的测试每项不超过 5 分钟。
 - 需要 UAC 的操作、会改动系统默认设备的操作、涉及游戏和反作弊的测试，先问维护者。
 - 开发和测试只用开发身份（`Aemeath Dev In/Out N`，不带参数运行时的默认身份），不要临时改序列号，否则会在系统里留下新的设备实例。需要清理时用 `tools/aemeath-dev-cleanup`。
+- 挂上开发槽位时 Windows 可能把默认设备切到槽位上，其他程序的声音会混进测试信号。`engine/aemeath-engine/examples` 的端到端示例在挂载期间会把默认设备改回挂载前的设备；输出里出现 `WARNING: ... dev slot` 时，说明有程序单独指定了开发槽位，这次的电平、毛刺结果不可信。
 - 不要假设某台设备存在：代码和测试都不能写死设备名、采样率、声道数。测试时避开正被其他程序独占的设备。
 - PowerShell 脚本用 PowerShell 7（`pwsh`）运行。Windows PowerShell 5.1 会按 ANSI 读取无 BOM 的 UTF-8 脚本，中文会把代码吞掉。
 

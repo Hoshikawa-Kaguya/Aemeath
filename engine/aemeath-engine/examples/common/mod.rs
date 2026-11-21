@@ -4,13 +4,22 @@
 
 #![allow(dead_code)]
 
+use std::collections::HashSet;
 use std::error::Error;
 use std::f64::consts::TAU;
 use std::process::Command;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use aemeath_protocol::ids::{EndpointId, SlotDirection, SlotId, SlotNumber};
+use aemeath_sys::app_routing::AppRouting;
+use aemeath_sys::audio_endpoints::{AudioEndpoints, AudioFlow};
+use aemeath_sys::audio_sessions::render_sessions;
+use aemeath_sys::com::ComApartment;
+use aemeath_sys::policy_config::{DefaultRole, PolicyConfig};
 use wasapi::{DeviceEnumerator, SampleType, StreamMode};
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
@@ -31,6 +40,17 @@ const DEVICE_TIMEOUT: Duration = Duration::from_secs(60);
 const EVENT_TIMEOUT_MS: u32 = 2_000;
 const FLOAT_BITS: u16 = 32;
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
+/// 开发槽位的设备接口名前缀（正式身份的槽位是"Aemeath In 1"这样的名字，不会匹配）
+const DEV_SLOT_PREFIX: &str = "Aemeath Dev";
+/// 挂载期间检查默认设备和会话的间隔
+const GUARD_INTERVAL: Duration = Duration::from_millis(500);
+const GUARD_READY_TIMEOUT: Duration = Duration::from_secs(5);
+const GUARDED_DEFAULTS: [(AudioFlow, DefaultRole); 4] = [
+    (AudioFlow::Render, DefaultRole::Default),
+    (AudioFlow::Render, DefaultRole::Communications),
+    (AudioFlow::Capture, DefaultRole::Default),
+    (AudioFlow::Capture, DefaultRole::Communications),
+];
 
 pub fn slot(direction: SlotDirection, number: u8) -> Result<SlotId> {
     Ok(SlotId {
@@ -51,16 +71,20 @@ pub fn attach(port: u16, busid: &str) {
 }
 
 /// 挂载开发槽位；离开作用域时（包括出错提前返回）卸下所有指向这个端口的挂载。
+/// 挂载期间由 [`DefaultGuard`] 守住系统默认设备。
 pub struct Attachment {
     port: u16,
+    // 在 drop 里先卸下槽位，再停守护线程
+    _guard: DefaultGuard,
 }
 
 impl Attachment {
     pub fn attach(port: u16, bus_ids: &[&str]) -> Self {
+        let guard = DefaultGuard::start();
         for busid in bus_ids {
             attach(port, busid);
         }
-        Self { port }
+        Self { port, _guard: guard }
     }
 }
 
@@ -68,6 +92,111 @@ impl Drop for Attachment {
     fn drop(&mut self) {
         detach_all(self.port);
     }
+}
+
+/// 挂上开发槽位后，Windows 可能把默认设备切到槽位上（实测控制台和多媒体两个角色切到了 Dev In 1），
+/// 跟随默认设备的程序（音乐、游戏、浏览器）的声音就会混进测试信号。挂载期间定时检查，
+/// 默认设备被切到开发槽位时改回挂载前的设备；单独指定输出到开发槽位的程序无法改回，打印警告。
+struct DefaultGuard {
+    stop: Arc<AtomicBool>,
+    thread: Option<thread::JoinHandle<()>>,
+}
+
+impl DefaultGuard {
+    fn start() -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        let flag = stop.clone();
+        let (ready, ready_receiver) = mpsc::channel();
+        let thread = thread::spawn(move || {
+            if let Err(error) = guard_defaults(&flag, &ready) {
+                println!("default device guard stopped: {error}");
+            }
+        });
+        // 先记下挂载前的默认设备再挂载；守护线程起不来时出错返回，发送端丢弃，这里也会返回
+        let _ = ready_receiver.recv_timeout(GUARD_READY_TIMEOUT);
+        Self {
+            stop,
+            thread: Some(thread),
+        }
+    }
+}
+
+impl Drop for DefaultGuard {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+fn guard_defaults(stop: &AtomicBool, ready: &mpsc::Sender<()>) -> Result<()> {
+    let _com = ComApartment::multithreaded()?;
+    let endpoints = AudioEndpoints::new()?;
+    let policy = PolicyConfig::new()?;
+    let routing = AppRouting::new()?;
+    let is_dev_slot = |id: &str| {
+        endpoints
+            .get(id)
+            .ok()
+            .flatten()
+            .and_then(|info| info.interface_name)
+            .is_some_and(|name| name.starts_with(DEV_SLOT_PREFIX))
+    };
+    let original: Vec<Option<String>> = GUARDED_DEFAULTS
+        .iter()
+        .map(|(flow, role)| endpoints.default_endpoint(*flow, *role).ok().flatten())
+        .collect();
+    let _ = ready.send(());
+
+    let own = std::process::id();
+    let mut interfering: HashSet<String> = HashSet::new();
+    while !stop.load(Ordering::Relaxed) {
+        for ((flow, role), original) in GUARDED_DEFAULTS.iter().zip(&original) {
+            let Some(original) = original else {
+                continue;
+            };
+            if let Ok(Some(current)) = endpoints.default_endpoint(*flow, *role)
+                && current != *original
+                && is_dev_slot(&current)
+            {
+                match policy.set_default_endpoint(original, *role) {
+                    Ok(()) => println!(
+                        "Windows made a dev slot the default {flow:?} device ({role:?}); restored the previous one"
+                    ),
+                    Err(error) => println!("cannot restore the default {flow:?} device ({role:?}): {error}"),
+                }
+            }
+        }
+        // 跟随默认设备的程序在默认设备改回后会跟着离开，只剩单独指定了开发槽位的程序
+        for session in render_sessions().unwrap_or_default() {
+            if session.process_id == own || session.system_sounds || !is_dev_slot(&session.endpoint_id) {
+                continue;
+            }
+            let routed_here = routing
+                .render_endpoint(session.process_id)
+                .ok()
+                .flatten()
+                .is_some_and(|preferred| is_dev_slot(&preferred));
+            let program = session.executable.map_or_else(
+                || format!("pid {}", session.process_id),
+                |path| path.display().to_string(),
+            );
+            if routed_here && interfering.insert(program.clone()) {
+                println!("WARNING: {program} sends its audio to a dev slot by its own output setting");
+            }
+        }
+        thread::sleep(GUARD_INTERVAL);
+    }
+    if !interfering.is_empty() {
+        let mut programs: Vec<String> = interfering.into_iter().collect();
+        programs.sort();
+        println!(
+            "WARNING: these programs play into the dev slots, so their audio may have mixed into the test signal: {}",
+            programs.join(", ")
+        );
+    }
+    Ok(())
 }
 
 /// 等待线程结束；出错时在错误中写明是哪个线程，以及出错的时间。
