@@ -36,9 +36,9 @@
 
 ## 代码约定
 
-- **Rust**
-  - 只有 `crates/aemeath-sys` 可以写 `unsafe`（其余 crate 由 workspace lint 禁止），新的 Windows API 调用都封装在这里。
-  - 不用 `unwrap`、`expect`、`panic`（clippy 会拒绝，测试代码除外）；错误要往上传或记日志。
+- **Rust**（通用 Rust 编码规范见 `rust-coding-standards` skill；以下为本仓库特定约束）
+  - 只有 `crates/aemeath-sys` 可以写 `unsafe`（其余 crate 由 workspace lint 禁止），新的 Windows API 调用都封装在这里，每个 `unsafe` 块须写 `// SAFETY:` 注释。
+  - 生产代码禁止 `unwrap`、`expect`、`panic`（由 workspace clippy 拒绝，测试代码按 `clippy.toml` 豁免）；错误要往上传或记日志。
   - 引擎的调度线程 `aemeath-scheduler` 是唯一的实时线程：里面不加锁等待、不分配内存、不做阻塞 IO。耗时的准备工作交给非实时线程（例如重采样器的构建、录音写盘），用无锁结构交接。日志是非阻塞的，可以写，但要限频。
   - 按职责拆 crate，每个 crate 能单独测试；不要为了少写几行把职责合并到一个 crate。
 - **前端**
@@ -47,13 +47,12 @@
   - 颜色、字号、圆角只用 `app/src/styles/tokens.css` 里的变量（来自 Fluent 2 设计令牌）。
 - **文件**：UTF-8 无 BOM、LF 行尾、以换行结尾（`.cmd`、`.bat` 用 CRLF），由 `.editorconfig` 和 `.gitattributes` 固定。
 
-## 注释
+## 注释与文档
 
-- 用自然语言写，简洁、说清楚就好。
-- 能自注释的代码不写注释；不要逐行复述代码在做什么。
-- 复杂的逻辑写清楚这段代码做了什么，以及为什么这样做（例如实测得到的约束、绕开的系统行为、参数的取值理由）。
-- `pub` 的函数和类型写一句文档注释说明用途；名字已经说清楚的（简单的 getter、构造函数）不写。
-- 不写对话或讨论的过程，不写聊天里的代号：ADR 编号、里程碑（M1–M5）、spike 编号（S1–S7）、切片号、计划里的决定编号等。也不引用 `agent_tmp/` 下的路径。这些都不公开，读代码的人看不到。
+通用注释与文档写作原则见 `code-comments-and-docs` skill；本仓库补充约束：
+
+- 代码注释与 rustdoc 使用简体中文自然语言；不写入聊天与计划代号（如 ADR 编号、M1–M5、S1–S7、切片号）或 `agent_tmp/` 路径。
+- 公开文档有 `README.md`、`docs/usage.md` 和它们的英文版（`README.en.md`、`docs/usage.en.md`）。功能有变化时中英文一起改，界面上的叫法与语言包及 `GLOSSARY.md` 保持一致。
 
 ## 兼容性
 
@@ -74,8 +73,3 @@
 - 推送 `v主.次.修订[-后缀]` tag 后，`.github/workflows/release.yml` 核对 tag 与两处版本号，打包并发布到 GitHub Releases；带后缀的标为预发布。tag 由维护者推送。
 - 发版顺序：维护者手动运行 `/changelog <版本号>`（本地 skill：把两处版本号改成这个值，运行 `cargo update --workspace` 更新 `Cargo.lock`，比较上一个 tag 与 HEAD，写入 `CHANGELOG.md`，并把修改记录的"未发布"改成版本号）→ 提交（版本号、`Cargo.lock`、`CHANGELOG.md` 在同一个提交里）→ 打 tag 并推送。CI 用 `--locked` 构建，`Cargo.lock` 没跟着版本号更新时会失败。CI 把 `CHANGELOG.md` 里这个版本的一节写进 GitHub Release 的说明。
 - `CHANGELOG.md` 只增量更新：新版本插在文件顶部的标记下面。不要读整个文件，用 `grep -n '^## '` 找到需要的那一节再按行号读。版本标题只用 `## `，版本内部的标题从 `###` 开始。
-
-## 文档
-
-- 公开文档有 `README.md`、`docs/usage.md` 和它们的英文版（`README.en.md`、`docs/usage.en.md`）。功能有变化时中英文一起改，界面上的叫法与语言包保持一致。
-- 文档写"现在怎么做"。被替代的做法直接改写成现在的做法，不留"原来是什么、后来取消了"。只有在没有替代做法时，才写"不做 X"或"不支持 X"。
