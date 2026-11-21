@@ -125,6 +125,16 @@ pub struct BufferStat {
     pub target_ms: f32,
 }
 
+/// ASRC 缓冲占用比（占用 ÷ 目标，%）超出这个范围时标题栏显示警告、引擎记日志。稳态实测最多偏离约 29%，不会误报
+pub const ASRC_WARN_RANGE: std::ops::RangeInclusive<f32> = 50.0..=150.0;
+
+impl BufferStat {
+    /// 占用比（%）；没有目标占用时为 None。
+    pub fn percent(&self) -> Option<f32> {
+        (self.target_ms > 0.0).then(|| self.level_ms / self.target_ms * 100.0)
+    }
+}
+
 /// 外部设备的能力（独占时的格式和缓冲由用户在其中选择）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

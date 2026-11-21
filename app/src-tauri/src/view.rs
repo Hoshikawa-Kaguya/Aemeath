@@ -8,7 +8,9 @@ use aemeath_control::slots::{SlotHealth, SlotStatus};
 use aemeath_core::model::{Node, NodeKind, Route};
 use aemeath_core::preferences::{LanguagePreference, ThemeMode};
 use aemeath_protocol::ids::{SlotDirection, SlotId};
-use aemeath_protocol::message::{BufferStat, DeviceFormat, EndpointStatus, OfflineReason, SampleFormat};
+use aemeath_protocol::message::{
+    ASRC_WARN_RANGE, BufferStat, DeviceFormat, EndpointStatus, OfflineReason, SampleFormat,
+};
 use aemeath_protocol::topology::RouteRejection;
 use aemeath_protocol::units::{SampleRate, SampleRateError};
 use serde::{Deserialize, Serialize};
@@ -140,8 +142,6 @@ pub struct EngineView {
 
 /// 实时线程峰值负载超过这个百分比时标题栏的 CPU 标签显示警告
 const REALTIME_WARN_PERCENT: f32 = 80.0;
-/// ASRC 缓冲占用比（占用 ÷ 目标）超出这个范围时显示警告。稳态实测最多偏离约 29%，不会误报
-const ASRC_WARN_RANGE: std::ops::RangeInclusive<f32> = 50.0..=150.0;
 
 /// 标题栏的 CPU 和 ASRC 标签。
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -176,12 +176,13 @@ impl EngineStatsView {
     pub fn new(cpu_percent: f32, realtime_peak_percent: f32, buffers: &[BufferStat]) -> Self {
         let buffers: Vec<AsrcBufferView> = buffers
             .iter()
-            .filter(|buffer| buffer.target_ms > 0.0)
-            .map(|buffer| AsrcBufferView {
-                node: buffer.node.0,
-                level_ms: buffer.level_ms,
-                target_ms: buffer.target_ms,
-                percent: buffer.level_ms / buffer.target_ms * 100.0,
+            .filter_map(|buffer| {
+                buffer.percent().map(|percent| AsrcBufferView {
+                    node: buffer.node.0,
+                    level_ms: buffer.level_ms,
+                    target_ms: buffer.target_ms,
+                    percent,
+                })
             })
             .collect();
         let worst = buffers
