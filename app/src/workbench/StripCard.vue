@@ -52,13 +52,15 @@ watch(
 const sendGain = throttled((value: number) => void store.run(() => backend.setNodeGain(props.node.id, value)))
 const sendGate = throttled((value: number | null) => void store.run(() => backend.setNodeGate(props.node.id, value)))
 
-/** 拖动推子：本地值先变，节流发给后端 */
+/** 拖动推子：本地值先变，节流发给后端。刚滚过滚轮时撤掉它的计时器，否则拖到一半会提前恢复接收后端的值 */
 function onGain(): void {
+  window.clearTimeout(wheelIdle)
   adjusting = true
   sendGain(gain.value)
 }
 
 function onGate(): void {
+  window.clearTimeout(wheelIdle)
   adjusting = true
   sendGate(positionToGate(gatePosition.value))
 }
