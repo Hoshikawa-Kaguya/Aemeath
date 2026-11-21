@@ -8,9 +8,10 @@
 //! 外部输入的内容无法预知，只确认 Dev Out 1 上有信号，稳定性看引擎日志里的桥接状态（每分钟一条）。
 //!
 //! 用法：`cargo run -p aemeath-engine --example external --release -- [秒数] [--output 名称] [--input 名称] [--exclusive]
-//! [--output-rate 采样率] [--resampler poly|sinc|fft]`
+//! [--output-rate 采样率] [--engine-rate 采样率] [--resampler poly|sinc|fft]`
 //! 默认两台外部设备都以共享方式打开（为了环回检查）；`--exclusive` 时独占打开，不做环回检查。
 //! `--output-rate` 让外部输出独占并固定在这个采样率（高采样率断音的复现），外部输入不受影响。
+//! `--engine-rate` 改引擎采样率（默认 48 kHz）。
 //! 不指定名称时用系统默认的播放和录音设备。外部输出会发出很轻的 1 kHz 提示音。agent 执行时不超过 5 分钟。
 
 mod common;
@@ -53,6 +54,7 @@ struct Options {
     /// 所以这时不做环回检查，只检查两台设备都在线、没有离线
     exclusive: bool,
     output_rate: Option<u32>,
+    engine_rate: u32,
     resampler: Resampler,
 }
 
@@ -89,6 +91,7 @@ fn parse() -> Result<Options> {
         input: None,
         exclusive: false,
         output_rate: None,
+        engine_rate: ENGINE_RATE,
         resampler: Resampler::default(),
     };
     let mut args = std::env::args().skip(1);
@@ -98,6 +101,7 @@ fn parse() -> Result<Options> {
             "--input" => options.input = args.next(),
             "--exclusive" => options.exclusive = true,
             "--output-rate" => options.output_rate = args.next().map(|rate| rate.parse()).transpose()?,
+            "--engine-rate" => options.engine_rate = args.next().ok_or("--engine-rate needs a value")?.parse()?,
             "--resampler" => options.resampler = parse_resampler(args.next())?,
             seconds => options.seconds = seconds.parse()?,
         }
@@ -153,6 +157,7 @@ fn run() -> Result<bool> {
         output_settings,
         settings,
         options.resampler,
+        options.engine_rate,
     )?)?;
     let _attachment = Attachment::attach(PORT, &BUS_IDS);
     let started = Instant::now();
@@ -234,6 +239,7 @@ fn topology(
     output_settings: DeviceSettings,
     input_settings: DeviceSettings,
     resampler: Resampler,
+    engine_rate: u32,
 ) -> Result<RouteTopology> {
     let slot_input = NodeId(1);
     let external_output = NodeId(2);
@@ -252,7 +258,7 @@ fn topology(
     };
     Ok(RouteTopology {
         revision: TopologyRevision(1),
-        engine_sample_rate: SampleRate::new(ENGINE_RATE)?,
+        engine_sample_rate: SampleRate::new(engine_rate)?,
         clock_master: Some(external_output),
         resampler,
         nodes: vec![
