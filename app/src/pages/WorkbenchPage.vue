@@ -38,8 +38,8 @@ import { workbenchKey, type NodeData, type RouteData, type WorkbenchActions } fr
 const GRID = 20
 const MIN_ZOOM = 0.25
 const MAX_ZOOM = 2
-/** 自适应时，内容离工作台边缘的最小距离（屏幕像素） */
-const FIT_MARGIN_PX = 10
+/** 自适应时，内容离工作台边缘的最小距离（屏幕像素，留出上边框浮动状态标签的空间） */
+const FIT_MARGIN_PX = 18
 /** 端口圆点伸出节点卡片左右两侧的距离（工作台坐标） */
 const PORT_OVERHANG = 8
 const FIT_DURATION_MS = 200

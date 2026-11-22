@@ -482,12 +482,18 @@ function onKeyDown(event: KeyboardEvent): void {
   outline: none;
 }
 
-/* 状态胶囊标签行：只在节点有锁定、静音、主时钟或重复路由状态时显示 */
+/* 状态胶囊标签：绝对定位骑在卡片上边框右侧，切换状态时不改变卡片高度；底色混入不透明卡片色以遮住边框和选中描边 */
 .node-badges {
+  position: absolute;
+  top: -11px;
+  right: 10px;
+  z-index: 2;
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
   gap: 4px;
-  padding: 0 10px 6px;
+  max-width: calc(100% - 20px);
+  pointer-events: none;
 }
 
 .badge {
@@ -497,12 +503,13 @@ function onKeyDown(event: KeyboardEvent): void {
   height: 18px;
   padding: 0 6px;
   border-radius: var(--borderRadiusCircular);
-  border: 1px solid var(--stroke);
-  background: var(--layer-alt);
+  border: 1px solid var(--stroke-strong);
+  background: var(--card-solid);
   color: var(--text-2);
   font-size: var(--fontSizeBase100);
   line-height: 16px;
   white-space: nowrap;
+  pointer-events: auto;
 }
 
 .badge svg {
@@ -511,25 +518,26 @@ function onKeyDown(event: KeyboardEvent): void {
 }
 
 .badge.lock {
-  border-color: color-mix(in srgb, var(--text-2) 32%, transparent);
+  border-color: color-mix(in srgb, var(--text-2) 38%, var(--card-solid));
+  background: color-mix(in srgb, var(--text-2) 10%, var(--card-solid));
   color: var(--text);
 }
 
 .badge.mute {
-  border-color: color-mix(in srgb, var(--crit) 45%, transparent);
-  background: color-mix(in srgb, var(--crit) 12%, transparent);
+  border-color: color-mix(in srgb, var(--crit) 50%, var(--card-solid));
+  background: color-mix(in srgb, var(--crit) 14%, var(--card-solid));
   color: var(--crit);
 }
 
 .badge.clock {
-  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--card-solid));
+  background: color-mix(in srgb, var(--accent) 14%, var(--card-solid));
   color: var(--accent-text);
 }
 
 .badge.dup {
-  border-color: color-mix(in srgb, var(--warn) 45%, transparent);
-  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border-color: color-mix(in srgb, var(--warn) 50%, var(--card-solid));
+  background: color-mix(in srgb, var(--warn) 14%, var(--card-solid));
   color: var(--warn);
 }
 
