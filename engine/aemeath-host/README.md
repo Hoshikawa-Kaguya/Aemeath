@@ -13,7 +13,7 @@ aemeath-host [--data-dir <目录>] [--usbip-port <端口>] [--pipe <管道名>] 
 | 项 | 默认 |
 |---|---|
 | 数据目录 | `%APPDATA%\Aemeath Dev`（正式版为 `%APPDATA%\Aemeath`，安装版和便携版相同） |
-| USB/IP 端口 | 32410（经守护进程启动时由它决定） |
+| USB/IP 端口 | 开发身份 `32420`（可用环境变量 `AEMEATH_USBIP_PORT` 覆盖，优先级低于 `--usbip-port`），正式身份 `32410`；未显式指定且端口不可用时自动改由系统分配，实际端口在握手时通知主程序 |
 | 管道名 | `\\.\pipe\Aemeath.Dev.Engine.<当前用户 SID>` |
 | 电平共享内存 | `Local\Aemeath.Dev.Meters.<当前用户 SID>` |
 

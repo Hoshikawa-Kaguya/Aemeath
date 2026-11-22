@@ -25,7 +25,7 @@ use aemeath_protocol::units::SampleRate;
 use aemeath_runtime::names::ProcessNames;
 use aemeath_sys::com::ComApartment;
 use aemeath_sys::policy_config::PolicyConfig;
-use aemeath_usbip::identity::{DEFAULT_USBIP_PORT, IdentityProfile};
+use aemeath_usbip::identity::IdentityProfile;
 use tokio::process::{Child, Command};
 use tokio::sync::mpsc;
 
@@ -189,8 +189,10 @@ async fn main() -> Result<(), Error> {
     let data_dir = args
         .next()
         .ok_or("usage: slot-maintenance <aemeath-host.exe> <data dir> [usbip port]")?;
-    let usbip_port: u16 = args.next().map_or(Ok(DEFAULT_USBIP_PORT), |text| text.parse())?;
     let identity = IdentityProfile::Development;
+    let usbip_port: u16 = args
+        .next()
+        .map_or(Ok(identity.default_usbip_port()), |text| text.parse())?;
     let identities = identity.all()?;
     let usbip = UsbipCli::new(
         UsbipCli::default_program().ok_or("%ProgramFiles% is not set")?,

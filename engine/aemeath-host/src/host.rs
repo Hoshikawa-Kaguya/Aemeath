@@ -23,10 +23,9 @@ pub async fn run(config: RuntimeConfig, shutdown: impl Future<Output = ()>) -> i
         usbip_port = config.usbip_port,
         "engine host starting"
     );
-    let mut engine = Engine::start(EngineConfig {
-        usbip_port: config.usbip_port,
-        identity: config.identity,
-    })?;
+    // 先建管道（要求是首个实例）再起引擎和恢复拓扑：同名管道已被别人占着时直接失败退出，不先占端口或放出声音
+    let mut listener = aemeath_sys::pipe::create_pipe_server(&config.pipe_name, true)?;
+    let mut engine = start_engine(&config)?;
     let receiver = engine
         .take_events()
         .ok_or_else(|| io::Error::other("engine events were already taken"))?;
@@ -50,8 +49,6 @@ pub async fn run(config: RuntimeConfig, shutdown: impl Future<Output = ()>) -> i
         events,
         meter_banks,
     };
-    // 先建管道（要求是首个实例）再恢复拓扑：同名管道已被别人占着时直接失败退出，不先放出声音
-    let mut listener = aemeath_sys::pipe::create_pipe_server(&config.pipe_name, true)?;
     restore_cached_topology(&mut state);
     // 电平只用于显示：共享内存建不起来时记录下来，音频照常运行
     let meter_task = match meter_publisher::spawn(&config.meter_memory_name, banks) {
@@ -100,6 +97,33 @@ pub async fn run(config: RuntimeConfig, shutdown: impl Future<Output = ()>) -> i
         task.abort();
     }
     Ok(())
+}
+
+/// 启动引擎；未明确指定端口时，若默认端口已被占用或落入系统保留段，改由系统分配空闲端口。
+fn start_engine(config: &RuntimeConfig) -> io::Result<Engine> {
+    match Engine::start(EngineConfig {
+        usbip_port: config.usbip_port,
+        identity: config.identity,
+    }) {
+        Ok(engine) => Ok(engine),
+        Err(error) if !config.usbip_port_explicit && config.usbip_port != 0 && is_port_unavailable(&error) => {
+            tracing::warn!(
+                unavailable = config.usbip_port,
+                %error,
+                "the default USB/IP port is not available, letting the system pick one"
+            );
+            Engine::start(EngineConfig {
+                usbip_port: 0,
+                identity: config.identity,
+            })
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// 绑定失败是否说明端口不可用（已被其他进程占用，或落入 Windows 保留端口段返回 10013）。
+fn is_port_unavailable(error: &io::Error) -> bool {
+    matches!(error.kind(), io::ErrorKind::AddrInUse | io::ErrorKind::PermissionDenied)
 }
 
 /// 启动时先按缓存的拓扑恢复出声，再等主程序下发最新拓扑。

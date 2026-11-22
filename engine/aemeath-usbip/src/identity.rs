@@ -19,8 +19,10 @@ pub enum IdentityProfile {
     Production,
 }
 
-/// Aemeath USB/IP 服务端的默认端口。选在 Windows 默认动态范围（49152 起）之外，低端口更容易被 winnat 划进保留段
+/// Aemeath USB/IP 服务端的正式默认端口。选在 Windows 默认动态范围（49152 起）之外，低端口更容易被 winnat 划进保留段
 pub const DEFAULT_USBIP_PORT: u16 = 32410;
+/// 开发身份默认的 USB/IP 服务端端口。与正式身份和端到端示例（32411、32412）错开，方便在开发机上与正式安装同时运行
+pub const DEV_USBIP_PORT: u16 = 32420;
 
 impl IdentityProfile {
     /// 这次构建使用的身份：只有打开 `production-identity` feature（打包脚本）才是正式身份。
@@ -29,6 +31,14 @@ impl IdentityProfile {
             Self::Production
         } else {
             Self::Development
+        }
+    }
+
+    /// 这套身份默认使用的 USB/IP 服务端口。
+    pub const fn default_usbip_port(self) -> u16 {
+        match self {
+            Self::Development => DEV_USBIP_PORT,
+            Self::Production => DEFAULT_USBIP_PORT,
         }
     }
 }
@@ -181,6 +191,13 @@ mod tests {
     #[test]
     fn the_default_build_uses_the_development_identity() {
         assert_eq!(IdentityProfile::current(), IdentityProfile::Development);
+    }
+
+    #[test]
+    fn development_and_production_use_distinct_default_usbip_ports() {
+        assert_eq!(IdentityProfile::Development.default_usbip_port(), DEV_USBIP_PORT);
+        assert_eq!(IdentityProfile::Production.default_usbip_port(), DEFAULT_USBIP_PORT);
+        assert_ne!(DEV_USBIP_PORT, DEFAULT_USBIP_PORT);
     }
 
     #[test]

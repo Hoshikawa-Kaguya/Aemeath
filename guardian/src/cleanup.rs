@@ -17,7 +17,7 @@ use aemeath_runtime::names::{EXECUTABLES, ProcessNames};
 use aemeath_sys::elevation::run_elevated;
 use aemeath_sys::process::{ProcessEntry, process_snapshot};
 use aemeath_sys::{task_dialog, ui_language};
-use aemeath_usbip::identity::{DEFAULT_USBIP_PORT, IdentityProfile};
+use aemeath_usbip::identity::IdentityProfile;
 use tracing::{error, info, warn};
 
 use crate::messages;
@@ -106,7 +106,7 @@ fn remove_devices(identity: IdentityProfile) -> usize {
         error!("%ProgramFiles% is not set");
         return 1;
     };
-    let cli = UsbipCli::new(program, DEFAULT_USBIP_PORT);
+    let cli = UsbipCli::new(program, identity.default_usbip_port());
     let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
         Ok(runtime) => runtime,
         Err(error) => {

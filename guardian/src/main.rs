@@ -54,7 +54,6 @@ fn main() -> ExitCode {
     if let Some(code) = elevated::dispatch(&raw_args) {
         return code;
     }
-    let explicit_port = raw_args.iter().any(|arg| arg == "--usbip-port");
     let config = match RuntimeConfig::from_args(raw_args) {
         Ok(config) => config,
         Err(error) => {
@@ -113,12 +112,11 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let fixed_port = usbip_port::fixed(explicit_port.then_some(config.usbip_port), config.identity);
-    let mut port = fixed_port.unwrap_or(config.usbip_port);
+    let mut port = config.usbip_port;
     let report = supervisor::supervise(
         |role| {
-            // 每次启动引擎前都探测：端口中途失效时换一个，还在运行的主程序在握手时得知
-            if fixed_port.is_none() && role == Role::Engine {
+            // 未明确指定端口时，每次启动引擎前探测：端口不可用或中途失效时换一个，还在运行的主程序在握手时得知
+            if !config.usbip_port_explicit && role == Role::Engine {
                 port = usbip_port::resolve(port)?;
             }
             launch(&directory, role, &forwarded_arguments(&config, port))

@@ -1,25 +1,12 @@
-//! USB/IP 服务端口由守护进程决定，再分发给引擎和主程序（主程序用它调用 `usbip.exe`）。
+//! USB/IP 服务端口由守护进程决定，再分发给引擎和主程序（主程序在握手时也会以引擎实际端口为准）。
 //!
 //! Windows 可能把任意固定端口划进保留段（实测重启后旧的默认端口被 winnat 占走，绑定报 10013），
-//! 正式版不能依赖固定端口：每次启动引擎前探测，不可用就让系统分配。开发版用固定端口，方便调试和对照日志。
+//! 未明确指定端口时每次启动引擎前探测默认端口，不可用就让系统分配；可用时保持原端口，方便调试和对照日志。
 
 use std::io;
 use std::net::{Ipv4Addr, TcpListener};
 
-use aemeath_usbip::identity::{DEFAULT_USBIP_PORT, IdentityProfile};
 use tracing::warn;
-
-/// 开发版固定使用的端口，被保留时改这里。
-/// 当前保留段可用 `netsh interface ipv4 show excludedportrange protocol=tcp` 查看。
-const DEV_USBIP_PORT: u16 = DEFAULT_USBIP_PORT;
-
-/// 固定端口：命令行明确指定的优先，其次是开发版的配置；正式版返回 None，由 [`resolve`] 探测。
-pub fn fixed(explicit: Option<u16>, identity: IdentityProfile) -> Option<u16> {
-    explicit.or(match identity {
-        IdentityProfile::Development => Some(DEV_USBIP_PORT),
-        IdentityProfile::Production => None,
-    })
-}
 
 /// `current` 还能绑定就继续用，否则由系统分配一个当时可用的端口。
 ///
@@ -49,13 +36,5 @@ mod tests {
         assert_ne!(replacement, 0);
         drop(taken);
         assert_eq!(resolve(port).unwrap(), port);
-    }
-
-    #[test]
-    fn only_the_production_build_probes() {
-        assert_eq!(fixed(None, IdentityProfile::Development), Some(DEV_USBIP_PORT));
-        assert_eq!(fixed(None, IdentityProfile::Production), None);
-        assert_eq!(fixed(Some(4000), IdentityProfile::Production), Some(4000));
-        assert_eq!(fixed(Some(4000), IdentityProfile::Development), Some(4000));
     }
 }

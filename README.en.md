@@ -62,7 +62,7 @@ pnpm tauri dev                # run the app with frontend hot reload
 pnpm tauri build --no-bundle  # release build; installers are packaged separately by Velopack
 ```
 
-The app only produces sound while the engine is running and connected. Normally the guardian starts both: it brings up the engine and then the app. During development you can also start the engine yourself (`cargo run -p aemeath-host`) and then launch the app. With no arguments, both derive the same data directory (`%APPDATA%\Aemeath Dev`), pipe names and shared-memory names from the dev identity. Dev devices are named `Aemeath Dev In/Out N` and never mix with devices from a real installation.
+The app only produces sound while the engine is running and connected. Normally the guardian starts both: it brings up the engine and then the app. During development you can also start the engine yourself (`cargo run -p aemeath-host`) and then launch the app. With no arguments, both derive the same data directory (`%APPDATA%\Aemeath Dev`), pipe names and shared-memory names from the dev identity. The dev identity defaults to USB/IP port `32420` (separate from the production default `32410`, falling back to an ephemeral port if unavailable, or overridden via `AEMEATH_USBIP_PORT` / `--usbip-port`), and the app learns the actual port during handshake. Dev devices are named `Aemeath Dev In/Out N` and never mix with devices from a real installation.
 
 If you only need to iterate on the frontend, run `pnpm preview` in `app/`: it starts the dev server and opens `http://localhost:21364/preview.html`, where Tauri's `mockIPC` stands in for the backend (`src/dev/preview.ts`). This page is only served by the dev server and is not part of release builds.
 

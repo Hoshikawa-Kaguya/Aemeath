@@ -13,7 +13,7 @@ use std::process::ExitCode;
 use aemeath_control::slots::uninstall::{self, SlotInstance, Stage};
 use aemeath_control::usbip_cli::UsbipCli;
 use aemeath_sys::elevation;
-use aemeath_usbip::identity::{DEFAULT_USBIP_PORT, IdentityProfile};
+use aemeath_usbip::identity::IdentityProfile;
 
 const APPLY_FLAG: &str = "--apply";
 
@@ -111,7 +111,7 @@ fn print_plan(instances: &[SlotInstance]) {
 
 fn remove_all() -> Result<Vec<uninstall::Removal>, String> {
     let program = UsbipCli::default_program().ok_or("%ProgramFiles% is not set")?;
-    let cli = UsbipCli::new(program, DEFAULT_USBIP_PORT);
+    let cli = UsbipCli::new(program, IdentityProfile::Development.default_usbip_port());
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -124,7 +124,7 @@ fn remove_all() -> Result<Vec<uninstall::Removal>, String> {
 /// 开发身份的已挂载设备数（引擎还在运行时不为 0）
 fn attached_aemeath_devices() -> Result<usize, String> {
     let program = UsbipCli::default_program().ok_or("%ProgramFiles% is not set")?;
-    let cli = UsbipCli::new(program, DEFAULT_USBIP_PORT);
+    let cli = UsbipCli::new(program, IdentityProfile::Development.default_usbip_port());
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()

@@ -29,6 +29,7 @@ fn config(data_dir: PathBuf) -> RuntimeConfig {
     RuntimeConfig {
         data_dir,
         usbip_port: 0,
+        usbip_port_explicit: true,
         identity: IdentityProfile::Development,
         pipe_name: format!(r"\\.\pipe\aemeath-host-test-{}-{test}", std::process::id()),
         meter_memory_name: format!(r"Local\aemeath-host-test-meters-{}-{test}", std::process::id()),
@@ -285,5 +286,48 @@ async fn meters_follow_the_applied_topology() {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     host.abort();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn falls_back_to_an_ephemeral_port_when_the_default_is_taken() {
+    use std::net::{Ipv4Addr, TcpListener};
+
+    let taken = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let busy_port = taken.local_addr().unwrap().port();
+    let dir = temp_dir("port-fallback");
+    let mut config = config(dir.clone());
+    config.usbip_port = busy_port;
+    config.usbip_port_explicit = false;
+    let pipe = config.pipe_name.clone();
+    let host = tokio::spawn(aemeath_host::run(config, std::future::pending()));
+
+    let mut client = Client::connect(&pipe).await;
+    let EngineToApp::Welcome { usbip_port, .. } = client.hello().await else {
+        panic!("expected welcome");
+    };
+    assert_ne!(usbip_port, 0);
+    assert_ne!(usbip_port, busy_port);
+
+    client.request(AppToEngine::Shutdown { request: RequestId(1) }).await;
+    tokio::time::timeout(TIMEOUT, host).await.unwrap().unwrap().unwrap();
+    drop(taken);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn an_explicit_port_fails_when_taken() {
+    use std::net::{Ipv4Addr, TcpListener};
+
+    let taken = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let busy_port = taken.local_addr().unwrap().port();
+    let dir = temp_dir("port-explicit");
+    let mut config = config(dir.clone());
+    config.usbip_port = busy_port;
+    config.usbip_port_explicit = true;
+
+    let result = aemeath_host::run(config, std::future::pending()).await;
+    assert!(result.is_err(), "an explicitly requested port must not fall back");
+    drop(taken);
     let _ = std::fs::remove_dir_all(&dir);
 }
