@@ -3,7 +3,7 @@
 //! 1. 每个用户只运行一个。已有实例时请已运行的主程序显示窗口，然后退出。
 //! 2. 检查 usbip-win2 驱动；不可用时显示说明对话框并退出，不拉起引擎和主程序。
 //! 3. 拉起并监视引擎（`aemeath-host.exe`）与主程序（`aemeath-app.exe`），两者与守护进程放在同一目录，
-//!    并收到与守护进程相同的参数（数据目录、端口、管道名、共享内存名）。
+//!    并收到与守护进程相同的参数（数据目录、管道名、共享内存名；显式指定端口时一并透传）。
 //!
 //! 用法与引擎相同：`Aemeath [--data-dir <目录>] [--usbip-port <端口>] [--pipe <管道名>] [--meters <共享内存名>]`。
 
@@ -18,7 +18,6 @@ mod driver;
 mod elevated;
 mod messages;
 mod supervisor;
-mod usbip_port;
 
 use std::ffi::OsString;
 use std::io;
@@ -112,17 +111,8 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let mut port = config.usbip_port;
-    let report = supervisor::supervise(
-        |role| {
-            // 未明确指定端口时，每次启动引擎前探测：端口不可用或中途失效时换一个，还在运行的主程序在握手时得知
-            if !config.usbip_port_explicit && role == Role::Engine {
-                port = usbip_port::resolve(port)?;
-            }
-            launch(&directory, role, &forwarded_arguments(&config, port))
-        },
-        &Timing::default(),
-    );
+    let arguments = forwarded_arguments(&config);
+    let report = supervisor::supervise(|role| launch(&directory, role, &arguments), &Timing::default());
     info!(?report, "guardian stopped");
     ExitCode::SUCCESS
 }
@@ -164,18 +154,21 @@ fn check_driver(config: &RuntimeConfig) -> Result<(), driver::DriverProblem> {
     Ok(())
 }
 
-/// 引擎和主程序收到与守护进程相同的配置，USB/IP 端口用守护进程决定的值
-fn forwarded_arguments(config: &RuntimeConfig, usbip_port: u16) -> Vec<OsString> {
+/// 引擎和主程序收到与守护进程相同的配置。
+/// 仅在端口被明确指定时转发 `--usbip-port`；未指定时由引擎按身份默认端口绑定，不可用时自动改由系统分配，并在握手时通知主程序。
+fn forwarded_arguments(config: &RuntimeConfig) -> Vec<OsString> {
     let mut arguments: Vec<OsString> = vec![
         "--data-dir".into(),
         config.data_dir.clone().into_os_string(),
-        "--usbip-port".into(),
-        usbip_port.to_string().into(),
         PIPE_ARGUMENT.into(),
         config.pipe_name.clone().into(),
         "--meters".into(),
         config.meter_memory_name.clone().into(),
     ];
+    if config.usbip_port_explicit {
+        arguments.push("--usbip-port".into());
+        arguments.push(config.usbip_port.to_string().into());
+    }
     if config.autostart {
         arguments.push(autostart::ARGUMENT.into());
     }
@@ -192,4 +185,35 @@ fn launch(directory: &Path, role: Role, arguments: &[OsString]) -> io::Result<Ch
         .args(arguments)
         .creation_flags(CREATE_NO_WINDOW)
         .spawn()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aemeath_usbip::identity::IdentityProfile;
+
+    fn sample_config(usbip_port_explicit: bool) -> RuntimeConfig {
+        RuntimeConfig {
+            data_dir: PathBuf::from(r"C:\data"),
+            usbip_port: 34567,
+            usbip_port_explicit,
+            identity: IdentityProfile::Development,
+            pipe_name: r"\\.\pipe\test".to_owned(),
+            meter_memory_name: r"Local\meters".to_owned(),
+            autostart: false,
+        }
+    }
+
+    #[test]
+    fn forwards_usbip_port_only_when_explicitly_configured() {
+        let implicit = forwarded_arguments(&sample_config(false));
+        assert!(!implicit.iter().any(|arg| arg == "--usbip-port"));
+
+        let explicit = forwarded_arguments(&sample_config(true));
+        let flag = explicit.iter().position(|arg| arg == "--usbip-port");
+        assert_eq!(
+            flag.and_then(|index| explicit.get(index + 1)),
+            Some(&OsString::from("34567"))
+        );
+    }
 }

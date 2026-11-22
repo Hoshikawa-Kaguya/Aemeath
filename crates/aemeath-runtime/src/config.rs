@@ -23,7 +23,7 @@ pub const DEV_USBIP_PORT_ENV: &str = "AEMEATH_USBIP_PORT";
 pub struct RuntimeConfig {
     /// 数据目录：日志在 `logs\`，拓扑缓存在 `engine\`（安装版和便携版都是 `%APPDATA%\Aemeath`）
     pub data_dir: PathBuf,
-    /// USB/IP 端口；经守护进程启动时由它决定，直接运行引擎时未明确指定且端口不可用会改由系统分配
+    /// USB/IP 端口；未明确指定且端口不可用时引擎会改由系统分配，实际端口在握手时通知主程序
     pub usbip_port: u16,
     /// 端口是否由命令行 `--usbip-port` 或开发态环境变量明确指定
     pub usbip_port_explicit: bool,
