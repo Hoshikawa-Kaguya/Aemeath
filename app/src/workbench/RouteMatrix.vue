@@ -58,6 +58,10 @@ function sorted(nodes: NodeView[]): NodeView[] {
 
 const rows = computed(() => sorted(store.nodes.filter((node) => roleOf(node.kind) !== 'out' && visible(node))))
 const columns = computed(() => sorted(store.nodes.filter((node) => roleOf(node.kind) !== 'in' && visible(node))))
+const hasUnfilteredMatrix = computed(
+  () =>
+    store.nodes.some((node) => roleOf(node.kind) !== 'out') && store.nodes.some((node) => roleOf(node.kind) !== 'in'),
+)
 const routeMap = computed(() => new Map(store.routes.map((route) => [key(route.from, route.to), route])))
 
 interface Group {
@@ -292,7 +296,7 @@ function isHot(node: NodeView, axis: 'from' | 'to'): boolean {
     </div>
     <div class="matrix-wrap" @mouseleave="setHover(null)">
       <p v-if="rows.length === 0 || columns.length === 0" class="caption empty">
-        {{ t(pinOnly && store.nodes.length > 0 ? 'mx.emptyPinned' : 'mx.empty') }}
+        {{ t(pinOnly && hasUnfilteredMatrix ? 'mx.emptyPinned' : 'mx.empty') }}
       </p>
       <table v-else class="mx">
         <thead>

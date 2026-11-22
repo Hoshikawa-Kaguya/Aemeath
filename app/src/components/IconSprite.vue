@@ -89,10 +89,6 @@
         <rect x="5" y="11" width="14" height="10" rx="2" />
         <path d="M8 11V8a4 4 0 0 1 8 0v3" />
       </symbol>
-      <symbol id="i-unlock" viewBox="0 0 24 24">
-        <rect x="5" y="11" width="14" height="10" rx="2" />
-        <path d="M8 11V8a4 4 0 0 1 7.6-1.7" />
-      </symbol>
       <symbol id="i-mute" viewBox="0 0 24 24">
         <path d="M4 9.5h3.5L12 5v14l-4.5-4.5H4z" />
         <path d="m16 9.5 5 5M21 9.5l-5 5" />

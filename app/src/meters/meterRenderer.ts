@@ -63,12 +63,25 @@ class MeterRenderer {
   /** 每个节点的显示电平（dB） */
   private readonly levels = new Map<number, Level>()
   private readonly meters = new Set<Meter>()
+  private readonly metersByCanvas = new WeakMap<Element, Meter>()
   private readonly muted = new Set<number>()
   private palette: Palette | null = null
   private frame = 0
   private lastFrame = 0
   private lastReadout = 0
+  private lastRatio = window.devicePixelRatio || 1
   private subscribed = false
+  private readonly resizeObserver =
+    typeof ResizeObserver === 'undefined'
+      ? null
+      : new ResizeObserver((entries) => {
+          for (const entry of entries) {
+            const meter = this.metersByCanvas.get(entry.target)
+            if (meter !== undefined) {
+              meter.drawn = null
+            }
+          }
+        })
 
   register(
     node: number,
@@ -87,9 +100,13 @@ class MeterRenderer {
       windowStart: 0,
     }
     this.meters.add(meter)
+    this.metersByCanvas.set(canvas, meter)
+    this.resizeObserver?.observe(canvas)
     this.ensureRunning()
     return () => {
       this.meters.delete(meter)
+      this.metersByCanvas.delete(canvas)
+      this.resizeObserver?.unobserve(canvas)
     }
   }
 
@@ -156,10 +173,17 @@ class MeterRenderer {
     if (updateReadouts) {
       this.lastReadout = time
     }
+    const ratio = window.devicePixelRatio || 1
+    if (ratio !== this.lastRatio) {
+      this.lastRatio = ratio
+      for (const meter of this.meters) {
+        meter.drawn = null
+      }
+    }
     const palette = (this.palette ??= readPalette())
     for (const meter of this.meters) {
       this.updateReadout(meter, time, updateReadouts)
-      this.draw(meter, palette)
+      this.draw(meter, palette, ratio)
     }
     if (this.meters.size > 0) {
       this.frame = requestAnimationFrame((next) => this.tick(next))
@@ -198,22 +222,20 @@ class MeterRenderer {
     }
   }
 
-  private draw(meter: Meter, palette: Palette): void {
+  private draw(meter: Meter, palette: Palette, ratio: number): void {
     const level = this.levels.get(meter.node) ?? { left: -Infinity, right: -Infinity }
     const shown = { left: fraction(level.left), right: fraction(level.right) }
+    if (meter.drawn !== null && meter.drawn.left === shown.left && meter.drawn.right === shown.right) {
+      return
+    }
     const canvas = meter.canvas
-    const ratio = window.devicePixelRatio || 1
     const width = Math.round(canvas.clientWidth * ratio)
     const height = Math.round(canvas.clientHeight * ratio)
     if (width === 0 || height === 0) {
       return
     }
-    const resized = canvas.width !== width || canvas.height !== height
-    if (!resized && meter.drawn !== null && meter.drawn.left === shown.left && meter.drawn.right === shown.right) {
-      return
-    }
     meter.drawn = shown
-    if (resized) {
+    if (canvas.width !== width || canvas.height !== height) {
       canvas.width = width
       canvas.height = height
     }

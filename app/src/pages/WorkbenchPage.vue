@@ -92,21 +92,31 @@ function toggleConsoleCollapse(): void {
   void store.run(() => backend.setConsoleLayout(height, !consoleCollapsed.value))
 }
 
+let consoleLayoutTicket = 0
+
 function onConsoleResize(height: number): void {
   dragConsoleHeight.value = clampConsoleHeight(height)
+}
+
+function onConsoleResizeCancel(): void {
+  dragConsoleHeight.value = null
 }
 
 async function onConsoleResizeEnd(height: number): Promise<void> {
   const next = clampConsoleHeight(height)
   dragConsoleHeight.value = next
+  const ticket = ++consoleLayoutTicket
   try {
     await store.run(() => backend.setConsoleLayout(next, false))
   } finally {
-    dragConsoleHeight.value = null
+    if (ticket === consoleLayoutTicket) {
+      dragConsoleHeight.value = null
+    }
   }
 }
 
 function onConsoleResetHeight(): void {
+  consoleLayoutTicket += 1
   dragConsoleHeight.value = null
   void store.run(() => backend.setConsoleLayout(null, false))
 }
@@ -648,10 +658,6 @@ function onKeyDown(event: KeyboardEvent): void {
     const node = store.nodeById.get(current.id)
     if (node !== undefined) {
       event.preventDefault()
-      if (node.locked) {
-        store.showToast(t('toast.nodeLockedDelete', { name: node.name }))
-        return
-      }
       void store.removeNode(node).then((deleted) => {
         if (deleted && selection.value?.type === 'node' && selection.value.id === node.id) {
           selection.value = null
@@ -792,6 +798,7 @@ onBeforeUnmount(() => {
       @toggle-collapse="toggleConsoleCollapse"
       @resize="onConsoleResize"
       @resize-end="onConsoleResizeEnd"
+      @resize-cancel="onConsoleResizeCancel"
       @reset-height="onConsoleResetHeight"
     />
     <AddNodeDialog ref="addDialog" />

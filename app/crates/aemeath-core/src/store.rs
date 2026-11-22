@@ -210,10 +210,9 @@ fn parse(bytes: &[u8]) -> Result<Config, String> {
     }
     let workspace = file.workspace;
     workspace.check().map_err(|error| error.to_string())?;
-    Ok(Config {
-        workspace,
-        preferences: file.preferences,
-    })
+    let mut preferences = file.preferences;
+    preferences.console_layout = preferences.console_layout.normalized();
+    Ok(Config { workspace, preferences })
 }
 
 #[cfg(test)]
@@ -392,6 +391,22 @@ mod tests {
             store.path().exists(),
             "the newer file must not be renamed or overwritten"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn out_of_range_console_height_is_clamped_on_load() {
+        let dir = temp_dir("console-clamp");
+        let store = ConfigStore::new(&dir);
+        for (raw, expected) in [(50u16, ConsoleLayout::MIN_HEIGHT), (5000u16, ConsoleLayout::MAX_HEIGHT)] {
+            let mut config = sample();
+            config.preferences.console_layout.height = Some(raw);
+            store.save(&config).unwrap();
+            let Loaded::Existing(loaded) = store.load().unwrap() else {
+                unreachable!("expected existing configuration")
+            };
+            assert_eq!(loaded.preferences.console_layout.height, Some(expected));
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

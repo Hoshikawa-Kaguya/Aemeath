@@ -27,7 +27,6 @@ export type IconName =
   | 'stop'
   | 'tools'
   | 'lock'
-  | 'unlock'
   | 'mute'
   | 'chevron-down'
   | 'chevron-up'

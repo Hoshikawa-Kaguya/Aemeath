@@ -26,15 +26,18 @@ const props = defineProps<{
 const emit = defineEmits<{
   select: [node: NodeView]
   toggleCollapse: []
-  resizeStart: []
   resize: [height: number]
   resizeEnd: [height: number]
+  resizeCancel: []
   resetHeight: []
 }>()
 const { t } = useI18n()
 const store = useAppStore()
 const strips = useTemplateRef<HTMLElement>('strips')
 const resizing = ref(false)
+
+/** 按下后移动超过这个距离（px）才开始拖动，单击或双击时的抖动不算 */
+const DRAG_THRESHOLD_PX = 4
 
 /** 拖拽顶边分隔条调整控制台高度；双击恢复默认高度 */
 function onResizePointerDown(event: PointerEvent): void {
@@ -47,27 +50,40 @@ function onResizePointerDown(event: PointerEvent): void {
   const startY = event.clientY
   const startHeight = props.height
   let latestHeight = startHeight
+  let moved = false
   resizing.value = true
-  emit('resizeStart')
 
   const onMove = (moveEvent: PointerEvent) => {
+    if (!moved && Math.abs(moveEvent.clientY - startY) < DRAG_THRESHOLD_PX) {
+      return
+    }
+    moved = true
     latestHeight = startHeight + (startY - moveEvent.clientY)
     emit('resize', latestHeight)
   }
-  const finish = () => {
+  const cleanup = () => {
     handle.removeEventListener('pointermove', onMove)
-    handle.removeEventListener('pointerup', finish)
-    handle.removeEventListener('pointercancel', finish)
+    handle.removeEventListener('pointerup', onUp)
+    handle.removeEventListener('pointercancel', onCancel)
     resizing.value = false
-    emit('resizeEnd', latestHeight)
+  }
+  const onUp = () => {
+    cleanup()
+    if (moved) {
+      emit('resizeEnd', latestHeight)
+    }
+  }
+  const onCancel = () => {
+    cleanup()
+    if (moved) {
+      emit('resizeCancel')
+    }
   }
   handle.addEventListener('pointermove', onMove)
-  handle.addEventListener('pointerup', finish)
-  handle.addEventListener('pointercancel', finish)
+  handle.addEventListener('pointerup', onUp)
+  handle.addEventListener('pointercancel', onCancel)
 }
 
-/** 按下后水平移动超过这个距离（px）才开始拖动，单击时的抖动不算 */
-const DRAG_THRESHOLD_PX = 4
 /** 指针离控制台左右边缘这么近（px）时自动滚动，越近越快 */
 const EDGE_PX = 48
 /** 自动滚动的最大速度（px / 帧） */
