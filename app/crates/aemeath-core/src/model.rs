@@ -96,6 +96,9 @@ pub struct Node {
     /// 录音节点开始/停止录音的专属热键
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub record_hotkey: Option<Hotkey>,
+    /// 节点是否已锁定（GLOSSARY：锁定）；未锁定时不写进配置
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub locked: bool,
 }
 
 impl Node {

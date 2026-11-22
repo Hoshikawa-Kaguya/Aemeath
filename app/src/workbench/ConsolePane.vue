@@ -16,11 +16,55 @@ const props = defineProps<{
   nodeMenu: (node: NodeView) => MenuItem[]
   /** 与工作台同步的选中节点 */
   selected: number | null
+  /** 控制台是否收起为标题栏 */
+  collapsed: boolean
+  /** 展开且有已固定节点时允许拖拽顶边调整高度 */
+  resizable: boolean
+  /** 当前渲染高度（CSS 像素），用于拖动时计算新高度 */
+  height: number
 }>()
-const emit = defineEmits<{ select: [node: NodeView] }>()
+const emit = defineEmits<{
+  select: [node: NodeView]
+  toggleCollapse: []
+  resizeStart: []
+  resize: [height: number]
+  resizeEnd: [height: number]
+  resetHeight: []
+}>()
 const { t } = useI18n()
 const store = useAppStore()
 const strips = useTemplateRef<HTMLElement>('strips')
+const resizing = ref(false)
+
+/** 拖拽顶边分隔条调整控制台高度；双击恢复默认高度 */
+function onResizePointerDown(event: PointerEvent): void {
+  if (!props.resizable || event.button !== 0) {
+    return
+  }
+  event.preventDefault()
+  const handle = event.currentTarget as HTMLElement
+  handle.setPointerCapture(event.pointerId)
+  const startY = event.clientY
+  const startHeight = props.height
+  let latestHeight = startHeight
+  resizing.value = true
+  emit('resizeStart')
+
+  const onMove = (moveEvent: PointerEvent) => {
+    latestHeight = startHeight + (startY - moveEvent.clientY)
+    emit('resize', latestHeight)
+  }
+  const finish = () => {
+    handle.removeEventListener('pointermove', onMove)
+    handle.removeEventListener('pointerup', finish)
+    handle.removeEventListener('pointercancel', finish)
+    resizing.value = false
+    emit('resizeEnd', latestHeight)
+  }
+  handle.addEventListener('pointermove', onMove)
+  handle.addEventListener('pointerup', finish)
+  handle.addEventListener('pointercancel', finish)
+}
 
 /** 按下后水平移动超过这个距离（px）才开始拖动，单击时的抖动不算 */
 const DRAG_THRESHOLD_PX = 4
@@ -311,7 +355,22 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="console-pane" :aria-label="t('con.title')">
+  <section
+    class="console-pane"
+    :class="{ collapsed: props.collapsed, empty: pinned.length === 0 }"
+    :aria-label="t('con.title')"
+  >
+    <div
+      v-if="props.resizable"
+      v-tip="t('con.resizeTip')"
+      class="resize-handle"
+      :class="{ active: resizing }"
+      role="separator"
+      aria-orientation="horizontal"
+      :aria-label="t('con.resizeTip')"
+      @pointerdown="onResizePointerDown"
+      @dblclick="emit('resetHeight')"
+    ></div>
     <div class="pane-head">
       <h2>{{ t('con.title') }}</h2>
       <span class="caption ellipsis">{{ t('con.caption', { n: order.length }) }}</span>
@@ -319,10 +378,20 @@ onBeforeUnmount(() => {
       <fluent-button appearance="subtle" @click="pinMenu">
         <AppIcon slot="start" name="plus" />{{ t('con.pin') }}
       </fluent-button>
+      <button
+        v-tip="t(props.collapsed ? 'con.expand' : 'con.collapse')"
+        type="button"
+        class="collapse-btn"
+        :aria-expanded="!props.collapsed"
+        :aria-label="t(props.collapsed ? 'con.expand' : 'con.collapse')"
+        @click="emit('toggleCollapse')"
+      >
+        <AppIcon :name="props.collapsed ? 'chevron-up' : 'chevron-down'" />
+      </button>
     </div>
-    <div ref="strips" class="strips">
-      <p v-if="pinned.length === 0" class="caption empty">{{ t('con.empty') }}</p>
-      <TransitionGroup name="slot">
+    <div v-if="!props.collapsed" ref="strips" class="strips" :class="{ 'strips-empty': pinned.length === 0 }">
+      <p v-if="pinned.length === 0" class="caption empty-text">{{ t('con.empty') }}</p>
+      <TransitionGroup v-else name="slot">
         <div
           v-for="node in pinned"
           :key="node.id"
@@ -336,7 +405,7 @@ onBeforeUnmount(() => {
       </TransitionGroup>
     </div>
     <StripCard
-      v-if="drag !== null && dragNode !== undefined"
+      v-if="!props.collapsed && drag !== null && dragNode !== undefined"
       class="floating"
       :class="{ settling: drag.settling }"
       :node="dragNode"
@@ -349,14 +418,72 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .console-pane {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
 }
 
+.console-pane.collapsed .pane-head {
+  border-bottom: 0;
+}
+
+/* 顶边可拖拽分隔条：命中高度比视觉线宽，便于瞄准 */
+.resize-handle {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -4px;
+  height: 8px;
+  z-index: 6;
+  cursor: ns-resize;
+}
+
+.resize-handle::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 3px;
+  height: 2px;
+  background: transparent;
+  transition: background-color var(--dur-fast) linear;
+}
+
+.resize-handle:hover::after,
+.resize-handle.active::after {
+  background: var(--accent);
+}
+
 .spacer {
   flex: 1;
+}
+
+.collapse-btn {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-ctl);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.collapse-btn:hover,
+.collapse-btn:focus-visible {
+  background: var(--card-hover);
+  color: var(--text);
+  outline: none;
+}
+
+.collapse-btn svg {
+  width: 16px;
+  height: 16px;
 }
 
 /* position: relative 让通道条的 offsetLeft 相对这里计算 */
@@ -371,8 +498,13 @@ onBeforeUnmount(() => {
   overflow-y: hidden;
 }
 
-.empty {
-  margin: 4px;
+.strips.strips-empty {
+  align-items: center;
+  padding: 0 16px;
+}
+
+.empty-text {
+  margin: 0;
 }
 
 .slot {
@@ -381,7 +513,7 @@ onBeforeUnmount(() => {
 }
 
 .slot.sel {
-  outline: 2px solid var(--text);
+  outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
 

@@ -45,6 +45,7 @@ function node(partial: Partial<NodeView> & Pick<NodeView, 'id' | 'name' | 'kind'
     recorder: null,
     muteHotkey: null,
     recordHotkey: null,
+    locked: false,
     ...partial,
   }
 }
@@ -67,11 +68,20 @@ const nodes: NodeView[] = [
     kind: 'externalInput',
     device: { endpointId: 'mic', name: 'Rear Mic (Realtek USB Audio)' },
     gateDb: -45,
+    locked: true,
     x: 40,
     y: 60,
   }),
-  node({ id: 2, name: '游戏与浏览器', kind: 'virtualInput', slot: { direction: 'in', number: 1 }, x: 40, y: 260 }),
-  node({ id: 6, name: '直播总线', kind: 'bus', x: 260, y: 160 }),
+  node({
+    id: 2,
+    name: '游戏与浏览器',
+    kind: 'virtualInput',
+    slot: { direction: 'in', number: 1 },
+    locked: true,
+    x: 40,
+    y: 260,
+  }),
+  node({ id: 6, name: '直播总线', kind: 'bus', muted: true, x: 260, y: 160 }),
   node({ id: 3, name: LONG_NAME, kind: 'virtualOutput', slot: { direction: 'out', number: 1 }, x: 480, y: 40 }),
   node({
     id: 4,
@@ -88,6 +98,7 @@ const nodes: NodeView[] = [
     device: { endpointId: 'nv', name: 'Microphone (NVIDIA Broadcast)' },
     status: { state: 'offline', reason: 'inUseByOtherApp' },
     format: null,
+    locked: true,
     x: 40,
     y: 420,
   }),
@@ -158,7 +169,7 @@ let state: ViewState = {
     state: 'running',
     sampleRate: 48000,
     resampler: { algorithm: 'sincAsync', preset: 'balanced' },
-    clockMaster: null,
+    clockMaster: 1,
     stats: {
       cpuPercent: 2.6,
       realtimePeakPercent: 18.4,
@@ -181,6 +192,7 @@ let state: ViewState = {
   language: { mode: 'system' },
   checkUpdatesOnStart: true,
   appearance: { themeMode: 'system', accent: null, backgroundPath: null, overlayPercent: 60 },
+  consoleLayout: { height: null, collapsed: false },
   lastPage: null,
   nodes,
   routes: [
@@ -558,6 +570,9 @@ mockIPC(
       case 'probe_device':
         return CAPABILITIES
       case 'set_device_settings':
+        if (state.nodes.find((n) => n.id === args.node)?.locked) {
+          throw { code: 'nodeLocked' }
+        }
         return updateNode(args, { io: args.settings as NodeView['io'] })
       case 'redetect':
         return null
@@ -576,8 +591,11 @@ mockIPC(
         return commit({
           ...state,
           console: args.pinned
-            ? [...state.console, args.node as number]
+            ? state.console.includes(args.node as number)
+              ? state.console
+              : [...state.console, args.node as number]
             : state.console.filter((id) => id !== args.node),
+          consoleLayout: args.pinned ? { ...state.consoleLayout, collapsed: false } : state.consoleLayout,
         })
       case 'move_pin': {
         const rest = state.console.filter((id) => id !== args.node)
@@ -585,6 +603,9 @@ mockIPC(
         return commit({ ...state, console: rest })
       }
       case 'change_slot':
+        if (state.nodes.find((n) => n.id === args.node)?.locked) {
+          throw { code: 'nodeLocked' }
+        }
         return updateNode(args, {
           slot: {
             direction: state.nodes.find((n) => n.id === args.node)?.slot?.direction ?? 'in',
@@ -597,12 +618,20 @@ mockIPC(
         return updateNode(args, { muted: args.muted as boolean })
       case 'set_node_gate':
         return updateNode(args, { gateDb: args.thresholdDb as number | null })
+      case 'set_node_locked':
+        return updateNode(args, { locked: args.locked as boolean })
       case 'rename_node':
+        if (state.nodes.find((n) => n.id === args.node)?.locked) {
+          throw { code: 'nodeLocked' }
+        }
         return commit({
           ...state,
           nodes: state.nodes.map((n) => (n.id === args.node ? { ...n, name: args.name as string } : n)),
         })
       case 'remove_node':
+        if (state.nodes.find((n) => n.id === args.node)?.locked) {
+          throw { code: 'nodeLocked' }
+        }
         return commit({
           ...state,
           nodes: state.nodes.filter((n) => n.id !== args.node),
@@ -615,7 +644,18 @@ mockIPC(
         })
       case 'set_last_page':
         return commit({ ...state, lastPage: args.page as string })
+      case 'set_console_layout':
+        return commit({
+          ...state,
+          consoleLayout: {
+            height: (args.height as number | null) ?? null,
+            collapsed: Boolean(args.collapsed),
+          },
+        })
       case 'set_slot_settings':
+        if (state.nodes.find((n) => n.id === args.node)?.locked) {
+          throw { code: 'nodeLocked' }
+        }
         return commit({
           ...state,
           nodes: state.nodes.map((item) =>
@@ -676,18 +716,30 @@ mockIPC(
         return commit({ ...state, nodes: [input, output] })
       }
       case 'replace_device':
+        if (state.nodes.find((n) => n.id === args.node)?.locked) {
+          throw { code: 'nodeLocked' }
+        }
         return updateNode(args, {
           device: { endpointId: args.endpointId as string, name: args.deviceName as string },
           candidates: [],
           status: { state: 'ok' },
         })
       case 'replace_program': {
+        if (state.nodes.find((n) => n.id === args.node)?.locked) {
+          throw { code: 'nodeLocked' }
+        }
         const path = args.program as string
         return updateNode(args, { program: { path, fileName: path.split('\\').pop() ?? path } })
       }
       case 'set_app_resampler':
+        if (state.nodes.find((n) => n.id === args.node)?.locked) {
+          throw { code: 'nodeLocked' }
+        }
         return updateNode(args, { resampler: args.resampler as Resampler | null })
       case 'set_recorder_settings': {
+        if (state.nodes.find((n) => n.id === args.node)?.locked) {
+          throw { code: 'nodeLocked' }
+        }
         const settings = args.settings as RecorderSettingsView
         const nodes = state.nodes.map((n) =>
           n.id === args.node && n.recorder ? { ...n, recorder: { ...n.recorder, settings } } : n,

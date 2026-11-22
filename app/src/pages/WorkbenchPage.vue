@@ -51,10 +51,65 @@ const NODE_HALF_HEIGHT = 30
 const PERCENT = 100
 /** 工作台为空时的视口；有节点时进入页面会自适应（onNodesInitialized） */
 const INITIAL_VIEWPORT = { x: 24, y: 24, zoom: 1 }
+/** 控制台高度：默认展开、拖动下限、占工作台总高的上限比例、收起标题栏高度、空态紧凑高度 */
+const CONSOLE_DEFAULT_HEIGHT = 292
+const CONSOLE_MIN_HEIGHT = 220
+const CONSOLE_MAX_RATIO = 0.6
+const CONSOLE_COLLAPSED_HEIGHT = 44
+const CONSOLE_EMPTY_HEIGHT = 88
 
 const { t } = useI18n()
 const store = useAppStore()
 const { screenToFlowCoordinate, setViewport, getNodes, viewport, d3Zoom } = useVueFlow()
+const workbenchEl = useTemplateRef<HTMLElement>('workbench')
+const workbenchHeight = ref(0)
+/** 拖动分隔条期间的临时高度；松手并保存拿到新快照后再清空，避免闪回旧高度 */
+const dragConsoleHeight = ref<number | null>(null)
+const consoleCollapsed = computed(() => store.state?.consoleLayout.collapsed === true)
+const consoleEmpty = computed(() => (store.state?.console.length ?? 0) === 0)
+const consoleResizable = computed(() => !consoleCollapsed.value && !consoleEmpty.value)
+const consoleMaxHeight = computed(() =>
+  Math.max(CONSOLE_MIN_HEIGHT, Math.floor((workbenchHeight.value || 900) * CONSOLE_MAX_RATIO)),
+)
+function clampConsoleHeight(height: number): number {
+  return Math.round(Math.min(consoleMaxHeight.value, Math.max(CONSOLE_MIN_HEIGHT, height)))
+}
+const consoleHeight = computed(() => {
+  if (consoleCollapsed.value) {
+    return CONSOLE_COLLAPSED_HEIGHT
+  }
+  if (consoleEmpty.value) {
+    return CONSOLE_EMPTY_HEIGHT
+  }
+  return clampConsoleHeight(dragConsoleHeight.value ?? store.state?.consoleLayout.height ?? CONSOLE_DEFAULT_HEIGHT)
+})
+const workbenchStyle = computed(() => ({
+  gridTemplateRows: `minmax(0, 1fr) ${consoleHeight.value}px`,
+}))
+
+function toggleConsoleCollapse(): void {
+  const height = store.state?.consoleLayout.height ?? null
+  void store.run(() => backend.setConsoleLayout(height, !consoleCollapsed.value))
+}
+
+function onConsoleResize(height: number): void {
+  dragConsoleHeight.value = clampConsoleHeight(height)
+}
+
+async function onConsoleResizeEnd(height: number): Promise<void> {
+  const next = clampConsoleHeight(height)
+  dragConsoleHeight.value = next
+  try {
+    await store.run(() => backend.setConsoleLayout(next, false))
+  } finally {
+    dragConsoleHeight.value = null
+  }
+}
+
+function onConsoleResetHeight(): void {
+  dragConsoleHeight.value = null
+  void store.run(() => backend.setConsoleLayout(null, false))
+}
 
 watch(
   d3Zoom,
@@ -275,9 +330,25 @@ provide(workbenchKey, actions)
 function nodeMenu(node: NodeView): MenuItem[] {
   const pinned = store.state?.console.includes(node.id) === true
   const isClock = store.state?.engine.clockMaster === node.id
+  const lockedTip = node.locked ? t('node.lockedActionTip') : undefined
   return [
     { kind: 'action', label: t('menu.nodeSettings'), run: () => settingsDialog.value?.open(node) },
-    { kind: 'action', label: t('menu.rename'), run: () => (renaming.value = node.id) },
+    {
+      kind: 'action',
+      label: t('menu.rename'),
+      disabled: node.locked,
+      tip: lockedTip,
+      run: () => (renaming.value = node.id),
+    },
+    ...(node.kind === 'recorder'
+      ? []
+      : [
+          {
+            kind: 'action' as const,
+            label: t(node.muted ? 'menu.unmute' : 'menu.mute'),
+            run: () => void store.run(() => backend.setNodeMuted(node.id, !node.muted)),
+          },
+        ]),
     {
       kind: 'action',
       label: t(pinned ? 'menu.unpin' : 'menu.pin'),
@@ -303,7 +374,19 @@ function nodeMenu(node: NodeView): MenuItem[] {
           },
         ]),
     SEPARATOR,
-    { kind: 'action', label: t('menu.deleteNode'), danger: true, run: () => void store.removeNode(node) },
+    {
+      kind: 'action',
+      label: t(node.locked ? 'menu.unlock' : 'menu.lock'),
+      run: () => void store.run(() => backend.setNodeLocked(node.id, !node.locked)),
+    },
+    {
+      kind: 'action',
+      label: t('menu.deleteNode'),
+      danger: true,
+      disabled: node.locked,
+      tip: lockedTip,
+      run: () => void store.removeNode(node),
+    },
   ]
 }
 
@@ -565,8 +648,15 @@ function onKeyDown(event: KeyboardEvent): void {
     const node = store.nodeById.get(current.id)
     if (node !== undefined) {
       event.preventDefault()
-      selection.value = null
-      void store.removeNode(node)
+      if (node.locked) {
+        store.showToast(t('toast.nodeLockedDelete', { name: node.name }))
+        return
+      }
+      void store.removeNode(node).then((deleted) => {
+        if (deleted && selection.value?.type === 'node' && selection.value.id === node.id) {
+          selection.value = null
+        }
+      })
     }
   }
 }
@@ -578,19 +668,34 @@ function onEdgeClick(event: { edge: Edge<RouteData> }): void {
   }
 }
 
-onMounted(() => window.addEventListener('keydown', onKeyDown))
+let workbenchResizeObserver: ResizeObserver | null = null
+
+onMounted(() => {
+  window.addEventListener('keydown', onKeyDown)
+  if (workbenchEl.value !== null) {
+    workbenchHeight.value = workbenchEl.value.clientHeight
+    workbenchResizeObserver = new ResizeObserver((entries) => {
+      const height = entries[0]?.contentRect.height
+      if (height !== undefined && height > 0) {
+        workbenchHeight.value = height
+      }
+    })
+    workbenchResizeObserver.observe(workbenchEl.value)
+  }
+})
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeyDown)
   window.removeEventListener('pointermove', trackPointer)
+  workbenchResizeObserver?.disconnect()
 })
 </script>
 
 <template>
-  <section class="workbench">
+  <section ref="workbench" class="workbench" :style="workbenchStyle">
     <div class="graph-pane">
       <div class="pane-head">
         <h2>{{ t('nav.workbench') }}</h2>
-        <span class="caption ellipsis">{{ t('wb.hint') }}</span>
+        <span v-tip="t('wb.hintTip')" class="caption ellipsis">{{ t('wb.hint') }}</span>
         <div class="spacer"></div>
         <fluent-button appearance="subtle" @click="addNode">
           <AppIcon slot="start" name="plus" />{{ t('wb.add') }}
@@ -680,7 +785,14 @@ onBeforeUnmount(() => {
       class="console"
       :node-menu="nodeMenu"
       :selected="selection?.type === 'node' ? selection.id : null"
+      :collapsed="consoleCollapsed"
+      :resizable="consoleResizable"
+      :height="consoleHeight"
       @select="actions.selectNode"
+      @toggle-collapse="toggleConsoleCollapse"
+      @resize="onConsoleResize"
+      @resize-end="onConsoleResizeEnd"
+      @reset-height="onConsoleResetHeight"
     />
     <AddNodeDialog ref="addDialog" />
     <NodeSettingsDialog ref="settingsDialog" />

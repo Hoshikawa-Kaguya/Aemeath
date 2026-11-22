@@ -58,6 +58,8 @@ pub enum NodeSpec {
 pub enum EditError {
     #[error("node {0} does not exist")]
     UnknownNode(NodeId),
+    #[error("node {0} is locked")]
+    NodeLocked(NodeId),
     #[error("there is no route from {from} to {to}")]
     UnknownRoute { from: NodeId, to: NodeId },
     #[error("all {0:?} slots are occupied")]
@@ -227,12 +229,20 @@ impl Workspace {
             position,
             mute_hotkey: None,
             record_hotkey: None,
+            locked: false,
         });
         Ok(id)
     }
 
+    /// 锁定或解锁节点（GLOSSARY：锁定）。
+    pub fn set_node_locked(&mut self, id: NodeId, locked: bool) -> Result<(), EditError> {
+        self.node_mut(id)?.locked = locked;
+        Ok(())
+    }
+
     /// 删除节点，连同与它相连的连线；它是主时钟时清除主时钟设置。它占用的槽位随之空出（拔出）。
     pub fn remove_node(&mut self, id: NodeId) -> Result<Node, EditError> {
+        self.ensure_unlocked(id)?;
         let index = self.index_of(id)?;
         self.routes.retain(|route| route.from != id && route.to != id);
         self.unpin(id);
@@ -244,6 +254,7 @@ impl Workspace {
 
     /// 改名。节点名允许重复，靠代号区分。
     pub fn rename_node(&mut self, id: NodeId, name: NodeName) -> Result<(), EditError> {
+        self.ensure_unlocked(id)?;
         self.node_mut(id)?.name = name;
         Ok(())
     }
@@ -264,9 +275,19 @@ impl Workspace {
         Ok(())
     }
 
-    /// 让外部设备节点改用另一个端点（按名称的后备匹配，或用户从同名候选中选定）。
+    /// 用户主动让外部设备节点改用另一个端点（从同名候选中选定）；已锁定的节点不允许修改。
     /// 设备设置、通道条、连线都保留。
     pub fn replace_device(&mut self, id: NodeId, device: DeviceRef) -> Result<(), EditError> {
+        self.ensure_unlocked(id)?;
+        self.replace_device_inner(id, device)
+    }
+
+    /// 系统按设备名自动找回更换了端口的同一台外部设备；属于自动故障恢复，不受节点锁定限制。
+    pub fn auto_replace_device(&mut self, id: NodeId, device: DeviceRef) -> Result<(), EditError> {
+        self.replace_device_inner(id, device)
+    }
+
+    fn replace_device_inner(&mut self, id: NodeId, device: DeviceRef) -> Result<(), EditError> {
         let role = self.node(id).ok_or(EditError::UnknownNode(id))?.kind.endpoint_role();
         let existing = self.nodes.iter().find(|node| {
             node.id != id
@@ -287,6 +308,7 @@ impl Workspace {
 
     /// 设定外部设备节点的设备设置（独占、格式、缓冲、重采样算法）。
     pub fn set_device_settings(&mut self, id: NodeId, settings: DeviceSettings) -> Result<(), EditError> {
+        self.ensure_unlocked(id)?;
         let node = self.node_mut(id)?;
         if !node.kind.is_external() {
             return Err(EditError::NotAnExternalNode(id));
@@ -297,6 +319,7 @@ impl Workspace {
 
     /// 设定录音节点的格式和位深；对下一次录音生效。
     pub fn set_recorder_settings(&mut self, id: NodeId, wanted: RecorderSettings) -> Result<(), EditError> {
+        self.ensure_unlocked(id)?;
         if !wanted.is_valid() {
             return Err(EditError::InvalidRecorderSettings);
         }
@@ -309,6 +332,7 @@ impl Workspace {
 
     /// 让应用源改绑另一个程序（节点设置里"重新选择程序"）；连线和通道条保留。
     pub fn replace_program(&mut self, id: NodeId, replacement: ProgramPath) -> Result<(), EditError> {
+        self.ensure_unlocked(id)?;
         self.check_program(&replacement, Some(id))?;
         match &mut self.node_mut(id)?.kind {
             NodeKind::AppSource { program, .. } => *program = replacement,
@@ -319,6 +343,7 @@ impl Workspace {
 
     /// 设定应用源按节点覆盖的重采样算法；None 表示跟随全局默认。
     pub fn set_app_resampler(&mut self, id: NodeId, choice: Option<Resampler>) -> Result<(), EditError> {
+        self.ensure_unlocked(id)?;
         match &mut self.node_mut(id)?.kind {
             NodeKind::AppSource { resampler, .. } => *resampler = choice,
             _ => return Err(EditError::NotAnAppSource(id)),
@@ -328,6 +353,7 @@ impl Workspace {
 
     /// 设定占用槽位的节点的格式与重采样算法。
     pub fn set_slot_settings(&mut self, id: NodeId, settings: SlotNodeSettings) -> Result<(), EditError> {
+        self.ensure_unlocked(id)?;
         let node = self.node_mut(id)?;
         if node.kind.slot().is_none() {
             return Err(EditError::NotASlotNode(id));
@@ -346,6 +372,7 @@ impl Workspace {
 
     /// 让虚拟节点改占另一个同方向的槽位（节点配置中改选）。
     pub fn change_slot(&mut self, id: NodeId, number: SlotNumber) -> Result<(), EditError> {
+        self.ensure_unlocked(id)?;
         let direction = self
             .node(id)
             .ok_or(EditError::UnknownNode(id))?
@@ -490,6 +517,14 @@ impl Workspace {
             .iter_mut()
             .find(|route| route.from == from && route.to == to)
             .map(|route| &mut route.toggle_hotkey)
+    }
+
+    fn ensure_unlocked(&self, id: NodeId) -> Result<(), EditError> {
+        let node = self.node(id).ok_or(EditError::UnknownNode(id))?;
+        if node.locked {
+            return Err(EditError::NodeLocked(id));
+        }
+        Ok(())
     }
 
     fn index_of(&self, id: NodeId) -> Result<usize, EditError> {
@@ -940,5 +975,104 @@ mod tests {
         workspace.set_strip(mic, gated).unwrap();
         assert_eq!(workspace.node(mic).unwrap().strip, gated);
         assert_eq!(workspace.set_strip(bus, gated), Err(EditError::GateNotAllowed(bus)));
+    }
+
+    #[test]
+    fn locked_nodes_block_deletion_and_settings_but_allow_runtime_controls() {
+        use aemeath_protocol::topology::{PolyPreset, RecordDepth, RecordFormat};
+        use aemeath_protocol::units::GateThreshold;
+
+        let program = |path: &str| ProgramPath::new(path).unwrap();
+        let mut workspace = Workspace::new(EngineSettings::default());
+        let mic = add(&mut workspace, "Mic", NodeSpec::ExternalInput(device("mic")));
+        let virt = add(&mut workspace, "Game", NodeSpec::VirtualInput(None));
+        let app = add(&mut workspace, "Chrome", NodeSpec::AppSource(program(r"C:\chrome.exe")));
+        let rec = add(&mut workspace, "Rec", NodeSpec::Recorder(RecorderSettings::default()));
+        let out = add(&mut workspace, "Out", NodeSpec::ExternalOutput(device("out")));
+
+        for id in [mic, virt, app, rec] {
+            workspace.set_node_locked(id, true).unwrap();
+            assert!(workspace.node(id).unwrap().locked);
+        }
+
+        // 删除和所有节点设置修改都被拒绝
+        assert_eq!(workspace.remove_node(mic), Err(EditError::NodeLocked(mic)));
+        assert_eq!(
+            workspace.rename_node(mic, name("Mic 2")),
+            Err(EditError::NodeLocked(mic))
+        );
+        assert_eq!(
+            workspace.set_device_settings(mic, DeviceSettings::default()),
+            Err(EditError::NodeLocked(mic))
+        );
+        assert_eq!(
+            workspace.replace_device(mic, device("mic-2")),
+            Err(EditError::NodeLocked(mic))
+        );
+        assert_eq!(
+            workspace.change_slot(virt, SlotNumber::new(3).unwrap()),
+            Err(EditError::NodeLocked(virt))
+        );
+        assert_eq!(
+            workspace.set_slot_settings(virt, SlotNodeSettings::default()),
+            Err(EditError::NodeLocked(virt))
+        );
+        assert_eq!(
+            workspace.replace_program(app, program(r"D:\other.exe")),
+            Err(EditError::NodeLocked(app))
+        );
+        assert_eq!(
+            workspace.set_app_resampler(
+                app,
+                Some(Resampler::PolyAsync {
+                    preset: PolyPreset::Fastest
+                })
+            ),
+            Err(EditError::NodeLocked(app))
+        );
+        assert_eq!(
+            workspace.set_recorder_settings(
+                rec,
+                RecorderSettings {
+                    format: RecordFormat::Wav,
+                    depth: RecordDepth::Float32,
+                }
+            ),
+            Err(EditError::NodeLocked(rec))
+        );
+
+        // 位置、通道条（GAIN/GATE/静音）、控制台固定与排序、连线、主时钟、自动换端点仍允许
+        workspace.move_node(mic, Position { x: 120.0, y: 80.0 }).unwrap();
+        assert_eq!(workspace.node(mic).unwrap().position, Position { x: 120.0, y: 80.0 });
+        let strip = Strip {
+            gain: GainDb::new(-6.0).unwrap(),
+            muted: true,
+            gate: Some(GateThreshold::new(-40.0).unwrap()),
+        };
+        workspace.set_strip(mic, strip).unwrap();
+        assert_eq!(workspace.node(mic).unwrap().strip, strip);
+        workspace.pin(mic).unwrap();
+        workspace.pin(virt).unwrap();
+        workspace.move_pin(virt, 0).unwrap();
+        workspace.unpin(mic);
+        workspace.connect(mic, out).unwrap();
+        workspace.set_route_gain(mic, out, GainDb::new(-3.0).unwrap()).unwrap();
+        workspace.set_route_enabled(mic, out, false).unwrap();
+        workspace.disconnect(mic, out).unwrap();
+        workspace.set_clock_master(Some(mic)).unwrap();
+        workspace.auto_replace_device(mic, device("mic-usb-port-2")).unwrap();
+        assert_eq!(
+            workspace.node(mic).unwrap().kind.device().unwrap().endpoint,
+            EndpointId("mic-usb-port-2".to_owned())
+        );
+
+        // 解锁后恢复可改名与删除
+        workspace.set_node_locked(mic, false).unwrap();
+        workspace.rename_node(mic, name("Mic 2")).unwrap();
+        workspace.remove_node(mic).unwrap();
+        assert_eq!(
+            workspace.set_node_locked(NodeId(999), true),
+            Err(EditError::UnknownNode(NodeId(999)))
+        );
     }
 }

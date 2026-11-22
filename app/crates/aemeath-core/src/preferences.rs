@@ -50,6 +50,42 @@ pub struct Preferences {
     /// 深浅色、主题色和背景图
     #[serde(default)]
     pub appearance: Appearance,
+    /// 控制台的展开高度与收起状态
+    #[serde(default, skip_serializing_if = "ConsoleLayout::is_default")]
+    pub console_layout: ConsoleLayout,
+}
+
+/// 控制台面板的布局偏好（展开高度与收起状态）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ConsoleLayout {
+    /// 展开时的高度（CSS 像素）；None 表示使用界面默认高度
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub height: Option<u16>,
+    /// 是否手动收起为标题栏
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub collapsed: bool,
+}
+
+impl ConsoleLayout {
+    /// 展开高度的下限（CSS 像素）
+    pub const MIN_HEIGHT: u16 = 220;
+    /// 展开高度的上限（CSS 像素；界面还会按工作台高度比例进一步限制）
+    pub const MAX_HEIGHT: u16 = 1200;
+
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// 把高度限制在合理范围内，防止手工改配置或异常像素值把界面撑坏。
+    pub fn normalized(self) -> Self {
+        Self {
+            height: self
+                .height
+                .map(|height| height.clamp(Self::MIN_HEIGHT, Self::MAX_HEIGHT)),
+            collapsed: self.collapsed,
+        }
+    }
 }
 
 /// 深浅色模式。
@@ -152,5 +188,24 @@ mod tests {
         let preferences: Preferences = serde_json::from_str("{}").unwrap();
         assert_eq!(preferences, Preferences::default());
         assert_eq!(preferences.appearance.overlay_percent, 60);
+        assert_eq!(preferences.console_layout, ConsoleLayout::default());
+    }
+
+    #[test]
+    fn console_layout_clamps_height_and_skips_defaults() {
+        let low = ConsoleLayout {
+            height: Some(50),
+            collapsed: false,
+        };
+        assert_eq!(low.normalized().height, Some(ConsoleLayout::MIN_HEIGHT));
+        let high = ConsoleLayout {
+            height: Some(5000),
+            collapsed: true,
+        };
+        assert_eq!(high.normalized().height, Some(ConsoleLayout::MAX_HEIGHT));
+        assert!(high.normalized().collapsed);
+
+        let default_json = serde_json::to_string(&Preferences::default()).unwrap();
+        assert!(!default_json.contains("console_layout"));
     }
 }

@@ -114,10 +114,17 @@ function resetGain(): void {
   void store.run(() => backend.setNodeGain(props.node.id, 0))
 }
 
+/** 双击门限推子关闭门限 */
+function resetGate(): void {
+  gatePosition.value = GATE_OFF_POSITION
+  void store.run(() => backend.setNodeGate(props.node.id, null))
+}
+
 const gateText = computed(() => {
   const gate = positionToGate(gatePosition.value)
   return formatGate(gate, t('nodeSettings.gateOff'))
 })
+const gateTip = computed(() => t('strip.gateHint', { value: gateText.value }))
 /** 竖条底部的读数：关时固定写 OFF，与列标识一样不进 i18n */
 const gateReadout = computed(() => {
   const gate = positionToGate(gatePosition.value)
@@ -147,6 +154,9 @@ function onKeyDown(event: KeyboardEvent): void {
   >
     <div v-tip="node.name" class="strip-head">
       <span class="code">{{ nodeCode(node, store.nodes) }}</span>
+      <span v-if="node.locked" v-tip="t('node.lockedTip')" class="lock-ico">
+        <AppIcon name="lock" />
+      </span>
       <b class="ellipsis">{{ node.name }}</b>
       <button
         type="button"
@@ -162,7 +172,7 @@ function onKeyDown(event: KeyboardEvent): void {
         <span class="tag">LEVEL</span>
         <NodeMeter class="level" :node="node.id" :muted="node.muted" orientation="vertical" />
       </div>
-      <div class="col" @mouseenter="gainWheel.enter()" @wheel="onGainWheel">
+      <div v-tip="t('strip.gainHint')" class="col" @mouseenter="gainWheel.enter()" @wheel="onGainWheel">
         <span class="tag">GAIN</span>
         <input
           v-model.number="gain"
@@ -179,7 +189,7 @@ function onKeyDown(event: KeyboardEvent): void {
         />
         <span class="readout">{{ formatGain(gain) }}</span>
       </div>
-      <div v-if="isInput" v-tip="gateText" class="col" @mouseenter="gateWheel.enter()" @wheel="onGateWheel">
+      <div v-if="isInput" v-tip="gateTip" class="col" @mouseenter="gateWheel.enter()" @wheel="onGateWheel">
         <span class="tag">GATE</span>
         <input
           v-model.number="gatePosition"
@@ -192,6 +202,7 @@ function onKeyDown(event: KeyboardEvent): void {
           :aria-valuetext="gateText"
           @input="onGate"
           @change="done"
+          @dblclick="resetGate"
         />
         <span class="readout">{{ gateReadout }}</span>
       </div>
@@ -260,6 +271,17 @@ function onKeyDown(event: KeyboardEvent): void {
   color: var(--text-3);
 }
 
+.lock-ico {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-3);
+}
+
+.lock-ico svg {
+  width: 12px;
+  height: 12px;
+}
+
 .more {
   display: grid;
   place-items: center;
@@ -271,7 +293,7 @@ function onKeyDown(event: KeyboardEvent): void {
   border-radius: var(--r-ctl);
   background: transparent;
   color: var(--text-3);
-  cursor: default;
+  cursor: pointer;
 }
 
 .more:hover,

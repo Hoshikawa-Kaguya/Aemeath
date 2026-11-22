@@ -234,9 +234,13 @@ export const useAppStore = defineStore('app', () => {
     confirmation.value = null
   }
 
-  /** 删除节点：删除后不能恢复，所以先确认；有应用落在这个节点上时同时说明影响的应用数 */
-  async function removeNode(node: NodeView): Promise<void> {
+  /** 删除节点：删除后不能恢复，所以先确认；有应用落在这个节点上时同时说明影响的应用数。返回是否已删除 */
+  async function removeNode(node: NodeView): Promise<boolean> {
     const { t } = i18n.global
+    if (node.locked) {
+      showToast(t('toast.nodeLockedDelete', { name: node.name }))
+      return false
+    }
     // 查询失败时按没有应用处理
     const landed = await backend.landingCount(node.id).catch(() => 0)
     const message =
@@ -244,12 +248,14 @@ export const useAppStore = defineStore('app', () => {
         ? t('confirm.deleteLandingNode', { name: node.name, n: landed })
         : t('confirm.deleteNode', { name: node.name })
     if (!(await confirm(message, t('menu.deleteNode')))) {
-      return
+      return false
     }
     showToast(t('toast.nodeDeleting'))
     if (await run(() => backend.removeNode(node.id))) {
       showToast(t('toast.nodeDeleted', { name: node.name }))
+      return true
     }
+    return false
   }
 
   /** 录音中就停止，否则开始。录音状态由引擎随后推送，这里不等结果 */

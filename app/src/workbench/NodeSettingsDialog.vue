@@ -14,8 +14,9 @@ import {
   type Resampler,
   type SlotSettings,
 } from '@/api/types'
-import { formatGate } from '@/format/format'
+import AppIcon from '@/components/AppIcon.vue'
 import ProgramIcon from '@/components/ProgramIcon.vue'
+import { formatGate } from '@/format/format'
 import { useAppStore } from '@/stores/app'
 import { NODE_NAME_MAX, slotName } from '@/stores/nodeLabels'
 import DeviceSettingsFields from './DeviceSettingsFields.vue'
@@ -25,7 +26,8 @@ import { pickProgram } from './pickProgram'
 import ResamplerField from './ResamplerField.vue'
 import SlotSettingsFields from './SlotSettingsFields.vue'
 
-// 节点设置：从节点的"⋯"按钮或右键菜单打开，尺寸固定，点"确定"才生效。
+// 节点设置：从节点的"⋯"按钮、右键菜单或设备页打开，尺寸固定，点"确定"才生效。
+// 节点锁定时进入只读查看模式，顶部提供一键解锁；即时生效的热键与"复制设备名"仍保持可用。
 // 内容随节点类型而定：名称；虚拟节点改选槽位；输入节点的门限；外部设备的独占、格式、缓冲与重采样算法；
 // 应用源的程序与重采样算法；是否固定到控制台。改了设备设置时，该设备的流淡出、重新打开、再淡入。
 
@@ -46,6 +48,7 @@ const slotSettings = ref<SlotSettings>({ ...DEFAULT_SLOT_SETTINGS })
 const recorder = ref<RecorderSettingsView>({ format: 'flac', depth: 'int24' })
 
 const node = computed(() => (nodeId.value === null ? undefined : store.nodeById.get(nodeId.value)))
+const locked = computed(() => node.value?.locked === true)
 const deviceDirection = computed(() => (node.value?.kind === 'externalOutput' ? 'output' : 'input'))
 /** 外部插入的送出端在 Windows 里的设备名，用户要在外部程序里选它 */
 const sendDevice = computed(() => {
@@ -86,11 +89,9 @@ const gateText = computed(() => {
   const gate = positionToGate(gatePosition.value)
   return formatGate(gate, t('nodeSettings.gateOff'))
 })
-const canConfirm = computed(() => node.value !== undefined && name.value.trim() !== '')
+const canConfirm = computed(() => node.value !== undefined && !locked.value && name.value.trim() !== '')
 
-/** 用节点当前的设置填好表单后打开；改动要点"确定"才生效 */
-function open(target: NodeView): void {
-  nodeId.value = target.id
+function fillForm(target: NodeView): void {
   name.value = target.name
   slotNumber.value = target.slot?.number ?? null
   gatePosition.value = gateToPosition(target.gateDb)
@@ -102,14 +103,37 @@ function open(target: NodeView): void {
   if (target.recorder !== null) {
     recorder.value = { ...target.recorder.settings }
   }
+}
+
+/** 用节点当前的设置填好表单后打开；改动要点"确定"才生效 */
+function open(target: NodeView): void {
+  nodeId.value = target.id
+  fillForm(target)
   dialog.value?.show()
+}
+
+/** 在只读弹窗里一键解锁，原地切为可编辑状态并同步最新值 */
+async function unlock(): Promise<void> {
+  const current = node.value
+  if (current === undefined) {
+    return
+  }
+  if (await store.run(() => backend.setNodeLocked(current.id, false))) {
+    const updated = store.nodeById.get(current.id)
+    if (updated !== undefined) {
+      fillForm(updated)
+    }
+  }
 }
 
 /** 立即改绑（与"改用同名设备"一样，是对程序缺失的处理，不等"确定"） */
 async function chooseProgram(): Promise<void> {
   const current = node.value
+  if (current === undefined || current.locked) {
+    return
+  }
   const path = await pickProgram()
-  if (current !== undefined && path !== null) {
+  if (path !== null) {
     await store.run(() => backend.replaceProgram(current.id, path))
   }
 }
@@ -117,7 +141,7 @@ async function chooseProgram(): Promise<void> {
 /** 只提交改过的设置；改格式会打断正在使用设备的应用，先确认 */
 async function confirm(): Promise<void> {
   const current = node.value
-  if (current === undefined) {
+  if (current === undefined || current.locked) {
     return
   }
   // 改格式会让端点上已有的流作废，正在使用这个设备的应用要重新打开
@@ -180,8 +204,11 @@ async function confirm(): Promise<void> {
 /** 立即改用选中的同名设备（不等"确定"：这是对离线状态的处理，不是设置） */
 async function useCandidate(): Promise<void> {
   const current = node.value
-  const choice = current?.candidates.find((device) => device.endpointId === candidate.value)
-  if (current !== undefined && choice !== undefined) {
+  if (current === undefined || current.locked) {
+    return
+  }
+  const choice = current.candidates.find((device) => device.endpointId === candidate.value)
+  if (choice !== undefined) {
     await store.run(() => backend.replaceDevice(current.id, choice.endpointId, choice.name))
   }
 }
@@ -196,6 +223,12 @@ defineExpose({ open })
         {{ t('nodeSettings.title', { name: node?.name ?? '' }) }}
       </h2>
       <div v-if="node" class="form">
+        <div v-if="locked" class="locked-banner" role="status">
+          <AppIcon name="lock" />
+          <span class="locked-text">{{ t('nodeSettings.lockedBanner') }}</span>
+          <fluent-button size="small" @click="unlock">{{ t('nodeSettings.unlock') }}</fluent-button>
+        </div>
+
         <div
           v-if="node.candidates.length > 0"
           class="candidates"
@@ -205,13 +238,13 @@ defineExpose({ open })
           <span class="field-title">{{ t('nodeSettings.candidates') }}</span>
           <span class="caption">{{ t('nodeSettings.candidatesHint', { device: node.device?.name ?? '' }) }}</span>
           <div class="row">
-            <select v-model="candidate" class="select">
+            <select v-model="candidate" class="select" :disabled="locked">
               <button><selectedcontent></selectedcontent></button>
               <option v-for="choice in node.candidates" :key="choice.endpointId" :value="choice.endpointId">
                 {{ choice.name }} · {{ choice.endpointId }}
               </option>
             </select>
-            <fluent-button :disabled="candidate === ''" @click="useCandidate">
+            <fluent-button :disabled="locked || candidate === ''" @click="useCandidate">
               {{ t('nodeSettings.useCandidate') }}
             </fluent-button>
           </div>
@@ -219,7 +252,7 @@ defineExpose({ open })
 
         <label class="field">
           <span>{{ t('add.name') }}</span>
-          <input v-model="name" class="text-input" :maxlength="NODE_NAME_MAX" />
+          <input v-model="name" class="text-input" :maxlength="NODE_NAME_MAX" :disabled="locked" />
         </label>
 
         <div v-if="node.program" class="field">
@@ -234,6 +267,7 @@ defineExpose({ open })
           <div>
             <fluent-button
               :appearance="node.status.state === 'programMissing' ? 'primary' : undefined"
+              :disabled="locked"
               @click="chooseProgram"
             >
               {{ t('node.chooseProgram') }}
@@ -244,7 +278,7 @@ defineExpose({ open })
 
         <label v-if="slotChoices.length > 0" class="field">
           <span>{{ t('nodeSettings.slot') }}</span>
-          <select v-model.number="slotNumber" class="select">
+          <select v-model.number="slotNumber" class="select" :disabled="locked">
             <button><selectedcontent></selectedcontent></button>
             <option v-for="slot in slotChoices" :key="slot.number" :value="slot.number">{{ slotName(slot) }}</option>
           </select>
@@ -268,6 +302,7 @@ defineExpose({ open })
             v-model.number="gatePosition"
             class="slider"
             type="range"
+            :disabled="locked"
             :min="GATE_OFF_POSITION"
             :max="GATE_MAX_DB"
             :step="GATE_STEP_DB"
@@ -281,19 +316,20 @@ defineExpose({ open })
           v-model="io"
           :endpoint-id="node.device.endpointId"
           :direction="deviceDirection"
+          :disabled="locked"
         />
 
-        <ResamplerField v-if="node.program" v-model="appResampler" />
+        <ResamplerField v-if="node.program" v-model="appResampler" :disabled="locked" />
 
         <template v-if="node.slotSettings">
           <b v-if="node.kind === 'externalInsert'">{{ t('slot.sendTitle') }}</b>
-          <SlotSettingsFields v-model="slotSettings" />
+          <SlotSettingsFields v-model="slotSettings" :disabled="locked" />
         </template>
 
         <template v-if="node.recorder">
           <label class="field">
             <span>{{ t('rec.defaultFormat') }}</span>
-            <select v-model="recorder.format" class="select" @change="fixDepth">
+            <select v-model="recorder.format" class="select" :disabled="locked" @change="fixDepth">
               <button><selectedcontent></selectedcontent></button>
               <option value="flac">{{ t('rec.format.flac') }}</option>
               <option value="wav">{{ t('rec.format.wav') }}</option>
@@ -301,7 +337,7 @@ defineExpose({ open })
           </label>
           <label class="field">
             <span>{{ t('rec.defaultDepth') }}</span>
-            <select v-model="recorder.depth" class="select">
+            <select v-model="recorder.depth" class="select" :disabled="locked">
               <button><selectedcontent></selectedcontent></button>
               <option value="int16">{{ t('rec.depth.int16') }}</option>
               <option value="int24">{{ t('rec.depth.int24') }}</option>
@@ -329,14 +365,17 @@ defineExpose({ open })
 
         <label class="check">
           <span class="switch">
-            <input v-model="pinned" type="checkbox" role="switch" />
+            <input v-model="pinned" type="checkbox" role="switch" :disabled="locked" />
             <span class="track" aria-hidden="true"><span class="thumb"></span></span>
           </span>
           <span>{{ t('menu.pin') }}</span>
         </label>
       </div>
-      <fluent-button slot="action" @click="dialog?.hide()">{{ t('add.cancel') }}</fluent-button>
-      <fluent-button slot="action" appearance="primary" :disabled="!canConfirm" @click="confirm">
+      <fluent-button v-if="locked" slot="action" appearance="primary" @click="dialog?.hide()">
+        {{ t('nodeSettings.close') }}
+      </fluent-button>
+      <fluent-button v-if="!locked" slot="action" @click="dialog?.hide()">{{ t('add.cancel') }}</fluent-button>
+      <fluent-button v-if="!locked" slot="action" appearance="primary" :disabled="!canConfirm" @click="confirm">
         {{ t('nodeSettings.confirm') }}
       </fluent-button>
     </fluent-dialog-body>
@@ -348,6 +387,30 @@ defineExpose({ open })
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.locked-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--r-card);
+  border: 1px solid var(--stroke-strong);
+  background: var(--layer-alt);
+  font-size: var(--fontSizeBase200);
+}
+
+.locked-banner svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--text-2);
+}
+
+.locked-text {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-2);
 }
 
 .check {

@@ -8,7 +8,7 @@ import ResamplerField from './ResamplerField.vue'
 
 // 外部设备节点的设备设置，添加节点和节点设置两个对话框共用：
 // 独占（默认勾选）、独占时的格式与缓冲、按节点覆盖的重采样算法。可选的格式和周期由引擎探测设备得到。
-const props = defineProps<{ endpointId: string | null; direction: 'input' | 'output' }>()
+const props = defineProps<{ endpointId: string | null; direction: 'input' | 'output'; disabled?: boolean }>()
 const settings = defineModel<DeviceSettings>({ required: true })
 const { t } = useI18n()
 
@@ -119,6 +119,7 @@ const sharedFormat = computed(() => capabilities.value?.sharedFormat ?? null)
           type="checkbox"
           role="switch"
           :checked="settings.exclusive"
+          :disabled="props.disabled"
           @change="settings = { ...settings, exclusive: ($event.target as HTMLInputElement).checked }"
         />
         <span class="track" aria-hidden="true"><span class="thumb"></span></span>
@@ -132,7 +133,7 @@ const sharedFormat = computed(() => capabilities.value?.sharedFormat ?? null)
     <template v-if="settings.exclusive">
       <label class="field">
         <span>{{ t('device.formatLabel') }}</span>
-        <select v-model="formatValue" class="select">
+        <select v-model="formatValue" class="select" :disabled="props.disabled">
           <button><selectedcontent></selectedcontent></button>
           <option :value="RECOMMENDED">{{ recommendedLabel }}</option>
           <option v-for="format in formatOptions" :key="formatKey(format)" :value="formatKey(format)">
@@ -148,7 +149,7 @@ const sharedFormat = computed(() => capabilities.value?.sharedFormat ?? null)
       <div class="field">
         <label for="device-buffer">{{ t('device.buffer') }}</label>
         <div class="row">
-          <select id="device-buffer" v-model="bufferValue" class="select">
+          <select id="device-buffer" v-model="bufferValue" class="select" :disabled="props.disabled">
             <button><selectedcontent></selectedcontent></button>
             <option value="deviceDefault">
               {{ periodLabel('device.bufferDefault', capabilities?.defaultPeriodMs) }}
@@ -163,6 +164,7 @@ const sharedFormat = computed(() => capabilities.value?.sharedFormat ?? null)
             v-model.number="customMs"
             class="text-input ms"
             type="number"
+            :disabled="props.disabled"
             :min="BUFFER_MIN_MS"
             :max="BUFFER_MAX_MS"
             :step="BUFFER_STEP_MS"
@@ -179,7 +181,7 @@ const sharedFormat = computed(() => capabilities.value?.sharedFormat ?? null)
       }}
     </p>
 
-    <ResamplerField v-model="resampler" />
+    <ResamplerField v-model="resampler" :disabled="props.disabled" />
   </div>
 </template>
 

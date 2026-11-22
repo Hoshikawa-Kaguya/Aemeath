@@ -13,11 +13,11 @@ import { useAppStore } from '@/stores/app'
 import { NODE_NAME_MAX, isRecording, recordedTime } from '@/stores/nodeLabels'
 import { workbenchKey, type NodeData } from './context'
 
-// 工作台上的节点卡片：类型图标、名称、副标题、代号、电平或离线提示，左右两侧是端口。
-// 宽度固定，长名字截断（节点名最长 64 个字符），悬停显示全名；双击名称或从菜单选"改名"可以改名。
+// 工作台上的节点卡片：类型图标、名称、副标题、代号、状态标签（按需显示）、电平或离线提示，左右两侧是端口。
+// 宽度固定，长名字截断（节点名最长 64 个字符），悬停显示全名；未锁定时双击名称或从菜单选"改名"可以改名。
 // 右上角的"⋯"按钮与右键打开同一个节点菜单。
 // 外部设备在线时显示实际使用的格式和独占与否；离线时醒目标出原因，并给出"重新检测"，
-// 独占打不开时另给"改用共享模式"（不自动退回共享）。
+// 独占打不开时另给"改用共享模式"（不自动退回共享）；锁定时修改类快捷按钮置灰并提示原因。
 const props = defineProps<NodeProps<NodeData>>()
 const { t } = useI18n()
 const actions = inject(workbenchKey)
@@ -45,6 +45,10 @@ const icon = computed<IconName>(() => {
   }
 })
 const store = useAppStore()
+const isClock = computed(() => store.state?.engine.clockMaster === node.value.id)
+const hasBadges = computed(
+  () => node.value.locked || node.value.muted || isClock.value || node.value.duplicate !== null,
+)
 const offlineText = computed(() => {
   const status = node.value.status
   switch (status.state) {
@@ -84,15 +88,25 @@ const formatLine = computed(() => {
     mode: t(node.value.io.exclusive ? 'node.exclusive' : 'node.shared'),
   })
 })
+const lockedActionTip = computed(() => (node.value.locked ? t('node.lockedActionTip') : undefined))
 
 function redetect(): void {
   backend.redetect(node.value.id).catch((error: unknown) => store.showToast(store.errorText(error)))
 }
 
 function useShared(): void {
+  if (node.value.locked) {
+    return
+  }
   const io = node.value.io
   if (io !== null) {
     void store.run(() => backend.setDeviceSettings(node.value.id, { ...io, exclusive: false }))
+  }
+}
+
+function openSettingsIfUnlocked(): void {
+  if (!node.value.locked) {
+    actions?.openSettings(node.value)
   }
 }
 
@@ -101,6 +115,10 @@ const draft = ref('')
 const input = useTemplateRef<HTMLInputElement>('input')
 
 async function startRename(): Promise<void> {
+  if (node.value.locked) {
+    actions?.renameDone()
+    return
+  }
   draft.value = node.value.name
   editing.value = true
   await nextTick()
@@ -133,6 +151,15 @@ watch(
   },
 )
 
+watch(
+  () => node.value.locked,
+  (locked) => {
+    if (locked && editing.value) {
+      cancelRename()
+    }
+  },
+)
+
 function openMenu(event: MouseEvent | KeyboardEvent): void {
   actions?.selectNode(node.value)
   actions?.openNodeMenu(event, node.value)
@@ -152,6 +179,7 @@ function onKeyDown(event: KeyboardEvent): void {
     :class="{
       sel: data.selected,
       hl: data.highlighted,
+      locked: node.locked,
       offline: offlineText !== null,
       idle: notRunning,
       'drop-ok': data.drop === 'ok',
@@ -179,30 +207,18 @@ function onKeyDown(event: KeyboardEvent): void {
           @keydown.esc.stop.prevent="cancelRename"
           @blur="commitRename"
         />
-        <b v-else v-tip="t('node.rename', { name: node.name })" class="ellipsis" @dblclick="startRename">{{
-          node.name
-        }}</b>
+        <b
+          v-else
+          v-tip="node.locked ? node.name : t('node.rename', { name: node.name })"
+          class="ellipsis"
+          @dblclick="startRename"
+          >{{ node.name }}</b
+        >
         <span v-tip="kindHint" class="ellipsis">{{ data.subtitle.kind }}</span>
         <span v-if="data.subtitle.detail" v-tip="data.subtitle.detail" class="ellipsis">{{
           data.subtitle.detail
         }}</span>
       </div>
-      <span
-        v-if="node.duplicate"
-        v-tip="t('node.duplicate', { program: node.duplicate.program, destination: node.duplicate.destination })"
-        class="dup"
-        role="img"
-        :aria-label="t('node.duplicate', { program: node.duplicate.program, destination: node.duplicate.destination })"
-        ><AppIcon name="warn"
-      /></span>
-      <span
-        v-if="store.state?.engine.clockMaster === node.id"
-        v-tip="t('node.clockMaster')"
-        class="clock"
-        role="img"
-        :aria-label="t('node.clockMaster')"
-        ><AppIcon name="clock"
-      /></span>
       <span class="code">{{ data.code }}</span>
       <button
         type="button"
@@ -214,31 +230,65 @@ function onKeyDown(event: KeyboardEvent): void {
         <AppIcon name="more" />
       </button>
     </div>
+    <div v-if="hasBadges" class="node-badges">
+      <span v-if="node.locked" v-tip="t('node.lockedTip')" class="badge lock">
+        <AppIcon name="lock" />{{ t('node.lockedBadge') }}
+      </span>
+      <span v-if="node.muted" v-tip="t('node.mutedTip')" class="badge mute">
+        <AppIcon name="mute" />{{ t('node.mutedBadge') }}
+      </span>
+      <span v-if="isClock" v-tip="t('node.clockMaster')" class="badge clock">
+        <AppIcon name="clock" />{{ t('node.clockMaster') }}
+      </span>
+      <span
+        v-if="node.duplicate"
+        v-tip="t('node.duplicate', { program: node.duplicate.program, destination: node.duplicate.destination })"
+        class="badge dup"
+      >
+        <AppIcon name="warn" />{{ t('node.duplicateBadge') }}
+      </span>
+    </div>
     <template v-if="offlineText">
       <div class="node-status" role="status">
         <AppIcon name="warn" /><span v-tip="offlineText" class="ellipsis">{{ offlineText }}</span>
       </div>
       <div v-if="isExternal || programMissing" class="node-actions nodrag">
+        <!-- 锁定时用 aria-disabled 保留鼠标悬浮提示，避免原生 disabled 吞掉 pointerover -->
         <button
           v-if="programMissing"
+          v-tip="lockedActionTip"
           type="button"
           class="link"
+          :class="{ disabled: node.locked }"
+          :aria-disabled="node.locked ? 'true' : undefined"
           @pointerdown.stop
-          @click.stop="actions?.openSettings(node)"
+          @click.stop="openSettingsIfUnlocked"
         >
           {{ t('node.chooseProgram') }}
         </button>
         <button
           v-if="node.candidates.length > 0"
+          v-tip="lockedActionTip"
           type="button"
           class="link"
+          :class="{ disabled: node.locked }"
+          :aria-disabled="node.locked ? 'true' : undefined"
           @pointerdown.stop
-          @click.stop="actions?.openSettings(node)"
+          @click.stop="openSettingsIfUnlocked"
         >
           {{ t('node.chooseDevice') }}
         </button>
         <button type="button" class="link" @pointerdown.stop @click.stop="redetect">{{ t('node.redetect') }}</button>
-        <button v-if="canUseShared" type="button" class="link" @pointerdown.stop @click.stop="useShared">
+        <button
+          v-if="canUseShared"
+          v-tip="lockedActionTip"
+          type="button"
+          class="link"
+          :class="{ disabled: node.locked }"
+          :aria-disabled="node.locked ? 'true' : undefined"
+          @pointerdown.stop
+          @click.stop="useShared"
+        >
           {{ t('node.useShared') }}
         </button>
       </div>
@@ -292,7 +342,8 @@ function onKeyDown(event: KeyboardEvent): void {
   animation: node-in var(--dur) var(--ease-enter);
   transition:
     outline-color var(--dur-fast) linear,
-    border-color var(--dur-fast) linear;
+    border-color var(--dur-fast) linear,
+    background-color var(--dur-fast) linear;
 }
 
 @keyframes node-in {
@@ -317,6 +368,24 @@ function onKeyDown(event: KeyboardEvent): void {
 
 .node:active {
   cursor: grabbing;
+}
+
+/* 锁定卡片：顶部细边条加底色微调，与选中描边、离线虚线框互不冲突 */
+.node.locked {
+  background: color-mix(in srgb, var(--colorNeutralBackground2) 82%, transparent);
+  border-color: color-mix(in srgb, var(--text-2) 38%, transparent);
+}
+
+.node.locked::after {
+  content: '';
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  top: 0;
+  height: 2px;
+  border-radius: 0 0 2px 2px;
+  background: color-mix(in srgb, var(--text-2) 50%, transparent);
+  pointer-events: none;
 }
 
 .node.sel {
@@ -361,24 +430,6 @@ function onKeyDown(event: KeyboardEvent): void {
   flex: 1;
 }
 
-.dup {
-  display: grid;
-  flex: none;
-  color: var(--warn);
-}
-
-.clock {
-  display: grid;
-  flex: none;
-  color: var(--accent);
-}
-
-.dup svg,
-.clock svg {
-  width: 16px;
-  height: 16px;
-}
-
 .more {
   display: grid;
   place-items: center;
@@ -391,7 +442,7 @@ function onKeyDown(event: KeyboardEvent): void {
   border-radius: var(--r-ctl);
   background: transparent;
   color: var(--text-3);
-  cursor: default;
+  cursor: pointer;
 }
 
 .more:hover,
@@ -429,6 +480,57 @@ function onKeyDown(event: KeyboardEvent): void {
   border: 1px solid var(--accent);
   border-radius: var(--borderRadiusSmall);
   outline: none;
+}
+
+/* 状态胶囊标签行：只在节点有锁定、静音、主时钟或重复路由状态时显示 */
+.node-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0 10px 6px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: var(--borderRadiusCircular);
+  border: 1px solid var(--stroke);
+  background: var(--layer-alt);
+  color: var(--text-2);
+  font-size: var(--fontSizeBase100);
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.badge svg {
+  width: 11px;
+  height: 11px;
+}
+
+.badge.lock {
+  border-color: color-mix(in srgb, var(--text-2) 32%, transparent);
+  color: var(--text);
+}
+
+.badge.mute {
+  border-color: color-mix(in srgb, var(--crit) 45%, transparent);
+  background: color-mix(in srgb, var(--crit) 12%, transparent);
+  color: var(--crit);
+}
+
+.badge.clock {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent-text);
+}
+
+.badge.dup {
+  border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  color: var(--warn);
 }
 
 .node-body {
@@ -472,6 +574,7 @@ function onKeyDown(event: KeyboardEvent): void {
 
 .node-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   margin: -4px 6px 8px;
 }
@@ -489,6 +592,15 @@ function onKeyDown(event: KeyboardEvent): void {
 
 .link:hover {
   background: var(--card-hover);
+}
+
+.link.disabled {
+  color: var(--text-dis);
+  cursor: not-allowed;
+}
+
+.link.disabled:hover {
+  background: transparent;
 }
 
 .node-status {

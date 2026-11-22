@@ -113,6 +113,8 @@ export interface NodeView {
   recorder: RecorderView | null
   muteHotkey: HotkeyView | null
   recordHotkey: HotkeyView | null
+  /** 节点是否已锁定（GLOSSARY：锁定） */
+  locked: boolean
   /** 这个应用源造成了重复路由 */
   duplicate: DuplicateView | null
 }
@@ -319,6 +321,14 @@ export type ConfigStatus =
   | { type: 'unreadable'; message: string }
   | { type: 'recovered'; backup: string }
 
+/** 控制台面板的布局偏好（展开高度与收起状态） */
+export interface ConsoleLayoutView {
+  /** 展开时的高度（CSS 像素）；null 表示默认高度 */
+  height: number | null
+  /** 是否手动收起为标题栏 */
+  collapsed: boolean
+}
+
 export interface ViewState {
   /** `clockMaster` 是主时钟节点的 ID；null 表示按系统时钟运行。`stats` 是最近一次性能统计，引擎没有上报时为 null */
   engine: {
@@ -337,6 +347,7 @@ export interface ViewState {
   language: LanguagePreference
   checkUpdatesOnStart: boolean
   appearance: Appearance
+  consoleLayout: ConsoleLayoutView
   /** 上次停留的页面；没有记录时为 null */
   lastPage: string | null
   nodes: NodeView[]
@@ -393,6 +404,7 @@ export type CommandError =
   | { code: 'invalidProgram' }
   | { code: 'hotkeyModifierRequired' }
   | { code: 'hotkeyConflict'; target: HotkeyTargetView }
+  | { code: 'nodeLocked' }
   | { code: 'notFound' }
   | { code: 'failed'; message: string }
 

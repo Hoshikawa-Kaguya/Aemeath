@@ -8,6 +8,7 @@ import ResamplerField from './ResamplerField.vue'
 
 // 占用槽位的节点的格式与重采样算法：配置属于节点，换槽位时带到新槽位。
 const settings = defineModel<SlotSettings>({ required: true })
+const props = withDefaults(defineProps<{ disabled?: boolean }>(), { disabled: false })
 const { t } = useI18n()
 const store = useAppStore()
 
@@ -61,7 +62,7 @@ const resampler = computed({
   <div class="slot-fields">
     <label class="field">
       <span>{{ t('slot.format') }}</span>
-      <select v-model="mode" class="select">
+      <select v-model="mode" class="select" :disabled="props.disabled">
         <button><selectedcontent></selectedcontent></button>
         <option :value="FOLLOW">{{ t('slot.follow') }}</option>
         <option :value="FIXED">{{ t('slot.fixed') }}</option>
@@ -71,7 +72,7 @@ const resampler = computed({
     <div v-if="mode === FIXED" class="row">
       <label class="field">
         <span>{{ t('slot.rate') }}</span>
-        <select v-model.number="sampleRate" class="select">
+        <select v-model.number="sampleRate" class="select" :disabled="props.disabled">
           <button><selectedcontent></selectedcontent></button>
           <option v-for="rate in RATES" :key="rate" :value="rate">
             {{ t('chip.rate', { rate: formatKhz(rate) }) }}
@@ -80,7 +81,7 @@ const resampler = computed({
       </label>
       <label class="field">
         <span>{{ t('slot.sampleFormat') }}</span>
-        <select v-model="sampleFormat" class="select">
+        <select v-model="sampleFormat" class="select" :disabled="props.disabled">
           <button><selectedcontent></selectedcontent></button>
           <option v-for="format in SAMPLE_FORMATS" :key="format" :value="format">
             {{ t(`sampleFormat.${format}`) }}
@@ -88,7 +89,7 @@ const resampler = computed({
         </select>
       </label>
     </div>
-    <ResamplerField v-model="resampler" />
+    <ResamplerField v-model="resampler" :disabled="props.disabled" />
   </div>
 </template>
 

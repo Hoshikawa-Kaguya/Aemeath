@@ -94,10 +94,18 @@ class MeterRenderer {
   }
 
   setMuted(node: number, muted: boolean): void {
+    const changed = muted ? !this.muted.has(node) : this.muted.has(node)
     if (muted) {
       this.muted.add(node)
     } else {
       this.muted.delete(node)
+    }
+    if (changed) {
+      for (const meter of this.meters) {
+        if (meter.node === node) {
+          meter.drawn = null
+        }
+      }
     }
   }
 
@@ -193,10 +201,6 @@ class MeterRenderer {
   private draw(meter: Meter, palette: Palette): void {
     const level = this.levels.get(meter.node) ?? { left: -Infinity, right: -Infinity }
     const shown = { left: fraction(level.left), right: fraction(level.right) }
-    if (meter.drawn !== null && meter.drawn.left === shown.left && meter.drawn.right === shown.right) {
-      return
-    }
-    meter.drawn = shown
     const canvas = meter.canvas
     const ratio = window.devicePixelRatio || 1
     const width = Math.round(canvas.clientWidth * ratio)
@@ -204,7 +208,12 @@ class MeterRenderer {
     if (width === 0 || height === 0) {
       return
     }
-    if (canvas.width !== width || canvas.height !== height) {
+    const resized = canvas.width !== width || canvas.height !== height
+    if (!resized && meter.drawn !== null && meter.drawn.left === shown.left && meter.drawn.right === shown.right) {
+      return
+    }
+    meter.drawn = shown
+    if (resized) {
       canvas.width = width
       canvas.height = height
     }

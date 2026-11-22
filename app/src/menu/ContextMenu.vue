@@ -65,7 +65,9 @@ function onContextMenu(event: MouseEvent): void {
 }
 
 function buttons(): HTMLButtonElement[] {
-  return [...(root.value?.querySelectorAll<HTMLButtonElement>('button:not([disabled])') ?? [])]
+  return [
+    ...(root.value?.querySelectorAll<HTMLButtonElement>('button:not([disabled]):not([aria-disabled="true"])') ?? []),
+  ]
 }
 
 function focusAt(index: number): void {
@@ -103,6 +105,9 @@ function onKeyDown(event: KeyboardEvent): void {
 }
 
 function choose(item: MenuAction): void {
+  if (item.disabled) {
+    return
+  }
   closeMenu()
   item.run()
 }
@@ -163,13 +168,16 @@ onBeforeUnmount(() => {
     >
       <template v-for="(item, index) in openedMenu.items" :key="index">
         <div v-if="item.kind === 'separator'" class="sep" role="separator"></div>
+        <!-- 禁用项用 aria-disabled 而非原生 disabled：原生 disabled 按钮收不到 pointerover，悬停提示无法弹出 -->
         <button
           v-else
+          v-tip="item.tip"
           type="button"
           role="menuitem"
           class="item ellipsis"
           :class="{ danger: item.danger }"
-          :disabled="item.disabled"
+          :aria-disabled="item.disabled ? 'true' : undefined"
+          :tabindex="item.disabled ? -1 : 0"
           @click="choose(item)"
         >
           {{ item.label }}
@@ -208,17 +216,18 @@ onBeforeUnmount(() => {
   cursor: default;
 }
 
-.item:hover:not(:disabled),
-.item:focus-visible {
+.item:hover:not([aria-disabled='true']),
+.item:focus-visible:not([aria-disabled='true']) {
   background: var(--card-hover);
   outline: none;
 }
 
-.item:disabled {
+.item[aria-disabled='true'] {
   color: var(--text-dis);
+  cursor: not-allowed;
 }
 
-.item.danger:not(:disabled) {
+.item.danger:not([aria-disabled='true']) {
   color: var(--crit);
 }
 

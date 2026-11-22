@@ -195,6 +195,11 @@ fluent-button {
   outline-offset: 1px;
 }
 
+.switch:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 /* 原生下拉框：改成与 Fluent 控件一致的外观 */
 .select {
   height: 32px;
@@ -205,6 +210,14 @@ fluent-button {
   color: var(--text);
   font: inherit;
   max-width: 100%;
+}
+
+.select:disabled,
+.text-input:disabled,
+.slider:disabled {
+  color: var(--text-dis);
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 /* 文本框（Fluent 2 的 Input：底边是强调色的焦点指示） */

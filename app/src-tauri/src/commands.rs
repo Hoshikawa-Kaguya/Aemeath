@@ -4,7 +4,7 @@ use aemeath_control::crash_dumps;
 use aemeath_control::slots::uninstall;
 use aemeath_core::hotkeys::Hotkey;
 use aemeath_core::model::Position;
-use aemeath_core::preferences::{LanguagePreference, ThemeMode};
+use aemeath_core::preferences::{ConsoleLayout, LanguagePreference, ThemeMode};
 use aemeath_protocol::ids::{EndpointId, NodeId};
 use aemeath_protocol::topology::{DeviceSettings, RecorderSettings, Resampler, SlotNodeSettings};
 use aemeath_protocol::units::SampleRate;
@@ -552,6 +552,27 @@ pub async fn rename_node(controller: State<'_, ControllerHandle>, node: u32, nam
             node: NodeId(node),
             name,
         })
+        .await
+}
+
+#[tauri::command]
+pub async fn set_node_locked(controller: State<'_, ControllerHandle>, node: u32, locked: bool) -> Reply<ViewState> {
+    controller
+        .edit(Edit::SetNodeLocked {
+            node: NodeId(node),
+            locked,
+        })
+        .await
+}
+
+#[tauri::command]
+pub async fn set_console_layout(
+    controller: State<'_, ControllerHandle>,
+    height: Option<u16>,
+    collapsed: bool,
+) -> Reply<ViewState> {
+    controller
+        .edit(Edit::SetConsoleLayout(ConsoleLayout { height, collapsed }))
         .await
 }
 

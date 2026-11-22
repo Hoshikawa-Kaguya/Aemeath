@@ -26,6 +26,11 @@ export type IconName =
   | 'rec'
   | 'stop'
   | 'tools'
+  | 'lock'
+  | 'unlock'
+  | 'mute'
+  | 'chevron-down'
+  | 'chevron-up'
 
 defineProps<{ name: IconName }>()
 </script>

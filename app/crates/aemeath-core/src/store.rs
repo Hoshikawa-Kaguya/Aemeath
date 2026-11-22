@@ -11,27 +11,17 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::hotkeys::Hotkey;
 use crate::model::EngineSettings;
 use crate::preferences::Preferences;
 use crate::workspace::Workspace;
 
 /// 配置文件的结构版本。结构有不兼容的变化时加一，并在 [`ConfigStore::load`] 中加入迁移。
 ///
-/// 6：热键去掉"切换/按住"方式，一律是切换，绑定直接存按键组合。版本 5 的文件由 [`migrate_hotkey_modes`] 迁移，
-/// 启动时由 [`ConfigStore::upgrade`] 先写回成新版本。
-pub const CONFIG_VERSION: u32 = 6;
+/// 7：节点新增 `locked`（默认 false），偏好设置新增 `console_layout`（默认展开、默认高度）。
+/// 均为带默认值的可选字段，版本 6 的文件可直接读入，启动时由 [`ConfigStore::upgrade`] 写回成版本 7。
+pub const CONFIG_VERSION: u32 = 7;
 /// 能迁移的上一个版本
-const PREVIOUS_VERSION: u32 = 5;
-/// 配置里存放热键绑定的字段：节点、连线、全局热键
-const HOTKEY_FIELDS: [&str; 6] = [
-    "mute_hotkey",
-    "record_hotkey",
-    "toggle_hotkey",
-    "all_recording",
-    "panic_mute",
-    "toggle_window",
-];
+const PREVIOUS_VERSION: u32 = 6;
 const CONFIG_FILE: &str = "workspace.json";
 const TEMP_SUFFIX: &str = "tmp";
 const BACKUP_INFIX: &str = "corrupt";
@@ -211,16 +201,13 @@ impl ConfigStore {
 
 /// 解析并校验配置；返回错误说明（写进日志和提示中）。
 fn parse(bytes: &[u8]) -> Result<Config, String> {
-    let file: ConfigFile = match serde_json::from_slice::<VersionOnly>(bytes) {
-        Ok(VersionOnly {
-            version: PREVIOUS_VERSION,
-        }) => serde_json::from_slice(bytes).and_then(|mut value| {
-            migrate_hotkey_modes(&mut value);
-            serde_json::from_value(value)
-        }),
-        _ => serde_json::from_slice(bytes),
+    let file: ConfigFile = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+    if file.version != CONFIG_VERSION && file.version != PREVIOUS_VERSION {
+        return Err(format!(
+            "unsupported configuration version {} (expected {} or {})",
+            file.version, PREVIOUS_VERSION, CONFIG_VERSION
+        ));
     }
-    .map_err(|error| error.to_string())?;
     let workspace = file.workspace;
     workspace.check().map_err(|error| error.to_string())?;
     Ok(Config {
@@ -229,46 +216,11 @@ fn parse(bytes: &[u8]) -> Result<Config, String> {
     })
 }
 
-/// 版本 5 → 6：热键绑定 `{"key": 按键组合, "mode": …}` 只留按键组合，按住型改成切换。
-/// 不带修饰键的键盘按键以前只能做按住型，不符合切换的规则，删掉这个绑定。
-fn migrate_hotkey_modes(file: &mut serde_json::Value) {
-    for path in ["/workspace/nodes", "/workspace/routes"] {
-        if let Some(owners) = file.pointer_mut(path).and_then(serde_json::Value::as_array_mut) {
-            owners.iter_mut().for_each(migrate_owner);
-        }
-    }
-    if let Some(global) = file.pointer_mut("/preferences/global_hotkeys") {
-        migrate_owner(global);
-    }
-}
-
-fn migrate_owner(owner: &mut serde_json::Value) {
-    let Some(owner) = owner.as_object_mut() else {
-        return;
-    };
-    for field in HOTKEY_FIELDS {
-        let Some(binding) = owner.get_mut(field) else {
-            continue;
-        };
-        if let Some(hotkey) = binding.get_mut("key").map(serde_json::Value::take) {
-            *binding = hotkey;
-        }
-        // 解析不了的留给随后的整体解析报告为损坏
-        if serde_json::from_value::<Hotkey>(binding.clone()).is_ok_and(|hotkey| !hotkey.is_valid()) {
-            tracing::warn!(
-                field,
-                "a hold hotkey without a modifier cannot become a toggle, removed"
-            );
-            owner.remove(field);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hotkeys::{HotkeyTarget, all_hotkeys};
     use crate::model::{NodeName, Position};
+    use crate::preferences::ConsoleLayout;
     use crate::workspace::NodeSpec;
 
     fn temp_dir(name: &str) -> PathBuf {
@@ -290,6 +242,7 @@ mod tests {
             .add_node(NodeName::new("Bus").unwrap(), NodeSpec::Bus, Position::default())
             .unwrap();
         workspace.connect(game, bus).unwrap();
+        workspace.set_node_locked(game, true).unwrap();
         Config {
             workspace,
             preferences: Preferences {
@@ -310,6 +263,10 @@ mod tests {
                     maximized: true,
                 }),
                 last_page: Some("devices".to_owned()),
+                console_layout: ConsoleLayout {
+                    height: Some(360),
+                    collapsed: false,
+                },
                 ..Preferences::default()
             },
         }
@@ -378,43 +335,49 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// 升级迁移：版本 5 的热键带 `mode`。启动时先写回成新版本，之后只读偏好设置也能读出；
-    /// 迁移后都是切换，不带修饰键的键盘按住型被删掉，其余照常读入
+    /// 升级迁移：版本 6 没有 `locked` 和 `console_layout`，直接读入取默认值，启动时写回成版本 7。
     #[test]
-    fn version_5_files_are_upgraded_before_anything_reads_them() {
-        let dir = temp_dir("v5");
+    fn version_6_files_are_upgraded_before_anything_reads_them() {
+        let dir = temp_dir("v6");
         let store = ConfigStore::new(&dir);
         store.save(&sample()).unwrap();
         let mut file: serde_json::Value = serde_json::from_slice(&std::fs::read(store.path()).unwrap()).unwrap();
-        file["version"] = 5.into();
-        file["workspace"]["nodes"][0]["mute_hotkey"] =
-            serde_json::json!({"key": {"key": {"type": "keyboard", "vk": 0x7C}}, "mode": "hold"});
-        file["workspace"]["routes"][0]["toggle_hotkey"] = serde_json::json!(
-            {"key": {"modifiers": {"ctrl": true}, "key": {"type": "keyboard", "vk": 0x4D}}, "mode": "hold"}
-        );
-        file["preferences"]["global_hotkeys"]["panic_mute"] =
-            serde_json::json!({"key": {"key": {"type": "mouse_x1"}}, "mode": "toggle"});
+        file["version"] = 6.into();
+        file["workspace"]["nodes"][0].as_object_mut().unwrap().remove("locked");
+        file["preferences"].as_object_mut().unwrap().remove("console_layout");
         std::fs::write(store.path(), serde_json::to_vec(&file).unwrap()).unwrap();
-        assert_eq!(store.peek_preferences(), None, "the old format can't be peeked");
 
         assert!(store.upgrade().unwrap());
         assert!(!store.upgrade().unwrap(), "already the current version");
         let written: serde_json::Value = serde_json::from_slice(&std::fs::read(store.path()).unwrap()).unwrap();
         assert_eq!(written["version"], CONFIG_VERSION);
-        assert!(store.peek_preferences().unwrap().global_hotkeys.panic_mute.is_some());
         let Loaded::Existing(loaded) = store.load().unwrap() else {
-            unreachable!("expected the version 5 file to be migrated")
+            unreachable!("expected the version 6 file to be migrated")
         };
-        let targets: Vec<HotkeyTarget> = all_hotkeys(&loaded.workspace, &loaded.preferences)
-            .into_iter()
-            .map(|(target, _)| target)
-            .collect();
-        let route = loaded.workspace.routes()[0];
-        assert_eq!(
-            targets,
-            vec![HotkeyTarget::PanicMute, HotkeyTarget::RouteToggle(route.from, route.to)]
-        );
+        assert!(!loaded.workspace.nodes()[0].locked);
+        assert_eq!(loaded.preferences.console_layout, ConsoleLayout::default());
         assert_eq!(loaded.workspace.nodes().len(), sample().workspace.nodes().len());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn older_versions_beyond_previous_are_backed_up() {
+        let dir = temp_dir("v5-old");
+        let store = ConfigStore::new(&dir);
+        store.save(&sample()).unwrap();
+        let mut file: serde_json::Value = serde_json::from_slice(&std::fs::read(store.path()).unwrap()).unwrap();
+        file["version"] = 5.into();
+        std::fs::write(store.path(), serde_json::to_vec(&file).unwrap()).unwrap();
+
+        assert!(
+            !store.upgrade().unwrap(),
+            "only the immediately previous version upgrades"
+        );
+        let Loaded::Recovered { config, backup, .. } = store.load().unwrap() else {
+            unreachable!("expected older unsupported version to be backed up")
+        };
+        assert!(config.workspace.nodes().is_empty());
+        assert!(backup.exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

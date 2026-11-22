@@ -22,7 +22,9 @@ use aemeath_core::duplicates::{DuplicateRoute, duplicate_routes};
 use aemeath_core::hotkeys::{self, Hotkey, HotkeyError, HotkeyOverlay, HotkeyTarget};
 use aemeath_core::model::{DeviceRef, LabelPosition, Node, NodeKind, NodeName, Position};
 use aemeath_core::naming::same_file_name;
-use aemeath_core::preferences::{Appearance, LandingRecord, LanguagePreference, ThemeMode, WindowPlacement};
+use aemeath_core::preferences::{
+    Appearance, ConsoleLayout, LandingRecord, LanguagePreference, ThemeMode, WindowPlacement,
+};
 use aemeath_core::store::{Config, ConfigStore, Loaded, StoreError};
 use aemeath_core::workspace::{EditError, NodeSpec, Workspace};
 use aemeath_protocol::ids::{EndpointId, NodeId, ProgramPath, SlotId, SlotNumber, TopologyRevision};
@@ -46,9 +48,9 @@ use crate::device_settings::{CapabilitiesView, DeviceSettingsView, ResamplerView
 use crate::hotkey_views::{HotkeyRowView, HotkeyTargetView, HotkeyView};
 use crate::recording::{RecorderStateView, RecorderView, RecordingView, prepare_recording_path, recording_folder};
 use crate::view::{
-    AppearanceView, ConfigStatusView, DeviceView, DuplicateView, EngineState, EngineStatsView, EngineView, FormatView,
-    NodeStatus, NodeView, NoticeKind, NoticeView, PairVerdict, ProgramView, RegistrationView, RouteVerdict, RouteView,
-    SlotRef, SlotView, ViewState, kind_view,
+    AppearanceView, ConfigStatusView, ConsoleLayoutView, DeviceView, DuplicateView, EngineState, EngineStatsView,
+    EngineView, FormatView, NodeStatus, NodeView, NoticeKind, NoticeView, PairVerdict, ProgramView, RegistrationView,
+    RouteVerdict, RouteView, SlotRef, SlotView, ViewState, kind_view,
 };
 
 /// 数据目录下存放背景图的文件夹
@@ -91,6 +93,8 @@ pub enum CommandError {
     HotkeyModifierRequired,
     #[error("this key is already bound")]
     HotkeyConflict { target: HotkeyTargetView },
+    #[error("this node is locked")]
+    NodeLocked,
     #[error("the node or route no longer exists")]
     NotFound,
     #[error("{message}")]
@@ -113,6 +117,7 @@ impl From<EditError> for CommandError {
             EditError::UnknownNode(_) | EditError::UnknownRoute { .. } | EditError::NotAVirtualNode(_) => {
                 Self::NotFound
             }
+            EditError::NodeLocked(_) => Self::NodeLocked,
             EditError::NoFreeSlot(_) => Self::NoFreeSlot,
             EditError::SlotOccupied { .. } => Self::SlotOccupied,
             EditError::DeviceInUse { .. } => Self::DeviceInUse,
@@ -236,6 +241,10 @@ pub enum Edit {
         node: NodeId,
         name: String,
     },
+    SetNodeLocked {
+        node: NodeId,
+        locked: bool,
+    },
     MoveNode {
         node: NodeId,
         position: Position,
@@ -307,6 +316,7 @@ pub enum Edit {
     /// 背景图的文件名（已复制到数据目录）；None 表示移除
     SetBackgroundFile(Option<String>),
     SetLastPage(String),
+    SetConsoleLayout(ConsoleLayout),
     SetWindowPlacement(WindowPlacement),
 }
 
@@ -1039,6 +1049,7 @@ impl Controller {
                 let name = NodeName::new(&name).map_err(|_| CommandError::InvalidName)?;
                 workspace.rename_node(node, name)?;
             }
+            Edit::SetNodeLocked { node, locked } => workspace.set_node_locked(node, locked)?,
             Edit::MoveNode { node, position } => workspace.move_node(node, position)?,
             Edit::ChangeSlot { node, number } => {
                 let number = SlotNumber::new(number).map_err(|_| CommandError::NotFound)?;
@@ -1091,7 +1102,10 @@ impl Controller {
                 };
                 workspace.set_strip(node, strip)?;
             }
-            Edit::Pin(node) => workspace.pin(node)?,
+            Edit::Pin(node) => {
+                workspace.pin(node)?;
+                self.config.preferences.console_layout.collapsed = false;
+            }
             Edit::Unpin(node) => workspace.unpin(node),
             Edit::MovePin { node, index } => workspace.move_pin(node, index)?,
             Edit::SetLanguage(language) => self.config.preferences.language = language,
@@ -1108,6 +1122,7 @@ impl Controller {
             }
             Edit::SetBackgroundFile(file) => self.config.preferences.appearance.background_file = file,
             Edit::SetLastPage(page) => self.config.preferences.last_page = Some(page),
+            Edit::SetConsoleLayout(layout) => self.config.preferences.console_layout = layout.normalized(),
             Edit::SetWindowPlacement(placement) => {
                 let window = &mut self.config.preferences.window;
                 // 最大化时读到的是整个屏幕，保留上次的还原位置和大小
@@ -1410,7 +1425,7 @@ impl Controller {
                         endpoint: EndpointId(only.endpoint_id.clone()),
                         name: only.name.clone(),
                     };
-                    match self.config.workspace.replace_device(node, replacement) {
+                    match self.config.workspace.auto_replace_device(node, replacement) {
                         Ok(()) => {
                             info!(node = node.0, device = %only.name, old = %device.endpoint.0, new = %only.endpoint_id,
                                 "the device came back with a new endpoint ID, switched to it");
@@ -1859,6 +1874,10 @@ impl Controller {
             language: self.config.preferences.language.clone(),
             check_updates_on_start: !self.config.preferences.no_update_check_on_start,
             appearance: self.appearance_view(),
+            console_layout: ConsoleLayoutView {
+                height: self.config.preferences.console_layout.height,
+                collapsed: self.config.preferences.console_layout.collapsed,
+            },
             last_page: self.config.preferences.last_page.clone(),
             duplicates: duplicates
                 .iter()
@@ -1946,6 +1965,7 @@ impl Controller {
             status,
             mute_hotkey: node.mute_hotkey.map(HotkeyView::from),
             record_hotkey: node.record_hotkey.map(HotkeyView::from),
+            locked: node.locked,
             recorder: match node.kind {
                 NodeKind::Recorder { settings } => Some(RecorderView {
                     settings,

@@ -195,7 +195,12 @@ const healthText = computed(() => {
             <div v-if="occupant" class="occ" :data-role="roleOf(occupant.kind)">
               <span class="kind-ico"><AppIcon name="virt" /></span>
               <div class="cell">
-                <b v-tip="occupant.name" class="ellipsis">{{ occupant.name }}</b>
+                <div class="occ-name">
+                  <b v-tip="occupant.name" class="ellipsis">{{ occupant.name }}</b>
+                  <span v-if="occupant.locked" v-tip="t('node.lockedTip')" class="lock-ico">
+                    <AppIcon name="lock" />
+                  </span>
+                </div>
                 <span class="caption ellipsis">{{ t(`kind.${occupant.kind}`) }}</span>
               </div>
             </div>
@@ -341,6 +346,24 @@ const healthText = computed(() => {
   align-items: center;
   gap: 8px;
   min-width: 0;
+}
+
+.occ-name {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.lock-ico {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-3);
+}
+
+.lock-ico svg {
+  width: 12px;
+  height: 12px;
 }
 
 .occ .kind-ico {

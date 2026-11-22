@@ -99,6 +99,7 @@ export const backend = {
   redetect: (node: number | null) => invoke<void>('redetect', { node }),
   removeNode: (node: number) => invoke<ViewState>('remove_node', { node }),
   renameNode: (node: number, name: string) => invoke<ViewState>('rename_node', { node, name }),
+  setNodeLocked: (node: number, locked: boolean) => invoke<ViewState>('set_node_locked', { node, locked }),
   moveNode: (node: number, x: number, y: number) => invoke<ViewState>('move_node', { node, x, y }),
   changeSlot: (node: number, number: number) => invoke<ViewState>('change_slot', { node, number }),
   routeVerdicts: (node: number, fromOutput: boolean) => invoke<RouteVerdict[]>('route_verdicts', { node, fromOutput }),
@@ -122,6 +123,8 @@ export const backend = {
   setNodeGate: (node: number, thresholdDb: number | null) => invoke<ViewState>('set_node_gate', { node, thresholdDb }),
   setLanguage: (language: LanguagePreference) => invoke<ViewState>('set_language', { language }),
   setLastPage: (page: string) => invoke<ViewState>('set_last_page', { page }),
+  setConsoleLayout: (height: number | null, collapsed: boolean) =>
+    invoke<ViewState>('set_console_layout', { height, collapsed }),
   listDevices: (direction: 'input' | 'output') => invoke<DeviceChoice[]>('list_devices', { direction }),
   checkSlots: () => invoke<void>('check_slots'),
   setTrayLabels: (labels: { open: string; redetect: string; quit: string }) =>

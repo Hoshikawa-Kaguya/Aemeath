@@ -33,6 +33,7 @@ pub struct ViewState {
     pub language: LanguagePreference,
     pub check_updates_on_start: bool,
     pub appearance: AppearanceView,
+    pub console_layout: ConsoleLayoutView,
     pub last_page: Option<String>,
     pub nodes: Vec<NodeView>,
     pub routes: Vec<RouteView>,
@@ -125,6 +126,16 @@ pub struct AppearanceView {
     /// 背景图的完整路径；没有设置或文件已丢失时为 None
     pub background_path: Option<String>,
     pub overlay_percent: u8,
+}
+
+/// 控制台面板的布局偏好（展开高度与收起状态）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConsoleLayoutView {
+    /// 展开时的高度（CSS 像素）；None 表示使用界面默认高度
+    pub height: Option<u16>,
+    /// 是否手动收起为标题栏
+    pub collapsed: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -296,6 +307,8 @@ pub struct NodeView {
     pub recorder: Option<RecorderView>,
     pub mute_hotkey: Option<HotkeyView>,
     pub record_hotkey: Option<HotkeyView>,
+    /// 节点是否已锁定（GLOSSARY：锁定）
+    pub locked: bool,
     /// 这个应用源造成了重复路由
     pub duplicate: Option<DuplicateView>,
 }
@@ -642,5 +655,17 @@ mod tests {
     #[test]
     fn no_buffers_means_no_asrc_chip() {
         assert_eq!(EngineStatsView::new(1.0, 1.0, &[]).asrc, None);
+    }
+
+    #[test]
+    fn console_layout_view_matches_the_frontend_type() {
+        let layout = ConsoleLayoutView {
+            height: Some(320),
+            collapsed: true,
+        };
+        assert_eq!(
+            serde_json::to_value(layout).unwrap(),
+            serde_json::json!({ "height": 320, "collapsed": true })
+        );
     }
 }

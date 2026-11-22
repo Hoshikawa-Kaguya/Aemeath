@@ -8,6 +8,8 @@ export interface MenuAction {
   label: string
   run: () => void
   disabled?: boolean
+  /** 鼠标悬浮提示（例如说明禁用原因） */
+  tip?: string
   /** 删除这类破坏性操作，用警示色显示 */
   danger?: boolean
 }
