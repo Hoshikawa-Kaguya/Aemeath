@@ -36,4 +36,5 @@ rustc-ice-*.txt
 
 # 内部资料与临时文件，不公开
 agent_tmp/
+.agents/
 .claude/
